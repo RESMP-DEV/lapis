@@ -416,9 +416,10 @@ void write_media_fixture(const QString& folder, QFile& file) {
     QFile pdf(QDir(folder).filePath(QStringLiteral("report.pdf")));
     if (pdf.open(QIODevice::WriteOnly))
         pdf.write("%PDF-1.4\n");
-    // Named from the home folder (the capture's own), as agents often do.
-    const auto reply = QStringLiteral("The flow, as drawn:\n\n~/diagram.png\n\nThe full write-up "
-                                      "is in ~/report.pdf for later.");
+    // Named by absolute paths in the fixture's folder, independent of HOME.
+    const auto reply =
+        QStringLiteral("The flow, as drawn:\n\n%1\n\nThe full write-up is in %2 for later.")
+            .arg(picture, pdf.fileName());
     const QJsonObject prompt{{"type", "user"},
                              {"uuid", "p1"},
                              {"timestamp", "2026-11-11T16:00:00.000Z"},
@@ -2029,7 +2030,7 @@ int bench_switch(QQuickView& view, TranscriptModel& model, QObject* list, const 
         };
         while (model.rowCount() == 0 && model.loading() && timer.elapsed() < 60000)
             pass();
-        if (model.loading()) {
+        if (model.rowCount() == 0 && model.loading()) {
             std::fprintf(stderr, "switch: %s did not load in 60 s\n", qPrintable(path));
             stale = true;
             return;

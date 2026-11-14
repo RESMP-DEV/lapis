@@ -1188,8 +1188,9 @@ void Workspace::watch(Agent* item) {
         if (!had_pending) {
             const auto arrived = QDateTime::currentMSecsSinceEpoch();
             const auto restored = item->neededAtMs();
-            waiting_since_.insert(item->agentId(),
-                                  restored > 0 ? std::min(restored, arrived) : arrived);
+            waiting_since_.insert(item->agentId(), known.empty() && restored > 0
+                                                       ? std::min(restored, arrived)
+                                                       : arrived);
         }
         emit needsYou(item, fresh ? markNeedsYou(item, Need::request) : QStringLiteral("repeat"));
         emit turnFinished(item);

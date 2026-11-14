@@ -1006,6 +1006,10 @@ class Parser {
         if (name == u"not") {
             // \not= is ≠, \not\in ∉; another relation gets a slash.
             skip_spaces();
+            if (p_ >= s_.size()) {
+                fail();
+                return;
+            }
             const auto before = runs_.size();
             const auto text_before = before > 0 ? runs_.back().text.size() : 0;
             atom();

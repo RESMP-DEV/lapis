@@ -136,6 +136,8 @@ Item make(Kind kind, QString title, QString body, QString detail) {
 }
 
 void add_lines(Item& item, QChar sign, const QString& text) {
+    // Empty tool content has no lines; a diff's signed blank line is counted
+    // by add_unified_diff itself.
     if (text.isEmpty())
         return;
     const auto lines = text.split(QLatin1Char('\n'));
@@ -1779,6 +1781,7 @@ int ClaudeReader::add(const QByteArray& line) {
         for (const auto& name : attached) {
             auto item = make(Kind::prompt, {}, name);
             item.starts_turn = true;
+            taken(item);
             push(std::move(item));
         }
     }
@@ -2226,14 +2229,22 @@ TranscriptModel::Child* TranscriptModel::child(const QString& path, transcript::
         Child fresh;
         fresh.path = path;
         children_.insert(children_.begin(), std::move(fresh));
-        if (children_.size() > 8)
-            children_.pop_back();
+        while (children_.size() > 8) {
+            // Idle children are bounded; the active working set is kept so a
+            // tick cannot evict the reader the next task in this pass needs.
+            const auto idle = std::find_if(children_.rbegin(), children_.rend(),
+                                           [](const Child& entry) { return !entry.active; });
+            if (idle == children_.rend())
+                break;
+            children_.erase(std::next(idle).base());
+        }
         hit = children_.begin();
     } else if (hit != children_.begin()) {
         std::rotate(children_.begin(), hit, hit + 1);
         hit = children_.begin();
     }
     auto& entry = *hit;
+    entry.active = active_children_.contains(path);
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return nullptr;
@@ -2316,6 +2327,18 @@ void TranscriptModel::updateRunning() {
     QSet<int> was;
     for (const auto& entry : std::as_const(running_))
         was.insert(entry.toMap().value(QStringLiteral("item")).toInt());
+    active_children_.clear();
+    for (const auto& task : tasks) {
+        if (!task.status.isEmpty() || task.type != transcript::Task::Type::subagent ||
+            format() == transcript::Format::claude ||
+            !transcript::task_running(task, alive_ms(task), now()))
+            continue;
+        const auto path = task_file(task);
+        if (!path.isEmpty() && !active_children_.contains(path))
+            active_children_.append(path);
+    }
+    for (auto& entry : children_)
+        entry.active = active_children_.contains(entry.path);
     for (size_t i = 0; i < tasks.size(); ++i) {
         const auto& task = tasks[i];
         if (!task.status.isEmpty() || !transcript::task_running(task, alive_ms(task), now()))
@@ -3395,10 +3418,8 @@ void TranscriptModel::setPath(const QString& path) {
     const auto format = format_for(path);
     // Keep what was read whole; a tail is dropped, and the whole reading
     // still under way is kept when it arrives.
-    std::unique_ptr<transcript::Reader> outgoing = std::move(reader_);
     if (!path_.isEmpty() && !tail_ && !loading_)
-        keep({path_, std::move(outgoing), offset_, std::move(pending_), expanded_, view_, 0,
-              ++shown_clock_});
+        keep({path_, reader_->clone(), offset_, pending_, expanded_, view_, 0, ++shown_clock_});
     expanded_.clear();
     view_.clear();
     tail_ = false;
@@ -3409,14 +3430,16 @@ void TranscriptModel::setPath(const QString& path) {
         return kept.path == path && kept.reader->format() == format;
     });
     bool warm = false;
+    std::unique_ptr<transcript::Reader> next_reader;
+    bool background_load = false;
     if (path.isEmpty()) {
-        reader_ = transcript::make_reader(format);
+        next_reader = transcript::make_reader(format);
     } else if (hit != kept_.end()) {
         const qint64 grown = QFileInfo(path).size() - hit->offset;
         if (grown > tail_bytes) {
             // A large delta is caught up on the low-priority thread. The kept
             // entry stays for that work while this clone shows its last state.
-            reader_ = hit->reader->clone();
+            next_reader = hit->reader->clone();
             offset_ = hit->offset;
             pending_ = hit->pending;
             expanded_ = hit->expanded;
@@ -3424,7 +3447,7 @@ void TranscriptModel::setPath(const QString& path) {
             loading_ = true;
             warm = true;
         } else {
-            reader_ = std::move(hit->reader);
+            next_reader = std::move(hit->reader);
             offset_ = hit->offset;
             pending_ = std::move(hit->pending);
             expanded_ = std::move(hit->expanded);
@@ -3433,7 +3456,7 @@ void TranscriptModel::setPath(const QString& path) {
             // What the CLI wrote since it was last shown, before the rows are
             // made, so they are made once. A file rewritten shorter is read
             // again like one never shown.
-            warm = read_on(path, *reader_, offset_, pending_);
+            warm = read_on(path, *next_reader, offset_, pending_);
             if (!warm) {
                 offset_ = 0;
                 pending_.clear();
@@ -3445,23 +3468,26 @@ void TranscriptModel::setPath(const QString& path) {
     if (!path.isEmpty() && !warm) {
         // Not kept: its end now, the rest from another thread.
         auto read = transcript::read_end(path, format, tail_bytes, tail_bytes);
-        reader_ = std::move(read.reader);
+        next_reader = std::move(read.reader);
         offset_ = read.offset;
         pending_ = std::move(read.pending);
         tail_ = read.tail;
         loading_ = read.tail;
-        if (tail_ && !loads_.contains(path))
-            startLoad(path, format);
+        background_load = tail_ && !loads_.contains(path);
     }
     path_ = path;
     live_tasks_.clear();
-    auto next = layoutNow();
-    // The reader is swapped inside the reset, so the view never sees the
-    // old rows over the new reader.
+    auto next = transcript::lay_out(next_reader->items(), expanded_, live_);
+    if (tail_)
+        transcript::trim_to_turns(next);
+    // The old reader and rows stay consistent through reset notification; both
+    // are swapped only after that notification has begun.
     beginResetModel();
+    reader_ = std::move(next_reader);
     layout_ = std::move(next);
     endResetModel();
-    outgoing.reset();
+    if (background_load)
+        startLoad(path, format);
     emit pathChanged();
     if (was_loading != loading_)
         emit loadingChanged();

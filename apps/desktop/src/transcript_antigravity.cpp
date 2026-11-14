@@ -446,6 +446,7 @@ int AntigravityReader::add(const QByteArray& line) {
             prompt.starts_turn = !shown && !steers;
             prompt.steered = steers;
             shown = true;
+            taken(prompt);
             push(std::move(prompt));
         }
     } else if (type == QLatin1String("PLANNER_RESPONSE")) {

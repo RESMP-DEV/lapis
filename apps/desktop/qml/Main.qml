@@ -1073,10 +1073,12 @@ ApplicationWindow {
         visualFocus()
     }
     function showFactoryHome() {
+        const previous = factoryInspectAgentId
         factoryInspectAgentId = ""
         if (factoryHomeId.length > 0
-                && (workspace.focusedAgent === null || workspace.focusedAgent.agentId !== factoryHomeId))
-            workspace.selectAgent(factoryHomeId)
+                && (workspace.focusedAgent === null || workspace.focusedAgent.agentId !== factoryHomeId)
+                && !workspace.selectAgent(factoryHomeId))
+            factoryInspectAgentId = previous
     }
     function backToFactory() {
         showFactoryHome()
@@ -1087,8 +1089,9 @@ ApplicationWindow {
             showFactoryHome()
             return
         }
+        if (!workspace.selectAgent(id))
+            return
         factoryInspectAgentId = id
-        workspace.selectAgent(id)
         visualFocus()
     }
     // A worker's terminal rather than its thread, to answer it there.

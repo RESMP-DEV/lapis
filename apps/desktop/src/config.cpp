@@ -842,8 +842,14 @@ bool Config::setAppearance(const QString& mode) {
         return false;
     const bool was_chosen = appearance_chosen_;
     appearance_chosen_ = true;
-    if (mode == appearance_)
-        return was_chosen ? true : save();
+    if (mode == appearance_) {
+        if (!was_chosen) {
+            apply_appearance();
+            emit changed();
+            return save();
+        }
+        return true;
+    }
     appearance_ = mode;
     apply_appearance();
     qInfo().noquote() << "lapis appearance:" << appearance_;
@@ -1463,6 +1469,13 @@ bool Config::persist() {
         return fail(file.errorString());
     if (file.write(contents) != contents.size() || !file.commit())
         return fail(file.errorString());
+    for (const auto& name : std::as_const(touched_))
+        sections_.insert(name, root.value(name));
+    {
+        const auto diagnostic = diagnostic_;
+        parse_sections();
+        diagnostic_ = diagnostic;
+    }
     known_contents_ = std::move(contents);
     touched_.clear();
     touched_keys_.clear();

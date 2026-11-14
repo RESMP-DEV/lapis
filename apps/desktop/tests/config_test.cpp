@@ -911,7 +911,9 @@ void settings_write_known_keys() {
     require(config.load(), "golden fixture loads");
     auto concurrent = read_config(path);
     auto concurrent_agents = concurrent.value(QStringLiteral("newAgent")).toObject();
-    concurrent_agents.insert(QStringLiteral("models"), QJsonArray{QStringLiteral("external")});
+    concurrent_agents.insert(
+        QStringLiteral("models"),
+        QJsonObject{{QStringLiteral("codex"), QJsonArray{QStringLiteral("external")}}});
     concurrent.insert(QStringLiteral("newAgent"), concurrent_agents);
     static_cast<void>(write_config(QDir(directory.path()),
                                    QJsonDocument(concurrent).toJson(QJsonDocument::Compact)));
@@ -942,7 +944,7 @@ void settings_write_known_keys() {
     const auto expected = QJsonDocument::fromJson(R"({
         "keybindings": {"quit": ["Meta+Q"]},
         "custom": 1,
-        "newAgent": {"machines": {"box": {"folder": "~/w"}}, "models": ["external"],
+        "newAgent": {"machines": {"box": {"folder": "~/w"}}, "models": {"codex": ["external"]},
                      "harness": "codex", "folder": "~/dev", "mode": "edits"},
         "nextPrompt": {"model": "x", "providers": [], "auto": true},
         "harnessUpdates": {"omp": false},
@@ -964,6 +966,10 @@ void settings_write_known_keys() {
     })")
                               .object();
     require(read_config(path) == expected, "the saved file matches the golden file");
+    const auto merged_defaults = config.agentDefaults();
+    require(merged_defaults.models.value(QStringLiteral("codex")) ==
+                QStringList{QStringLiteral("external")},
+            "a merged section also updates the running configuration");
     require(config.agentDefaults().harness == QStringLiteral("codex") &&
                 config.agentDefaults().machineFolders.value(QStringLiteral("box")) ==
                     QStringLiteral("~/w") &&
@@ -1131,6 +1137,15 @@ void appearance_switches_kinds() {
                      .toObject()
                      .contains(QStringLiteral("appearance")),
             "rewriting an older light window does not replace it");
+    require(legacy_light_window.setAppearance(QStringLiteral("dark")) &&
+                legacy_light_window.themeName() == QStringLiteral("lapis"),
+            "choosing the inferred mode applies it at once");
+    require(read_config(daylight_path)
+                    .value(QStringLiteral("visual"))
+                    .toObject()
+                    .value(QStringLiteral("appearance"))
+                    .toString() == QStringLiteral("dark"),
+            "the first explicit choice is saved");
     require(mixed.setAppearance(QStringLiteral("dark")) &&
                 mixed.themeName() == QStringLiteral("oled") &&
                 mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal"),

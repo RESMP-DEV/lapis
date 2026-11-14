@@ -1348,6 +1348,7 @@ void math_is_found() {
         {"A dollar $ alone", ""},
         {"Empty $$ $$ display", ""},
         {"Escaped inside $a \\$ b$", "I:a \\$ b"},
+        {"Broken $\\not$", "I:\\not"},
     };
     for (const auto& item : cases) {
         const auto found = sources(QString::fromUtf8(item.text));
@@ -1427,6 +1428,7 @@ void math_is_rendered() {
              "x^",
              "{a",
              "a}",
+             "\\not",
          })
         require(!math::render(QString::fromUtf8(latex)).ok, "what cannot be set shows as source");
     const auto letters = math::render(QStringLiteral("x + 2\\sin y"));

@@ -654,7 +654,12 @@ FocusScope {
             list.anchors.bottom = undefined
             list.height = 0
         }
-        function onPathChanged() { root.placeView() }
+        function onPathChanged() {
+            sendCheck.stop()
+            root.checkingText = ""
+            root.retried = false
+            root.placeView()
+        }
         function onReloaded() { root.placeView() }
     }
     function placeView() {
@@ -2019,6 +2024,9 @@ FocusScope {
             repeat: true
             running: taskDetail.task !== null && taskDetail.task.running && taskDetail.visible
             onTriggered: taskDetail.load()
+            onRunningChanged:
+                if (!running && taskDetail.task !== null && !taskDetail.task.running)
+                    taskDetail.load()
         }
         spacing: 6
         Text {

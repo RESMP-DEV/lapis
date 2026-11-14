@@ -889,11 +889,13 @@ class TranscriptModel final : public QAbstractListModel {
         qint64 offset{};
         QByteArray pending;
         qint64 modified_ms{};
+        bool active{};
     };
     // The child for `path` (a subagent's own conversation) read up to date;
     // nullptr when the file is missing.
     Child* child(const QString& path, transcript::Format format);
     std::vector<Child> children_; // most recent first, a few kept
+    QStringList active_children_; // running subagent files, never evicted
     // A Claude Code subagent's tool calls so far, counted from its file's
     // bytes as it grows (cheaper than reading it); -1 when it is missing.
     int counted_steps(const QString& path);

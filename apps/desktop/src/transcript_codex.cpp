@@ -64,7 +64,14 @@ void add_unified_diff(Item& item, const QString& diff) {
             line.startsWith(QLatin1String("---")) || line.startsWith(QLatin1Char('\\')))
             continue;
         if (line.startsWith(QLatin1Char('+')) || line.startsWith(QLatin1Char('-'))) {
-            add_lines(item, line.front(), line.mid(1));
+            if (line.size() == 1) {
+                const QChar sign = line.front();
+                (sign == QLatin1Char('+') ? item.added : item.removed) += 1;
+                if (std::cmp_less(item.diff.size(), diff_preview_lines))
+                    item.diff.push_back({sign, QString{}});
+            } else {
+                add_lines(item, line.front(), line.mid(1));
+            }
         } else if (line.startsWith(QLatin1Char(' ')) &&
                    std::cmp_less(item.diff.size(), diff_preview_lines)) {
             item.diff.push_back({QLatin1Char(' '), clip(line.mid(1), 400)});
