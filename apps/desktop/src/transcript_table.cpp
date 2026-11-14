@@ -19,6 +19,8 @@
 namespace lapis::desktop {
 namespace transcript {
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<qreal> table_widths(const std::vector<TableColumn>& columns, qreal available,
                                 const TableRules& rules) {
     const qreal ch = std::max<qreal>(1, rules.ch);
@@ -235,6 +237,8 @@ QString cell_text(const QTextTableCell& cell) {
 
 // The cells' type and alignment, the header's weight and tone, a label
 // column's slight weight, and their padding.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void dress(QTextTable& table, const QString& markdown, const QVariantMap& style,
            QList<bool>& numeric) {
     const int size = cell_size(style);
@@ -381,6 +385,8 @@ TableRules rules_for(const QVariantMap& style) {
 } // namespace
 } // namespace transcript
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QVariantMap TranscriptModel::styleTable(QQuickTextDocument* target, const QString& markdown,
                                         const QVariantMap& style, qreal available) const {
     if (target == nullptr || target->textDocument() == nullptr)

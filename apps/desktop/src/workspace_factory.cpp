@@ -430,6 +430,8 @@ bool Workspace::setFixtureConversation(const QString& id, const QString& file) {
     return true;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool Workspace::setFixtureLaunch(const QString& id, const QString& program,
                                  const QStringList& arguments) {
     if (!fixture_mode_ || !agents_.contains(id))

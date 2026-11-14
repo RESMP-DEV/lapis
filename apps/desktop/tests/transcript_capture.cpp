@@ -1407,7 +1407,11 @@ int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
 // message; and for Codex and agy, text in the agent's input box pulled into
 // the bar before a send and after a stop instead of being pasted over.
 // `out`, when given, saves the bubble states as PNGs.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
+                   // Positional contract; callers and tests pin the order.
+                   // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                    const QString& folder, const QString& out) {
     int failures = 0;
     const auto expect = [&failures](bool ok, const QString& what) {
@@ -1966,6 +1970,8 @@ QList<QByteArray> long_history(const char* format) {
 // picture in place lay out over nothing in the thread just swapped from its
 // end to the whole; then the same after switching away and back to it, now
 // kept.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_swapped(QQuickView& view, QQuickItem* root, TranscriptModel& model,
                   const QString& folder) {
     int failures = 0;
@@ -2593,6 +2599,8 @@ const char* const kPickerListing = "gemini-4-carbon-medium\tGemini 4 Carbon (Med
 // level's own id, the label changes at once with no new record and
 // settles on the CLI's answer, a refusal is shown, and a model the list
 // does not have still shows as reported.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_picker(QQuickView& view, QQuickItem* root, TranscriptModel& model,
                  const QString& capture) {
     int failures = 0;

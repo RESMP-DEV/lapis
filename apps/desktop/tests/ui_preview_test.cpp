@@ -2974,6 +2974,8 @@ Window {
 // the terminal's right edge that the whole strip answers, a press on the
 // thumb that keeps its hold, the wheel over the bar still scrolling, and
 // letting go at the bottom returning to live.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run_history_ui_tests() {
     using namespace lapis::desktop;
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-history-ui-XXXXXX"));
@@ -3542,6 +3544,8 @@ void check_sidebar_theme(QQuickWindow& window, lapis::desktop::Workspace& worksp
 // only the focused agent's title after a mark in its category's colour,
 // muted in the thread's theme (the window's with a terminal), following the
 // focused agent; the stage starts close under it.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void check_hidden_sidebar_title(QQuickWindow& window, lapis::desktop::Workspace& workspace,
                                 lapis::desktop::Config& config_model,
                                 const QTemporaryDir& directory, const QString& captures) {
@@ -3837,6 +3841,8 @@ void check_peer_thread(QQuickWindow& window, lapis::desktop::Workspace& workspac
 // in step, a second toggle reverses from where it is, the stage's terminal
 // holds its grid until the slide ends, and reduced motion or a change from
 // the config is instant. At rest both states are exactly as before.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void check_sidebar_slide(QQuickWindow& window, lapis::desktop::AppWindow& preview,
                          lapis::desktop::Config& config_model, const QString& captures) {
     using namespace lapis::desktop;

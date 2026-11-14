@@ -138,7 +138,7 @@ class RemoteThreads final : public QObject {
     std::vector<std::unique_ptr<Mirror>> mirrors_;
     QHash<QString, QPointer<QProcess>> uploads_;
     quint64 upload_serial_{};
-    Mirror* mirror(const QString& agent) const;
+    [[nodiscard]] Mirror* mirror(const QString& agent) const;
     Mirror& ensure(const QString& agent, const Target& target);
     void open(Mirror& mirror);
     void start(Mirror& mirror);

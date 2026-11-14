@@ -763,7 +763,8 @@ void codex_peer_turns_fold() {
 }
 } // namespace
 
-int main(int argc, char** argv) {
+namespace {
+int run_checks(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
     formats_are_told_apart();
@@ -785,4 +786,14 @@ int main(int argc, char** argv) {
     if (failures == 0)
         std::puts("transcript_clis_test: PASS");
     return failures == 0 ? 0 : 1;
+}
+} // namespace
+
+int main(int argc, char** argv) {
+    try {
+        return run_checks(argc, argv);
+    } catch (...) {
+        std::fputs("transcript_clis_test: FAIL unexpected exception\n", stderr);
+        return 1;
+    }
 }

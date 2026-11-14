@@ -320,7 +320,7 @@ if(BUILD_TESTING)
     add_test(NAME factory COMMAND lapis_factory_tests)
     set_tests_properties(factory PROPERTIES TIMEOUT 30
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    add_executable(lapis_factory_ui_tests tests/factory_ui_test.cpp)
+    add_executable(lapis_factory_ui_tests tests/factory_ui_test.cpp tests/tab_flow_guesses.hpp)
     target_link_libraries(lapis_factory_ui_tests PRIVATE lapis_project_options lapis_desktop_core
         Qt6::QuickControls2)
     target_compile_definitions(lapis_factory_ui_tests PRIVATE

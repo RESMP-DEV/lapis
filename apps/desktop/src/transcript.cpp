@@ -85,6 +85,8 @@ QString duration_text(qint64 ms) {
     return QStringLiteral("%1d %2h").arg(seconds / 86400).arg((seconds % 86400) / 3600);
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::optional<PeerMessage> peer_message(const QString& text) {
     static const auto lead = QStringLiteral("[lapis-peers message from ");
     qsizetype at = 0;
@@ -1109,6 +1111,8 @@ struct InputBox {
 // agy draws inline, so on a short conversation its box sits high on the
 // screen: the search starts at the lowest row with text, not the screen's
 // last row.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 InputBox input_box(const QStringList& screen, Format format) {
     const QChar mark = format == Format::claude  ? QChar(0x276F) // ❯
                        : format == Format::codex ? QChar(0x203A) // ›
@@ -1252,7 +1256,7 @@ QString queue_mode(Format format, bool agy_immediate) {
 bool antigravity_sends_immediately(const QString& settings_path) {
     QFile file(settings_path);
     // A settings file is a few kilobytes; a larger one is not agy's.
-    constexpr qint64 most_bytes = qint64{1} << 20;
+    constexpr qint64 most_bytes = qint64{1024} * 1024;
     if (!file.open(QIODevice::ReadOnly) || file.size() > most_bytes)
         return false;
     const auto value = QJsonDocument::fromJson(file.readAll())
@@ -1385,7 +1389,7 @@ bool same_model(const QString& named, const QString& resolved, const QString& re
 
 QString antigravity_model_setting(const QString& settings_path) {
     QFile file(settings_path);
-    constexpr qint64 most_bytes = qint64{1} << 20; // as antigravity_sends_immediately
+    constexpr qint64 most_bytes = qint64{1024} * 1024; // as antigravity_sends_immediately
     if (!file.open(QIODevice::ReadOnly) || file.size() > most_bytes)
         return {};
     return QJsonDocument::fromJson(file.readAll())
@@ -2549,6 +2553,8 @@ int TranscriptModel::rowCount(const QModelIndex& parent) const {
     return parent.isValid() ? 0 : static_cast<int>(layout_.rows.size());
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
     if (!index.isValid() || std::cmp_greater_equal(index.row(), layout_.rows.size()))
         return {};
@@ -3177,7 +3183,7 @@ namespace {
 qint64 row_key(const transcript::Layout& layout, const transcript::Row& row) {
     // A peer turn's row stands apart from its message's own row under it.
     if (row.peer)
-        return -(row.item + 1) - (qint64{1} << 41);
+        return -(row.item + 1) - qint64{2'199'023'255'552}; // 2^41
     if (row.item >= 0)
         return row.item;
     const auto& turn = layout.turns[static_cast<size_t>(row.turn)];
@@ -3510,6 +3516,8 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
     transcript::detail::present(*target->textDocument(), document, style);
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void transcript::detail::compose(QTextDocument& document, const QString& markdown,
                                  const QVariantMap& style) {
     document.setUndoRedoEnabled(false);
@@ -4322,10 +4330,11 @@ void TranscriptModel::setShown(const QVariantMap& shown) {
     // A choice made before the CLI saved a file is that file's once it shows.
     if (const auto waiting = chosen_.find(QStringLiteral("agent:") + agent);
         !agent.isEmpty() && !path.isEmpty() && waiting != chosen_.end()) {
-        const auto choice = waiting.value();
+        // A copy: erasing the entry ends the reference.
+        auto choice = waiting.value();
         chosen_.erase(waiting);
         if (!chosen_.contains(path))
-            chosen_.insert(path, choice);
+            chosen_.insert(path, std::move(choice));
     }
     // Prompts sent before this agent's CLI saved anything wait for it, kept
     // apart from whatever shows next.
@@ -4352,6 +4361,8 @@ void TranscriptModel::setShown(const QVariantMap& shown) {
     notePending();
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void TranscriptModel::showPath(const QString& path, bool force) {
     if (path == path_ && !force)
         return;

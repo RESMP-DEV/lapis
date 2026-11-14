@@ -304,7 +304,8 @@ void layout_cost() {
 }
 } // namespace
 
-int main(int argc, char** argv) {
+namespace {
+int run_checks(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
     columns_share_the_room();
@@ -315,4 +316,14 @@ int main(int argc, char** argv) {
     if (failures == 0)
         std::puts("transcript-table: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+} // namespace
+
+int main(int argc, char** argv) {
+    try {
+        return run_checks(argc, argv);
+    } catch (...) {
+        std::fputs("transcript-table: FAIL unexpected exception\n", stderr);
+        return EXIT_FAILURE;
+    }
 }

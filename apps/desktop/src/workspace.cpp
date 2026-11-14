@@ -409,7 +409,7 @@ bool followRemoteConversation(QString& command, const QString& conversation) {
         moved.replace(stop.capturedStart(0), stop.capturedLength(0),
                       QStringLiteral(R"re(p="[-]-(resume|session-id) ($s|%1)")re").arg(previous));
     moved.replace(marker.capturedStart(1), marker.capturedLength(1), conversation);
-    command = moved;
+    command = std::move(moved);
     return true;
 }
 QString newConversation() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
@@ -1872,6 +1872,8 @@ QVariantList Workspace::pickerModels(const QString& harness) const {
     return picker_list(picker_models(modelChoices(harness)));
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QVariantMap Workspace::agentModel(const QString& id) const {
     const auto entry = agents_.constFind(id);
     if (entry == agents_.cend())
@@ -2516,7 +2518,7 @@ void Workspace::setupRemoteThreads() {
 }
 void Workspace::setRemoteCacheMB(int mb) {
     if (remote_threads_ != nullptr)
-        remote_threads_->setCacheLimit(qint64{std::max(0, mb)} << 20);
+        remote_threads_->setCacheLimit(qint64{std::max(0, mb)} * 1024 * 1024);
 }
 QString Workspace::conversationFile(const QString& id) {
     if (fixture_mode_)

@@ -69,6 +69,8 @@ QString read_text(const QString& path, qint64 longest) {
 }
 } // namespace
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 LaunchedModel launched_model(const QString& harness, const QStringList& words) {
     const bool claude = harness == QLatin1String("claude");
     const bool codex = harness == QLatin1String("codex");

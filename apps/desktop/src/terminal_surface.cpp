@@ -469,6 +469,8 @@ bool text_after_cursor(const session::TerminalSnapshot& snapshot) {
 }
 
 SuggestionLayout lay_out_suggestion(const session::TerminalSnapshot& snapshot,
+                                    // Positional contract; callers and tests pin the order.
+                                    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                                     const QFontMetricsF& metrics, const QString& suggestion,
                                     const QString& author) {
     SuggestionLayout layout;

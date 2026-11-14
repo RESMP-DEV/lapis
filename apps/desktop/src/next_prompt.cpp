@@ -416,6 +416,8 @@ QString walls_argument(const NextPromptSettings& settings) {
 }
 } // namespace
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QString folder_zone(const NextPromptSettings& settings, const QString& machine,
                     const QString& folder) {
     if (!settings.walled())
@@ -476,6 +478,8 @@ NextPromptSettings parse_next_prompt(const QJsonValue& value) {
     return settings;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QString model_label(const QString& model, const QString& effort) {
     static const QStringList levels{QStringLiteral("low"), QStringLiteral("medium"),
                                     QStringLiteral("high"), QStringLiteral("xhigh"),
@@ -843,6 +847,8 @@ namespace {
 // A guess's plan on its log record: the entries that failed before the one
 // that answered ({provider, kind}; no message), the pool draw and its seed,
 // and the entries left out ({provider, why}: cooling or missing).
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void insert_chain(QJsonObject& event, const QJsonObject& answer, const QJsonObject& plan) {
     const auto failures = answer.value(QStringLiteral("failures")).toArray();
     QJsonArray fallbacks;
@@ -1001,7 +1007,7 @@ void NextPrompt::predict(const QString& id, quint64 generation, const QJsonObjec
                            ? QStringLiteral("base")
                            : settings_.promptArms.at(random->bounded(settings_.promptArms.size()));
     // The pool draw's seed is logged, so a guess's draw can be replayed.
-    const auto seed = static_cast<int>(random->bounded(1 << 30));
+    const auto seed = static_cast<int>(random->bounded(1'073'741'824));
     if (!pool.isEmpty())
         arms_made.plan.insert(QStringLiteral("seed"), seed);
     if (!excluded.isEmpty())

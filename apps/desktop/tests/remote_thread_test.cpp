@@ -142,6 +142,8 @@ QString conversationIn(const QString& command) {
     return id.match(command).captured(1);
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QString endpointOf(const QString& storage, const QString& agent) {
     const auto agents =
         QJsonDocument::fromJson(readFile(storage)).object()[QStringLiteral("agents")].toArray();
@@ -246,6 +248,8 @@ QByteArray record(int n) {
                      .toUtf8() +
                      '\n';
 }
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QByteArray records(int from, int to) {
     QByteArray out;
     for (int n = from; n <= to; ++n)
@@ -273,6 +277,8 @@ struct View {
     [[nodiscard]] lapis::desktop::TranscriptModel* model() const {
         return qobject_cast<lapis::desktop::TranscriptModel*>(workspace.transcript());
     }
+    // Called for its effect too; the path is for the checks that want it.
+    // NOLINTNEXTLINE(modernize-use-nodiscard)
     QString show() const {
         const auto path = workspace.conversationFile(agent);
         model()->setShown({{QStringLiteral("agent"), agent},
@@ -321,13 +327,18 @@ while True:
         timing.keep = std::chrono::milliseconds(800);
         timing.waits = {std::chrono::milliseconds(100)};
         timing.check = std::chrono::milliseconds(100);
-        timing.tail_bytes = qint64{1} << 20;
+        timing.tail_bytes = qint64{1024} * 1024;
         threads->setTimingForTesting(timing);
     }
     ~RemoteFixture() {
-        for (const auto& id : workspace->agentConversations().keys())
-            workspace->closeAgent(id, true);
-        waitFor([this] { return workspace->agents().isEmpty(); }, 5000);
+        // Cleanup is best effort; a failure here must not end the run.
+        try {
+            for (const auto& id : workspace->agentConversations().keys())
+                workspace->closeAgent(id, true);
+            waitFor([this] { return workspace->agents().isEmpty(); }, 5000);
+        } catch (...) {
+            std::cerr << "remote-thread: fixture cleanup failed\n";
+        }
         workspace.reset();
     }
     RemoteFixture(const RemoteFixture&) = delete;
@@ -493,7 +504,7 @@ void remoteThreadShowsALargeFileTailFirst() {
     const auto conversation = workspace.agentConversation(id);
     const auto remote = fixture.transcript(conversation);
     QByteArray big;
-    for (int n = 1; big.size() < 6 * 1024 * 1024; ++n)
+    for (int n = 1; big.size() < qsizetype{6} * 1024 * 1024; ++n)
         big += record(n).replace("prompt", QByteArray(400, 'x') + " prompt");
     writeFile(remote, big);
     fixture.marker(QStringLiteral("slow"));
@@ -503,9 +514,9 @@ void remoteThreadShowsALargeFileTailFirst() {
     require(waitFor([&] { return view.show() == tail; }, 10000), "the end shows first");
     // It may still be arriving: what is there starts at a line in the last MiB.
     const auto shown = readFile(tail);
-    const auto start = big.indexOf(shown, big.size() - (qint64{1} << 20));
+    const auto start = big.indexOf(shown, big.size() - qint64{1024} * 1024);
     require(!shown.isEmpty() && start > 0 && big.at(start - 1) == '\n' &&
-                QFileInfo(tail).size() <= (qint64{1} << 20),
+                QFileInfo(tail).size() <= qint64{1024} * 1024,
             "the end is at most the asked size, cut at a line start");
     const auto appended = records(9001, 9002);
     appendFile(remote, appended);
@@ -591,7 +602,7 @@ void remoteAttachmentsUploadFirst() {
     auto& workspace = *fixture.workspace;
     const auto id = fixture.agent(QStringLiteral("attach"));
     const auto local = fixture.root.filePath(QStringLiteral("mac/Screen Shot.png"));
-    writeFile(local, QByteArray(300 * 1024, 'p'));
+    writeFile(local, QByteArray(qsizetype{300} * 1024, 'p'));
     QString token_done;
     QString remote_path;
     QString failure;
@@ -621,7 +632,7 @@ void remoteAttachmentsUploadFirst() {
     require(QDir(folder).entryList(QDir::Files).size() == 1, "no partial copy is left");
 
     const auto big = fixture.root.filePath(QStringLiteral("mac/big.bin"));
-    writeFile(big, QByteArray(21 * 1024 * 1024, 'b'));
+    writeFile(big, QByteArray(qsizetype{21} * 1024 * 1024, 'b'));
     require(workspace.uploadAttachment(id, big)
                 .value(QStringLiteral("error"))
                 .toString()
@@ -753,8 +764,8 @@ void remoteCacheKeepsItsBudget() {
     const auto folder = fixture.root.filePath(QStringLiteral("runtime/remote/buildbox"));
     const auto old_one = folder + QStringLiteral("/0ld00000-0000-4000-8000-000000000001.jsonl");
     const auto newer = folder + QStringLiteral("/0ld00000-0000-4000-8000-000000000002.jsonl");
-    writeFile(old_one, QByteArray(700 * 1024, 'o'));
-    writeFile(newer, QByteArray(700 * 1024, 'n'));
+    writeFile(old_one, QByteArray(qsizetype{700} * 1024, 'o'));
+    writeFile(newer, QByteArray(qsizetype{700} * 1024, 'n'));
     QFile(old_one).setFileTime(QDateTime::currentDateTime().addDays(-2),
                                QFileDevice::FileModificationTime);
     QFile(newer).setFileTime(QDateTime::currentDateTime().addDays(-1),

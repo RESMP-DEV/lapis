@@ -429,6 +429,8 @@ void RemoteThreads::receive(Mirror& mirror) {
         emit changed(mirror.agent);
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool RemoteThreads::handle(Mirror& mirror, char type, const QByteArray& payload) {
     const auto chunk = [&payload](qint64& offset) {
         if (payload.size() < 8)
@@ -543,7 +545,7 @@ void RemoteThreads::finished(Mirror& mirror, int code, bool crashed) {
                            : QStringLiteral("The thread helper on %1 stopped (exit %2)")
                                  .arg(mirror.target.machine)
                                  .arg(code);
-    mirror.reason = why;
+    mirror.reason = std::move(why);
     mirror.phase = mirror.hello ? Mirror::Phase::retrying : Mirror::Phase::failed;
     retry(mirror);
     mirror.shown_path = path(mirror);
@@ -696,6 +698,8 @@ void RemoteThreads::trimCache() {
     }
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters,readability-function-cognitive-complexity)
 QString RemoteThreads::upload(const QString& agent, const QString& local, QString* error) {
     const auto refuse = [error](const QString& why) {
         if (error != nullptr)

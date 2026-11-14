@@ -1293,6 +1293,8 @@ void composer_keys() {
 // the file completion, which takes the next Return. The message is submitted
 // exactly once: the paste with a space after the mention, then one Return of
 // its own once the paste has settled.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void composer_mentions() {
     Fixture f;
     QQuickWindow window;

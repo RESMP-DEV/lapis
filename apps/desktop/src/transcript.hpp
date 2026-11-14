@@ -419,7 +419,7 @@ struct Choice {
 // binaries, Claude Code's recorded command output); a decoration before the
 // text (⎿, •, ✓) is skipped. A layout or wording they change is not read.
 struct ScreenChoice {
-    enum class Kind { model, effort, refused };
+    enum class Kind : std::uint8_t { model, effort, refused };
     Kind kind{};
     QString model;  // as the CLI names it (Claude Code: its API id)
     QString effort; // a level, when the line gives one
