@@ -95,8 +95,13 @@ class TerminalSurface : public QQuickItem {
     Q_PROPERTY(
         qreal minimumScale READ minimumScale WRITE setMinimumScale NOTIFY minimumScaleChanged)
     // While true the agent keeps its size: a divider or window being dragged
-    // resizes the terminal once, when the drag ends, not every step.
+    // (or the sidebar sliding) resizes the terminal once, when it ends, not
+    // every step.
     Q_PROPERTY(bool holdResize READ holdResize WRITE setHoldResize NOTIFY holdResizeChanged)
+    // While true the screen keeps the layout and scale it had when the hold
+    // began, so glyphs never zoom as the item eases to a new size; the item's
+    // edge clips the screen or shows a margin until the hold ends.
+    Q_PROPERTY(bool holdScreen READ holdScreen WRITE setHoldScreen NOTIFY holdScreenChanged)
     // Typing over a scrolled-back full-screen program returns it to its
     // bottom before the key is delivered.
     Q_PROPERTY(bool scrollToBottomOnTyping READ scrollToBottomOnTyping WRITE
@@ -191,6 +196,8 @@ class TerminalSurface : public QQuickItem {
     [[nodiscard]] qreal minimumScale() const { return minimum_scale_; }
     [[nodiscard]] bool holdResize() const { return hold_resize_; }
     void setHoldResize(bool hold);
+    [[nodiscard]] bool holdScreen() const { return held_viewport_.has_value(); }
+    void setHoldScreen(bool hold);
     [[nodiscard]] bool scrollToBottomOnTyping() const { return scroll_to_bottom_on_typing_; }
     void setScrollToBottomOnTyping(bool on);
     void setMinimumScale(qreal scale);
@@ -231,6 +238,7 @@ class TerminalSurface : public QQuickItem {
     void frameIntervalChanged();
     void minimumScaleChanged();
     void holdResizeChanged();
+    void holdScreenChanged();
     void scrollToBottomOnTypingChanged();
     void inputOwnershipChanged();
     void fontChanged();
@@ -297,6 +305,8 @@ class TerminalSurface : public QQuickItem {
         qreal scale{};
     };
     [[nodiscard]] std::optional<CellGrid> cellGrid() const;
+    // The size the screen is laid out in: the item's, or the held one.
+    [[nodiscard]] QSizeF layoutViewport() const;
     // Item pixels the history page is drawn below its rows: the part of a row
     // a trackpad scrolled back past it. 0 when live or at the oldest row.
     [[nodiscard]] qreal historySlide() const;
@@ -351,6 +361,8 @@ class TerminalSurface : public QQuickItem {
     QSize grid_size_;
     bool interactive_{};
     bool hold_resize_{};
+    // The item size when holdScreen began; the screen is laid out in it.
+    std::optional<QSizeF> held_viewport_;
     bool scroll_to_bottom_on_typing_{true};
     int frame_interval_{};
     qreal minimum_scale_{};

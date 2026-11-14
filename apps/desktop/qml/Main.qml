@@ -169,6 +169,35 @@ ApplicationWindow {
     // its sidebar row gives it; the active category's name with no agent.
     readonly property bool stageTitleShown: narrow || !sidebarExpanded
     readonly property int stageTitleHeight: Math.round(chromeFont * 1.8)
+    // How far the sidebar is in: 0 hidden, 1 shown. A toggle while running
+    // slides it in from the window's left edge (the stage's edge, the title
+    // line and the stage's top ease with it); it reverses from where it is
+    // when toggled again, and every other change is instant.
+    readonly property bool sidebarShown: !narrow && sidebarExpanded
+    property real sidebarReveal: sidebarShown ? 1 : 0
+    property bool sidebarSlideArmed: false
+    readonly property int sidebarSlideDuration: Math.min(200, motionDuration + 40)
+    // While it slides the stage's terminals keep their grid and take the
+    // final size once, so the agent redraws once, not on every frame; their
+    // screens keep their scale (the stage's edge clips them) rather than
+    // zooming the glyphs. The hold outlasts the motion by a few frames: the
+    // layout places the stage at its last width on the next frame, and the
+    // size sent must be that.
+    readonly property bool sidebarSliding: sidebarSlideArmed || sidebarSettle.running
+    Behavior on sidebarReveal {
+        enabled: window.sidebarSlideArmed
+        NumberAnimation {
+            duration: window.sidebarSlideDuration
+            easing.type: Easing.OutCubic
+        }
+    }
+    onSidebarRevealChanged: {
+        if (sidebarSlideArmed && sidebarReveal === (sidebarShown ? 1 : 0)) {
+            sidebarSettle.restart()
+            sidebarSlideArmed = false
+        }
+    }
+    Timer { id: sidebarSettle; interval: 50 }
     readonly property var stageTitleGroup: {
         const agent = workspace.focusedAgent
         const id = agent ? agentCategory(agent.agentId) : workspace.activeCategoryId
@@ -334,7 +363,16 @@ ApplicationWindow {
     }
     function toggleSidebar() {
         if (!interactionArmed) return
-        config.setSidebarVisible(!sidebarExpanded)
+        showSidebar(!sidebarExpanded)
+    }
+    // Command-B and Settings slide the sidebar; a config load, a restore or a
+    // window too narrow for it changes it at once.
+    function showSidebar(on) {
+        const armed = sidebarSlideArmed
+        if (on !== sidebarExpanded && !narrow && motionEnabled)
+            sidebarSlideArmed = true
+        if (!config.setSidebarVisible(on))
+            sidebarSlideArmed = armed
     }
     function togglePreviews() {
         if (!interactionArmed) return
@@ -2138,7 +2176,7 @@ ApplicationWindow {
         fileBacked: config.fileBacked
         onVisualChosen: function(key, value) { config.setVisual(key, value) }
         onAppearanceChosen: function(mode) { config.setAppearance(mode) }
-        onSidebarChosen: function(on) { config.setSidebarVisible(on) }
+        onSidebarChosen: function(on) { window.showSidebar(on) }
         onPreviewsChosen: function(on) { config.setPreviewsVisible(on) }
         onScrollChosen: function(on) { config.setScrollToBottomOnTyping(on) }
         onSettingChosen: function(path, value) { config.setSetting(path, value) }
@@ -2978,7 +3016,9 @@ ApplicationWindow {
     Item {
         id: stageTitle
         objectName: "stageTitle"
-        visible: window.stageTitleShown && window.stageTitleText.length > 0
+        // It fades out as the sidebar slides in, and back as it leaves.
+        visible: window.sidebarReveal < 1 && window.stageTitleText.length > 0
+        opacity: 1 - window.sidebarReveal
         x: 8
         width: window.width - 16
         height: window.stageTitleHeight
@@ -3016,16 +3056,33 @@ ApplicationWindow {
         anchors.fill: parent
         anchors.margins: 8
         // The stage starts under the agent's title when the sidebar is hidden.
-        anchors.topMargin: window.stageTitleShown ? window.stageTitleHeight : 8
-        spacing: 8
+        anchors.topMargin: Math.round(window.stageTitleHeight
+                                      + (8 - window.stageTitleHeight) * window.sidebarReveal)
+        // The gaps live in the items (the sidebar's slot and the board's
+        // margin), so a hidden sidebar leaves none behind.
+        spacing: 0
 
+        // The room the sidebar takes, with the gap after it: it eases between
+        // none and the full width while the sidebar slides.
+        Item {
+            id: sidebarSlot
+            objectName: "sidebarSlot"
+            visible: window.sidebarReveal > 0
+            Layout.preferredWidth: Math.round((window.railWidth + 8) * window.sidebarReveal)
+            Layout.maximumWidth: Layout.preferredWidth
+            Layout.fillHeight: true
+        }
+
+        // The sidebar itself always keeps its full width, so its rows never
+        // reflow; it slides in from the window's edge to the slot's right.
         Rectangle {
             id: categoryRail
             objectName: "categoryRail"
-            visible: !window.narrow && window.sidebarExpanded
-            Layout.preferredWidth: window.railWidth
-            Layout.maximumWidth: window.railWidth
-            Layout.fillHeight: true
+            parent: sidebarSlot
+            x: sidebarSlot.width - 8 - width
+            width: window.railWidth
+            height: sidebarSlot.height
+            opacity: window.sidebarReveal
             // Beside a thread the panel is the thread theme's recessed tone,
             // flush with the gaps around the stage (no divider of its own).
             color: window.chrome.panel
@@ -4067,6 +4124,8 @@ ApplicationWindow {
                     fontFamily: config.terminalFontFamily
                     fontPixelSize: window.terminalFontSize
                     scrollToBottomOnTyping: config.scrollToBottomOnTyping
+                    holdResize: window.sidebarSliding
+                    holdScreen: window.sidebarSliding
                     visible: document !== null
                     enabled: visible
                     // A history page stays interactive for the wheel, selection and
@@ -4771,7 +4830,7 @@ ApplicationWindow {
         FactoryBoard {
             id: factoryBoard
             readonly property real room: window.width - 16
-                                         - (categoryRail.visible ? categoryRail.width + 8 : 0)
+                                         - (sidebarSlot.visible ? sidebarSlot.width : 0)
             visible: window.factoryHomeShown
             theme: window
             // Read only in the factory view, so the classic view never
@@ -4781,6 +4840,7 @@ ApplicationWindow {
             collapsed: window.factoryBoardCollapsed
             interactive: window.interactionArmed
             Layout.fillHeight: true
+            Layout.leftMargin: 8
             Layout.preferredWidth: collapsed ? 46 : Math.max(280, Math.round(room * 0.4))
             Layout.maximumWidth: Layout.preferredWidth
             onCollapseToggled: window.factoryBoardCollapsed = !window.factoryBoardCollapsed
@@ -4833,6 +4893,8 @@ ApplicationWindow {
                 document: window.terminalsAvailable ? terminals.current : null
                 fontFamily: config.terminalFontFamily
                 fontPixelSize: window.terminalFontSize
+                holdResize: window.sidebarSliding
+                holdScreen: window.sidebarSliding
                 visible: sidePanel.visible && document !== null
                 enabled: visible
                 // A history page stays interactive for selection and typing

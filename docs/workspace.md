@@ -41,7 +41,11 @@ agent is open), muted, in the space above the stage. It is not a button and
 takes no clicks or keyboard; hovering it names the category. Commands still
 opens with its shortcut, and categories change with Command-1 to 9, the next
 and previous category shortcuts, the same entries in Commands, or by showing
-the sidebar again.
+the sidebar again. Command-B (or the Settings switch) slides the sidebar in from
+the window's edge in under a fifth of a second while that line fades; pressing
+it again mid-slide turns it back, and with reduced motion it changes at once.
+The agent's terminal keeps its size during the slide and is resized once when
+it ends.
 
 The strip of live previews under the stage is off unless you turn it on with
 **Show agent previews** in Commands (or `previewsVisible` in
