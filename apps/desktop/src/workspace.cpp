@@ -1176,6 +1176,7 @@ void Workspace::watch(Agent* item) {
     connect(item, &Agent::attentionArrived, this, [this, item] {
         auto& known = known_requests_[item->agentId()];
         const auto ids = item->attentionRequestIds();
+        const bool was_unknown = known.empty();
         const bool had_pending = std::any_of(
             ids.begin(), ids.end(), [&known](const QString& id) { return known.contains(id); });
         const bool fresh = std::any_of(ids.begin(), ids.end(),
@@ -1188,7 +1189,7 @@ void Workspace::watch(Agent* item) {
         if (!had_pending) {
             const auto arrived = QDateTime::currentMSecsSinceEpoch();
             const auto restored = item->neededAtMs();
-            waiting_since_.insert(item->agentId(), known.empty() && restored > 0
+            waiting_since_.insert(item->agentId(), was_unknown && restored > 0
                                                        ? std::min(restored, arrived)
                                                        : arrived);
         }

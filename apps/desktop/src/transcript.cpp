@@ -2231,6 +2231,7 @@ TranscriptModel::Child* TranscriptModel::child(const QString& path, transcript::
             return nullptr;
         Child fresh;
         fresh.path = path;
+        fresh.active = active_children_.contains(path);
         children_.insert(children_.begin(), std::move(fresh));
         while (children_.size() > 8) {
             // Idle children are bounded; the active working set is kept so a
