@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-14T05:33:01Z",
+  "recorded_at": "2026-11-14T05:51:26Z",
   "agent": "Codex",
   "base_revision": "a44c6cb4576951eda03ddf8e7ae76107c8c5ff86",
   "integration_revision": "ee73f8547c809d465f7b7dfedae2f63d2517a2d9",
   "merge_revision": "a02b86b3cc77939923f90ffe3df606e4efae60bd",
-  "source_revision": "39ac822d77d40d6e809f7722ded8c6b774455e2a",
+  "source_revision": "b1cfe785bcfb91d3376f53024e09f80fdcd0d86b",
   "changed_source_manifest": {
     "algorithm": "sha256(git diff --binary base_revision..source_revision -- ':(exclude)evidence/*')",
-    "digest": "c49666ebec28ae94ccca00578ed3db15482c4002bdaf13899fe7d22c2a051d28",
+    "digest": "23792ab5f85219f9e4b543344f92a7b1acb8b78a4375f1f30d515ed6c14ddb90",
     "changed_paths": 80
   },
   "scope": "Merge the visual thread-loading, visual-view, sidebar/status, media/settings, and Factory stack into current main while preserving main's pooled preview decoding.",
@@ -27,16 +27,16 @@
     "The second review wave repaired Factory selection rollback, agent-scoped send checks, final task-detail loads, running-state config adoption, signed blank diff lines, malformed \\not handling, active child-reader retention, reset-safe reader replacement, new request timestamps, capture fixture paths, benchmark loading checks, and attachment-only prompt acknowledgement.",
     "Append-only warm catch-up adoption now preserves already-open work rows and the saved scroll place, carries only prompts sent after the warm clone, and protects the shown catch-up entry from budget eviction; the warm-growth regression covers all four.",
     "A newly inserted active child reader is marked active before eviction, and a restored request reuses its saved wait timestamp when the request set was previously unknown.",
-    "Sent prompts carry stable tickets across cloned readers; in-flight readers are retained on switch, the selected catch-up starts immediately, and completed delivery clears loading and stale kept state. A second warm-growth case proves prompts survive a switch during loading."
+    "Sent prompts carry stable tickets across cloned readers; in-flight readers are retained on switch, the selected catch-up starts immediately, completed delivery clears loading and stale kept state, a completed whole read replaces a protected cold-tail placeholder, and only a genuinely restored unseen wait reuses its saved age. Warm-growth cases prove prompts survive switches during loading."
   ],
   "validation": [
     {
       "command": "python3 scripts/lapis.py quality",
-      "result": "passed on 39ac822 content; receipt build/reports/quality/receipt.json"
+      "result": "passed on b1cfe78 content; receipt build/reports/quality/receipt.json"
     },
     {
       "command": "python3 scripts/lapis.py build",
-      "result": "passed on 39ac822 content: configure, build, 49/49 enabled CTest, clang-format, 116/116 clang-tidy jobs, and Cppcheck"
+      "result": "passed on b1cfe78 content: configure, build, 49/49 enabled CTest, clang-format, 116/116 clang-tidy jobs, and Cppcheck"
     },
     {
       "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -LE screen",
@@ -48,7 +48,7 @@
     },
     {
       "command": "python3 scripts/lapis.py ui-review --json",
-      "result": "passed on 39ac822 content; receipt build/reports/ui-review/20261114T053043Z-e47hoifs/receipt.json"
+      "result": "passed on b1cfe78 content; receipt build/reports/ui-review/20261114T054926Z-2rg6c8yn/receipt.json"
     },
     {
       "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -R '^(transcript|transcript-switch|transcript-clis)$'",
@@ -84,7 +84,7 @@
     },
     {
       "command": "LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app && python3 scripts/package_macos.py verify",
-      "result": "ad-hoc signed arm64 bundle, strict signature/linkage checks, MoltenVK GPU enumeration, and launchd headless host passed on 39ac822 content"
+      "result": "ad-hoc signed arm64 bundle, strict signature/linkage checks, MoltenVK GPU enumeration, and launchd headless host passed on b1cfe78 content"
     }
   ],
   "static_analysis_state": {
@@ -98,7 +98,7 @@
       "bugprone-easily-swappable-parameters": 24,
       "other": 19
     },
-    "cleanup_revision": "39ac822d77d40d6e809f7722ded8c6b774455e2a",
+    "cleanup_revision": "b1cfe785bcfb91d3376f53024e09f80fdcd0d86b",
     "remaining_unique_findings": 0,
     "desktop_clang_tidy_jobs_passed": 116,
     "note": "Concrete optional-access, move, arithmetic, shift, enum, loop, branch, and exception-escape defects were repaired. Cohesive parser/test complexity and fixed positional contracts are suppressed only at the offending declarations with local reasons; thresholds and global baselines were not changed."
