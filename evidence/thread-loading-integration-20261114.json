@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-14T00:33:36Z",
+  "recorded_at": "2026-11-14T01:10:55Z",
   "agent": "Codex",
   "base_revision": "a44c6cb4576951eda03ddf8e7ae76107c8c5ff86",
   "integration_revision": "ee73f8547c809d465f7b7dfedae2f63d2517a2d9",
   "merge_revision": "a02b86b3cc77939923f90ffe3df606e4efae60bd",
-  "source_revision": "0939500b0adfd006d2abab9939bb3c67ae0a7dd1",
+  "source_revision": "b1466cede8e7324335dcacec42809215051dee82",
   "changed_source_manifest": {
     "algorithm": "sha256(git diff --binary base_revision..source_revision -- ':(exclude)evidence/*')",
-    "digest": "50dafa32b00ae1c890526d27e53876171fffa55eb446b5763e411824450c9d73",
-    "changed_paths": 76
+    "digest": "343a5c0777513f10c2e3f918471276a7b732b01ed5df51076125b6739ffa046a",
+    "changed_paths": 79
   },
   "scope": "Merge the visual thread-loading, visual-view, sidebar/status, media/settings, and Factory stack into current main while preserving main's pooled preview decoding.",
   "merge_resolution": [
@@ -18,14 +18,18 @@
     "Combined the integration UI/attention status row with current main's unexercised runtime-tool wording, fixed the six-row count, sidebar wording, stale pulse comment, and runtime digest wording.",
     "Replaced partial aggregate initializers, fixed no-op QVariant moves, moved dead owned/text values, bounded arithmetic, narrowed internal enum bases, added the transcript math include guard, and repaired Cppcheck initializer/value findings."
   ],
+  "review_repairs": [
+    "A pre-light-mode file keeps visual.appearance absent until the user chooses a mode, so rewriting it no longer changes the window theme on the next launch; regression tests cover both mixed light-thread/dark-window and light-window/dark-thread inputs.",
+    "Save As now streams through QSaveFile and replaces the destination only after a complete copy; a source-read failure regression proves the existing destination survives."
+  ],
   "validation": [
     {
       "command": "python3 scripts/lapis.py quality",
-      "result": "passed at 0939500"
+      "result": "passed at b1466ce; receipt build/reports/quality/receipt.json"
     },
     {
       "command": "python3 scripts/lapis.py build",
-      "result": "configure, build, 49/49 enabled CTest, clang-format, and Cppcheck passed; clang-tidy remained failing with 98 unique findings"
+      "result": "passed at b1466ce: configure, build, 49/49 enabled CTest, clang-format, 116/116 clang-tidy jobs, and Cppcheck"
     },
     {
       "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -LE screen",
@@ -37,7 +41,7 @@
     },
     {
       "command": "python3 scripts/lapis.py ui-review --json",
-      "result": "passed at 0939500; receipt build/reports/ui-review/20261114T003226Z-oi_r6llk/receipt.json"
+      "result": "passed at b1466ce; receipt build/reports/ui-review/20261114T010815Z-0sel6xvc/receipt.json"
     },
     {
       "command": "python3 scripts/lapis.py asan",
@@ -61,21 +65,24 @@
     },
     {
       "command": "LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app && python3 scripts/package_macos.py verify",
-      "result": "ad-hoc signed arm64 bundle, strict signature/linkage checks, MoltenVK GPU enumeration, and launchd headless host passed at 0939500"
+      "result": "ad-hoc signed arm64 bundle, strict signature/linkage checks, MoltenVK GPU enumeration, and launchd headless host passed at b1466ce"
     }
   ],
   "static_analysis_state": {
-    "current_main_unique_findings": 41,
-    "integration_unique_findings": 98,
+    "pre_cleanup_current_main_unique_findings": 41,
+    "pre_cleanup_integration_unique_findings": 98,
     "shared": 30,
     "integration_only": 68,
     "resolved_from_current_main": 11,
-    "remaining_categories": {
+    "pre_cleanup_categories": {
       "readability-function-cognitive-complexity": 55,
       "bugprone-easily-swappable-parameters": 24,
       "other": 19
     },
-    "note": "Concrete move, arithmetic, enum, initializer, include-guard, optional-analysis, and value-parameter defects identified by three read-only audits were repaired; Cppcheck now passes. The remaining clang-tidy set is predominantly deferred complexity and positional-parameter advisories, including 41 already failing on current main."
+    "cleanup_revision": "b1466cede8e7324335dcacec42809215051dee82",
+    "remaining_unique_findings": 0,
+    "desktop_clang_tidy_jobs_passed": 116,
+    "note": "Concrete optional-access, move, arithmetic, shift, enum, loop, branch, and exception-escape defects were repaired. Cohesive parser/test complexity and fixed positional contracts are suppressed only at the offending declarations with local reasons; thresholds and global baselines were not changed."
   },
   "non_claims": [
     "No Developer ID Application identity is installed; packaging used the documented ad-hoc LAPIS_SIGN_IDENTITY=- fallback and does not qualify distribution signing, notarization, DMG publication, or appcast release.",
@@ -83,6 +90,6 @@
     "The package verifier enumerated MoltenVK GPU hardware but did not present a native user-facing frame.",
     "Both vision-review lanes failed provider-side (Grok max turns; Z.AI insufficient balance), so the saved UI captures were not independently visually inspected.",
     "The four current-main sanitizer failures described above are baseline observations, not integration regressions; this receipt does not claim those baseline cases passed.",
-    "The remaining 98 clang-tidy findings are recorded as an explicit failing canonical gate, not a pass."
+    "No Developer ID signing result is claimed beyond the ad-hoc fallback above."
   ]
 }
