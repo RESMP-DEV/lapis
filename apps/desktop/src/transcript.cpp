@@ -2214,8 +2214,6 @@ QString TranscriptModel::task_file(const transcript::Task& task) const {
         const auto day = here.dir().entryList({pattern}, QDir::Files);
         if (!day.isEmpty())
             return found_files_[task.id] = here.dir().filePath(day.first());
-        if (found_files_.contains(task.id))
-            return {};
         auto root = here.dir();
         QString hit;
         if (root.cdUp() && root.cdUp() && root.cdUp()) {
@@ -2223,7 +2221,11 @@ QString TranscriptModel::task_file(const transcript::Task& task) const {
             if (files.hasNext())
                 hit = files.next();
         }
-        return found_files_[task.id] = hit;
+        // A miss is not permanent: Codex can create the child rollout under a
+        // new day folder after this search.
+        if (!hit.isEmpty())
+            found_files_[task.id] = hit;
+        return hit;
     }
     }
     return {};
