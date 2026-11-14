@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-14T01:39:15Z",
+  "recorded_at": "2026-11-14T01:48:33Z",
   "agent": "Codex",
   "base_revision": "a44c6cb4576951eda03ddf8e7ae76107c8c5ff86",
   "integration_revision": "ee73f8547c809d465f7b7dfedae2f63d2517a2d9",
   "merge_revision": "a02b86b3cc77939923f90ffe3df606e4efae60bd",
-  "source_revision": "f05480c02f6a9828b68e6fd11f07d879cce18544",
+  "source_revision": "583d1dd37bffe13461dab5bf214dde6a079183e3",
   "changed_source_manifest": {
     "algorithm": "sha256(git diff --binary base_revision..source_revision -- ':(exclude)evidence/*')",
-    "digest": "50fc4d2e3a2a490338c19df62a00e8be5fb6ce5b6ed6080fcf010626ff41d87b",
+    "digest": "869d4bc109e6948f6c46231460833b5e7b77962a623c5bf64bc3c48e64367619",
     "changed_paths": 79
   },
   "scope": "Merge the visual thread-loading, visual-view, sidebar/status, media/settings, and Factory stack into current main while preserving main's pooled preview decoding.",
@@ -21,16 +21,17 @@
   "review_repairs": [
     "A pre-light-mode file keeps visual.appearance absent until the user chooses a mode, so rewriting it no longer changes the window theme on the next launch; regression tests cover both mixed light-thread/dark-window and light-window/dark-thread inputs.",
     "Save As now streams through QSaveFile and replaces the destination only after a complete copy; a source-read failure regression proves the existing destination survives.",
-    "The review sweep also repaired Factory keyboard/accessibility activation and receipt eliding, the orchestrator terminal override, narrow-window agent selection and sidebar range order, key-granular config saves, case-insensitive harness update keys, Linux descriptor enumeration, safe-close staleness and landed expiry refresh, Factory state version enforcement, Codex scan/search windows, send/capture timing and format handling, and the documented Tab-versus-chime lifetime."
+    "The review sweep also repaired Factory keyboard/accessibility activation and receipt eliding, the orchestrator terminal override, narrow-window agent selection and sidebar range order, key-granular config saves, case-insensitive harness update keys, Linux descriptor enumeration, safe-close staleness and landed expiry refresh, Factory state version enforcement, Codex scan/search windows, send/capture timing and format handling, and the documented Tab-versus-chime lifetime.",
+    "Cold transcript switches keep synchronous parsing at the 1 MiB tail; warm deltas above 1 MiB show the kept state and parse on the low-priority catch-up thread before adoption."
   ],
   "validation": [
     {
       "command": "python3 scripts/lapis.py quality",
-      "result": "passed at f05480c; receipt build/reports/quality/receipt.json"
+      "result": "passed at 583d1dd; receipt build/reports/quality/receipt.json"
     },
     {
       "command": "python3 scripts/lapis.py build",
-      "result": "passed at f05480c: configure, build, 49/49 enabled CTest, clang-format, 116/116 clang-tidy jobs, and Cppcheck"
+      "result": "passed at 583d1dd: configure, build, 49/49 enabled CTest, clang-format, 116/116 clang-tidy jobs, and Cppcheck"
     },
     {
       "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -LE screen",
@@ -42,7 +43,11 @@
     },
     {
       "command": "python3 scripts/lapis.py ui-review --json",
-      "result": "passed at f05480c; receipt build/reports/ui-review/20261114T012903Z-hx6080lv/receipt.json"
+      "result": "passed at 583d1dd; receipt build/reports/ui-review/20261114T014744Z-bho_ysp1/receipt.json"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -R '^(transcript|transcript-switch|transcript-clis)$'",
+      "result": "3/3 passed at 583d1dd; transcript-switch includes a >1 MiB warm-growth case proving the GUI shows the kept state while the low-priority thread catches up"
     },
     {
       "command": "QT_QPA_PLATFORM=offscreen build/desktop/apps/desktop/lapis_transcript_capture --jsonl apps/desktop/tests/visual/codex/rollout-2026-11-10T10-00-00-0199a000-0000-7000-8000-00000000c0de.jsonl --send 'check reader' --then /dev/null",
@@ -74,7 +79,7 @@
     },
     {
       "command": "LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app && python3 scripts/package_macos.py verify",
-      "result": "ad-hoc signed arm64 bundle, strict signature/linkage checks, MoltenVK GPU enumeration, and launchd headless host passed at f05480c"
+      "result": "ad-hoc signed arm64 bundle, strict signature/linkage checks, MoltenVK GPU enumeration, and launchd headless host passed at 583d1dd"
     }
   ],
   "static_analysis_state": {
@@ -88,7 +93,7 @@
       "bugprone-easily-swappable-parameters": 24,
       "other": 19
     },
-    "cleanup_revision": "f05480c02f6a9828b68e6fd11f07d879cce18544",
+    "cleanup_revision": "583d1dd37bffe13461dab5bf214dde6a079183e3",
     "remaining_unique_findings": 0,
     "desktop_clang_tidy_jobs_passed": 116,
     "note": "Concrete optional-access, move, arithmetic, shift, enum, loop, branch, and exception-escape defects were repaired. Cohesive parser/test complexity and fixed positional contracts are suppressed only at the offending declarations with local reasons; thresholds and global baselines were not changed."
