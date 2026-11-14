@@ -88,6 +88,10 @@ class ScopedPath {
 // last argument here with HOME set to the fixture's remote home, as that
 // machine's shell would. `fail-<code>` beside it makes the next calls fail
 // that way, printing its contents to stderr.
+// Each call is numbered under a lock (calls can overlap: an agent's ssh and
+// the thread helper's) and its file is renamed into place whole before the
+// count names it: an agent's command runs to about 11 kB, and under load the
+// test could read it half written.
 struct Machine {
     QDir root;
     QString ssh;
@@ -99,8 +103,11 @@ struct Machine {
                 "a home on the stand-in machine");
         writeFile(ssh, R"(#!/bin/sh
 d=$(cd "$(dirname "$0")/.." && pwd)
-n=$(($(cat "$d/calls/count" 2>/dev/null || echo 0) + 1)); echo $n > "$d/calls/count"
-printf '%s\n' "$@" > "$d/calls/$n"
+i=0; until mkdir "$d/calls/.lock" 2>/dev/null || [ $i -ge 300 ]; do i=$((i+1)); sleep 0.01; done
+n=$(($(cat "$d/calls/count" 2>/dev/null || echo 0) + 1))
+printf '%s\n' "$@" > "$d/calls/.$n.$$" && mv -f "$d/calls/.$n.$$" "$d/calls/$n"
+echo $n > "$d/calls/.count.$$" && mv -f "$d/calls/.count.$$" "$d/calls/count"
+rmdir "$d/calls/.lock" 2>/dev/null
 for last; do :; done
 case " $* " in *" -t "*) echo "agent started"; exit 0;; esac
 for f in "$d"/fail-*; do
