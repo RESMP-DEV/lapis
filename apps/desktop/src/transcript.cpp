@@ -3412,26 +3412,39 @@ void TranscriptModel::setPath(const QString& path) {
     if (path.isEmpty()) {
         reader_ = transcript::make_reader(format);
     } else if (hit != kept_.end()) {
-        reader_ = std::move(hit->reader);
-        offset_ = hit->offset;
-        pending_ = std::move(hit->pending);
-        expanded_ = std::move(hit->expanded);
-        view_ = std::move(hit->view);
-        kept_.erase(hit);
-        // What the CLI wrote since it was last shown, before the rows are
-        // made, so they are made once. A file rewritten shorter is read
-        // again like one never shown.
-        warm = read_on(path, *reader_, offset_, pending_);
-        if (!warm) {
-            offset_ = 0;
-            pending_.clear();
-            expanded_.clear();
-            view_.clear();
+        const qint64 grown = QFileInfo(path).size() - hit->offset;
+        if (grown > tail_bytes) {
+            // A large delta is caught up on the low-priority thread. The kept
+            // entry stays for that work while this clone shows its last state.
+            reader_ = hit->reader->clone();
+            offset_ = hit->offset;
+            pending_ = hit->pending;
+            expanded_ = hit->expanded;
+            view_ = hit->view;
+            loading_ = true;
+            warm = true;
+        } else {
+            reader_ = std::move(hit->reader);
+            offset_ = hit->offset;
+            pending_ = std::move(hit->pending);
+            expanded_ = std::move(hit->expanded);
+            view_ = std::move(hit->view);
+            kept_.erase(hit);
+            // What the CLI wrote since it was last shown, before the rows are
+            // made, so they are made once. A file rewritten shorter is read
+            // again like one never shown.
+            warm = read_on(path, *reader_, offset_, pending_);
+            if (!warm) {
+                offset_ = 0;
+                pending_.clear();
+                expanded_.clear();
+                view_.clear();
+            }
         }
     }
     if (!path.isEmpty() && !warm) {
         // Not kept: its end now, the rest from another thread.
-        auto read = transcript::read_end(path, format, tail_bytes, 4 * tail_bytes);
+        auto read = transcript::read_end(path, format, tail_bytes, tail_bytes);
         reader_ = std::move(read.reader);
         offset_ = read.offset;
         pending_ = std::move(read.pending);
@@ -3697,7 +3710,15 @@ void TranscriptModel::caughtUp(const QString& path, qint64 base, transcript::Rea
         entry->offset = read.offset;
         entry->pending = std::move(read.pending);
         entry->bytes = entry->reader->footprint();
-        evict();
+        if (path == path_ && !tail_ && entry->offset > offset_) {
+            transcript::Read caught{std::move(entry->reader), entry->offset,
+                                    std::move(entry->pending), false};
+            kept_.erase(entry);
+            evict();
+            adopt(std::move(caught));
+        } else {
+            evict();
+        }
     } else if (path == path_ && tail_) {
         adopt(std::move(read));
     }

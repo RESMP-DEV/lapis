@@ -335,6 +335,35 @@ void kept_within_budget() {
             "a conversation read ahead goes before one the person showed");
 }
 
+// A kept conversation that grew by more than the synchronous tail budget
+// switches to its last shown state at once; the low-priority thread catches
+// the large delta up and adopts it only after parsing.
+void large_growth_moves_off_the_gui_thread() {
+    QTemporaryDir directory;
+    const auto a = write(directory, QStringLiteral("a.jsonl"), claude_conversation("a", 2));
+    const auto b = write(directory, QStringLiteral("b.jsonl"), claude_conversation("b", 2));
+    TranscriptModel model;
+    model.setPath(a);
+    require(!model.loading(), "the first conversation is whole");
+    model.setPath(b);
+    const auto grown = claude_conversation("grown", 30, 50'000);
+    append(a, grown);
+    require(grown.size() > TranscriptModel::tail_bytes,
+            "the unread delta is larger than the switch budget");
+    model.setPath(a);
+    const auto shown = records(model);
+    require(model.loading() &&
+                std::ranges::all_of(
+                    shown, [](const QString& record) { return !record.startsWith("grown-"); }),
+            "the large delta is not parsed while switching");
+    wait_for([&] { return !model.loading(); }, 7000);
+    const auto caught = records(model);
+    require(!model.loading() &&
+                std::ranges::any_of(
+                    caught, [](const QString& record) { return record.startsWith("grown-"); }),
+            "the low-priority thread catches the delta up");
+}
+
 // A model destroyed while its threads read: the shown conversation's
 // history (startLoad, on the global pool), a read-ahead and a kept one's
 // catch-up (its own low-priority thread), and readings already queued back
@@ -558,6 +587,7 @@ int run(int argc, char** argv) {
     tails_for_each_cli();
     cold_conversation_shows_its_end();
     kept_within_budget();
+    large_growth_moves_off_the_gui_thread();
     kept_ones_follow_their_files();
     destroyed_while_reading();
     view_comes_back();
