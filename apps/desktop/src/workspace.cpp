@@ -1189,9 +1189,10 @@ void Workspace::watch(Agent* item) {
         if (!had_pending) {
             const auto arrived = QDateTime::currentMSecsSinceEpoch();
             const auto restored = item->neededAtMs();
-            waiting_since_.insert(item->agentId(), was_unknown && restored > 0
-                                                       ? std::min(restored, arrived)
-                                                       : arrived);
+            waiting_since_.insert(item->agentId(),
+                                  was_unknown && item->restoredUnseen() && restored > 0
+                                      ? std::min(restored, arrived)
+                                      : arrived);
         }
         emit needsYou(item, fresh ? markNeedsYou(item, Need::request) : QStringLiteral("repeat"));
         emit turnFinished(item);
@@ -3325,12 +3326,14 @@ void Workspace::finishClosing(Agent* item) {
 }
 void Agent::restoreUnseen(bool unseen, qint64 neededAtMs) {
     needed_at_ms_ = std::max<qint64>(0, neededAtMs);
+    restored_unseen_ = unseen;
     if (unseen_ == unseen)
         return;
     unseen_ = unseen;
     emit unseenChanged();
 }
 void Agent::setUnseen(bool unseen) {
+    restored_unseen_ = false;
     if (unseen_ == unseen)
         return;
     unseen_ = unseen;

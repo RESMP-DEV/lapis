@@ -3621,17 +3621,17 @@ void TranscriptModel::received(const QString& path, transcript::Read read, bool 
         if (tail_ && read.reader->format() == reader_->format() &&
             (!read.tail || read.reader->items().size() > reader_->items().size()))
             adopt(std::move(read));
-    } else if (!tail && !kept(path) && read.reader->format() == format_for(path)) {
+    } else if (!tail && read.reader->format() == format_for(path) &&
+               (prior == kept_.end() || (prior->catch_up_shown && prior->tail))) {
         // Read for a conversation shown before, or read ahead (kept after
         // every shown one, so it never pushes one of those out).
-        keep({path,
-              std::move(read.reader),
-              read.offset,
-              std::move(read.pending),
-              {},
-              {},
-              0,
-              ahead ? 0 : ++shown_clock_});
+        Parsed whole;
+        whole.path = path;
+        whole.reader = std::move(read.reader);
+        whole.offset = read.offset;
+        whole.pending = std::move(read.pending);
+        whole.shown = ahead ? 0 : ++shown_clock_;
+        keep(std::move(whole));
     }
     if (!tail)
         warmNext();
@@ -3810,7 +3810,6 @@ void TranscriptModel::caughtUp(const QString& path, qint64 base, transcript::Rea
     if (entry != kept_.end() && entry->offset == base) {
         read.reader->carry_sent(*entry->reader);
         entry->catch_up_shown = false;
-        entry->tail = false;
         entry->reader = std::move(read.reader);
         entry->offset = read.offset;
         entry->pending = std::move(read.pending);

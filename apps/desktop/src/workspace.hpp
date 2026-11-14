@@ -126,6 +126,7 @@ class Agent final : public QObject {
     void setUpdating(const QString& label);
     [[nodiscard]] bool updating() const { return !updating_.isEmpty(); }
     [[nodiscard]] bool unseen() const { return unseen_; }
+    [[nodiscard]] bool restoredUnseen() const { return restored_unseen_; }
     void setUnseen(bool unseen);
     // A mark an earlier window saved: unseen or not, and when it began to
     // need you. Restoring emits unseenChanged and nothing else.
@@ -285,6 +286,7 @@ class Agent final : public QObject {
     bool closing_{};
     QString updating_;
     bool unseen_{};
+    bool restored_unseen_{};
     qint64 needed_at_ms_{};
     StatusSource status_source_{StatusSource::observer};
     // Output estimate: several frames close together read as activity, and a
