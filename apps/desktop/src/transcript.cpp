@@ -3571,20 +3571,24 @@ void TranscriptModel::received(const QString& path, transcript::Read read, bool 
         warmNext();
 }
 
-void TranscriptModel::adopt(transcript::Read read) {
+void TranscriptModel::adopt(transcript::Read read, bool appended) {
     // A prompt sent while only the tail showed stays shown until recorded.
-    read.reader->carry_sent(*reader_);
+    if (!appended)
+        read.reader->carry_sent(*reader_);
     const auto& old_items = reader_->items();
     const auto& new_items = read.reader->items();
     // Opened work stays open where its items line up at the end.
-    QSet<int> expanded;
-    const auto shift = static_cast<int>(new_items.size()) - static_cast<int>(old_items.size());
-    for (const int lead : std::as_const(expanded_)) {
-        const int moved = lead + shift;
-        if (moved >= 0 && std::cmp_less(moved, new_items.size()) &&
-            new_items[static_cast<size_t>(moved)].record ==
-                old_items[static_cast<size_t>(lead)].record)
-            expanded.insert(moved);
+    QSet<int> expanded = expanded_;
+    if (!appended) {
+        expanded.clear();
+        const auto shift = static_cast<int>(new_items.size()) - static_cast<int>(old_items.size());
+        for (const int lead : std::as_const(expanded_)) {
+            const int moved = lead + shift;
+            if (moved >= 0 && std::cmp_less(moved, new_items.size()) &&
+                new_items[static_cast<size_t>(moved)].record ==
+                    old_items[static_cast<size_t>(lead)].record)
+                expanded.insert(moved);
+        }
     }
     auto next = transcript::lay_out(new_items, expanded, live_);
     if (read.tail)
@@ -3593,7 +3597,7 @@ void TranscriptModel::adopt(transcript::Read read) {
     // back to the same rows (now further down: the history is above them)
     // before anything is drawn.
     emit leaving();
-    if (view_.value(QStringLiteral("following"), true) == false)
+    if (!appended && view_.value(QStringLiteral("following"), true) == false)
         view_.insert(QStringLiteral("row"), view_.value(QStringLiteral("row")).toInt() +
                                                 static_cast<int>(next.rows.size()) -
                                                 static_cast<int>(layout_.rows.size()));
@@ -3741,7 +3745,7 @@ void TranscriptModel::caughtUp(const QString& path, qint64 base, transcript::Rea
                                     std::move(entry->pending), false};
             kept_.erase(entry);
             evict();
-            adopt(std::move(caught));
+            adopt(std::move(caught), true);
         } else {
             evict();
         }
