@@ -642,7 +642,7 @@ class TranscriptModel final : public QAbstractListModel {
     // still runs, else 0: what "Waiting on 2 subagents" counts from.
     Q_PROPERTY(double waitingSince READ waitingSince NOTIFY runningChanged)
   public:
-    enum Role {
+    enum Role : std::uint16_t {
         KindRole = Qt::UserRole + 1,
         TitleRole,
         BodyRole,

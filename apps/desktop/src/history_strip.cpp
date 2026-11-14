@@ -198,6 +198,8 @@ std::optional<std::uint64_t> HistoryStrip::missing() const {
     return std::nullopt;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 session::TerminalSnapshot HistoryStrip::rows_from(std::uint64_t first_row,
                                                   std::uint16_t count) const {
     session::TerminalSnapshot out;

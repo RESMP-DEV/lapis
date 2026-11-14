@@ -944,7 +944,7 @@ void settings_write_known_keys() {
         "alerts": {"finished": false},
         "keepAwake": false,
         "visual": {"theme": "tokyo-night", "font": "serif", "codeFont": "menlo", "size": 18,
-                   "all": true, "editor": "zed", "appearance": "dark",
+                   "all": true, "editor": "zed",
                    "darkTheme": "tokyo-night", "lightTheme": "claude-light",
                    "darkWindowTheme": "graphite", "lightWindowTheme": "daylight"},
         "version": 1
@@ -1091,6 +1091,33 @@ void appearance_switches_kinds() {
                 mixed.themeName() == QStringLiteral("oled") &&
                 mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("claude-light"),
             "an older light thread in a dark window shows as it did");
+    require(mixed.save(), "rewriting an older mixed file succeeds");
+    saved = read_config(path);
+    visual = saved.value(QStringLiteral("visual")).toObject();
+    require(!visual.contains(QStringLiteral("appearance")) &&
+                saved.value(QStringLiteral("theme")) == QStringLiteral("oled") &&
+                visual.value(QStringLiteral("theme")) == QStringLiteral("claude-light"),
+            "an unchosen mode is not invented by a save");
+    Config legacy_reloaded;
+    legacy_reloaded.setSourcePathForTesting(path);
+    require(legacy_reloaded.load() && legacy_reloaded.themeName() == QStringLiteral("oled") &&
+                legacy_reloaded.visual().value(QStringLiteral("theme")) ==
+                    QStringLiteral("claude-light"),
+            "an older mixed appearance survives its own rewrite");
+    const auto daylight_path = write_config(QDir(directory.path()), R"({"theme":"daylight"})");
+    Config legacy_light_window;
+    legacy_light_window.setSourcePathForTesting(daylight_path);
+    require(legacy_light_window.load() &&
+                legacy_light_window.themeName() == QStringLiteral("daylight") &&
+                legacy_light_window.appearance() == QStringLiteral("dark"),
+            "an older light window with a dark thread shows as it did");
+    require(legacy_light_window.save() && legacy_light_window.load() &&
+                legacy_light_window.themeName() == QStringLiteral("daylight") &&
+                !read_config(daylight_path)
+                     .value(QStringLiteral("visual"))
+                     .toObject()
+                     .contains(QStringLiteral("appearance")),
+            "rewriting an older light window does not replace it");
     require(mixed.setAppearance(QStringLiteral("dark")) &&
                 mixed.themeName() == QStringLiteral("oled") &&
                 mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal"),

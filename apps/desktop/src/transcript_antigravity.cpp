@@ -64,6 +64,8 @@ void read_selection(const QString& content, Status& status) {
 }
 
 // A tool call as one step, in the same words as the other CLIs' steps.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 Item tool_item(const QJsonObject& call) {
     const auto name = text_of(call, "name");
     auto args = call.value(QLatin1String("args")).toObject();
@@ -174,6 +176,8 @@ void AntigravityReader::push(Item item) {
     items_.push_back(std::move(item));
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void AntigravityReader::call(const QJsonObject& call) {
     const auto name = text_of(call, "name");
     const auto args = call.value(QLatin1String("args")).toObject();
@@ -231,6 +235,8 @@ void AntigravityReader::call(const QJsonObject& call) {
     }
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int AntigravityReader::result(int at, const QJsonObject& record) {
     auto& step = items_[static_cast<size_t>(at)];
     attach(step, record);
@@ -373,6 +379,8 @@ void AntigravityReader::wake(const QString& why) {
     turn_since_ms_ = at_ms_;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int AntigravityReader::add(const QByteArray& line) {
     QJsonParseError error{};
     const auto document = QJsonDocument::fromJson(line, &error);

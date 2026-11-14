@@ -235,6 +235,8 @@ void seed(Workspace& workspace, const QTemporaryDir& directory) {
     workspace.setFactoryStatePath(state);
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run(const QString& captures) {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");

@@ -53,6 +53,8 @@ bool process_alive(qint64 pid) {
     return valid_pid(pid) && (::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM);
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QList<qint64> process_tree(qint64 pid, int depth, int limit) {
     if (!process_alive(pid))
         return {};

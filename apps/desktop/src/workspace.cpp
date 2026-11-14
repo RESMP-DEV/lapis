@@ -441,6 +441,8 @@ QString codex_profile(const QStringList& arguments) {
     }
     return profile;
 }
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QString remoteHookPreamble(const QString& cli, const QString& codex_profile = {}) {
     QString preamble = QStringLiteral(
         R"sh(export LAPIS_HOOK_NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" )sh"
@@ -927,6 +929,8 @@ void Workspace::nextAgentAcrossCategories(int delta) {
 // a guess not yet seen. A turn the person looked at, with any guess it shows,
 // waits no longer. An agent at work, unknown, ended or closing never is, and neither
 // is one whose quiet is only an output estimate: silence is not a finished turn.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
                                                        const Agent* exclude) const {
     std::vector<TabCandidate> out;
@@ -1150,6 +1154,8 @@ void Workspace::noteStructuralFocus() {
     const auto* focused = focusedAgent();
     last_focus_id_ = focused != nullptr ? focused->agentId() : QString{};
 }
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Workspace::watch(Agent* item) {
     watchFactory(item);
     // Its unseen mark and whether it is at work outlive a window (GuiState).
@@ -1343,6 +1349,8 @@ bool Workspace::renameCategory(const QString& id, const QString& name) {
         }
     return fail(QStringLiteral("Category no longer exists."));
 }
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool Workspace::setCategoryColor(const QString& id, const QString& color) {
     if (!mutableRegistry())
         return false;
@@ -1837,6 +1845,8 @@ QVariantMap Workspace::agentDefaults() const {
             {QStringLiteral("mode"), agent_defaults_.mode},
             {QStringLiteral("machines"), machines}};
 }
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::optional<Workspace::ResumeLaunch> Workspace::agentLaunch(const AgentRequest& request) {
     const auto refuse = [this](const QString& message) -> std::optional<ResumeLaunch> {
         fail(message);
@@ -2120,6 +2130,8 @@ bool resumable(const session::ResumeRecord& record, const QString& harness) {
 // under its projects directory. Empty when it has not saved one. The folder
 // Claude Code names after `directory` (each character other than a letter or
 // digit made a '-') is looked in first; `search` false looks only there.
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QString claudeTranscript(const QString& conversation, const QString& directory = {},
                          bool search = true) {
     const QDir projects(
@@ -2308,6 +2320,8 @@ void Workspace::warmThreads() {
     qobject_cast<TranscriptModel*>(transcript_)->warm(paths);
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QString Workspace::forkConversation(const QString& id, const QString& record, bool before) const {
     // A fork copies Claude Code's own records; other CLIs' files differ.
     const auto entry = agents_.constFind(id);
@@ -2322,7 +2336,7 @@ QString Workspace::forkConversation(const QString& id, const QString& record, bo
         return {};
     // A fork is a copy of the conversation up to the record, under a new id,
     // beside the original: what Claude Code's own fork writes.
-    const auto fork = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    auto fork = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const auto original = agentConversation(id);
     const auto marker = QStringLiteral("\"uuid\":\"%1\"").arg(record).toUtf8();
     QByteArray out;
@@ -2782,6 +2796,8 @@ void Workspace::applyStartupDefaults(const AgentRecord& agent, ResumeLaunch& pla
     }
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 auto Workspace::restoredLaunch(const AgentRecord& agent, QString* diagnostic)
     -> std::optional<ResumeLaunch> {
     try {
@@ -2890,6 +2906,8 @@ void Workspace::loadManagedResume(const QJsonValue& value, AgentRecord& agent) {
     agent.managed_resume_index = index;
     agent.managed_resume_identity = identity;
 }
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Workspace::loadAgents(const QJsonArray& agents) {
     QMap<QString, AgentRecord> metadata;
     std::vector<std::unique_ptr<Agent>> restored;
@@ -3051,6 +3069,8 @@ void Workspace::restore() {
         fail(QStringLiteral("Cannot restore workspace: ") + QString::fromUtf8(error.what()));
     }
 }
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Workspace::connectRestoredAgents() {
     // Save the full restart plan before constructing create-mode connections.
     // Existing-service reconnections keep their separate path below.

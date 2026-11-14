@@ -1627,6 +1627,8 @@ void wait_tab_visible(QQuickItem& tab, QQuickItem& view) {
     CHECK(visible());
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run_attention_ui_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::fixture);

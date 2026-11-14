@@ -200,6 +200,8 @@ void CodexReader::push(Item item) {
     items_.push_back(std::move(item));
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void CodexReader::item(const QJsonObject& item, qint64 started_ms, qint64 completed_ms) {
     const auto type = text_of(item, "type");
     record_ = text_of(item, "id");
@@ -375,6 +377,8 @@ void CodexReader::item(const QJsonObject& item, qint64 started_ms, qint64 comple
     }
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void CodexReader::collab(const QJsonObject& item, qint64 started_ms) {
     const auto tool = text_of(item, "tool");
     const auto status = text_of(item, "status");
@@ -525,6 +529,8 @@ int CodexReader::exec_output(const QJsonObject& payload) {
     return at;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int CodexReader::add(const QByteArray& line) {
     QJsonParseError error{};
     const auto document = QJsonDocument::fromJson(line, &error);

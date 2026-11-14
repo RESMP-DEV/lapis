@@ -65,6 +65,8 @@ void formats_are_told_apart() {
     require(make_reader(Format::codex)->format() == Format::codex, "Codex reader made");
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void codex_items() {
     const auto reader = read_all<CodexReader>(fixture(kCodex));
     const auto& items = reader.items();
@@ -368,6 +370,8 @@ void antigravity_file_is_followed() {
 // turn runs (the agent working) the thread holds no step rows, the box's
 // rows only grow (a steering prompt starts it again), and a prompt sent
 // through lapis waits as pending until the CLI records it.
+// Cohesive positional parser flow; callers and tests pin it.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters,readability-function-cognitive-complexity)
 void live_box_grows(const char* name, const QString& file_name, const QString& sent) {
     QTemporaryDir directory;
     QDir(directory.path()).mkpath(QStringLiteral("logs"));

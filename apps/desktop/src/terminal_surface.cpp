@@ -2283,9 +2283,7 @@ QByteArray terminal_text_key(const QKeyEvent& event) {
             control = 0;
         else if (key == Qt::Key_6)
             control = 30;
-        else if (key == Qt::Key_Minus)
-            control = 31;
-        else if (key == Qt::Key_Slash)
+        else if (key == Qt::Key_Minus || key == Qt::Key_Slash)
             control = 31;
         else if (key == Qt::Key_Question)
             control = 127;

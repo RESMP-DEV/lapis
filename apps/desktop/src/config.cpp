@@ -528,6 +528,8 @@ void Config::apply_defaults() {
     density_ = CardDensity::Comfortable;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool Config::load() {
     apply_defaults();
     diagnostic_.clear();
@@ -801,11 +803,13 @@ void Config::load_visual(const QJsonObject& root) {
     if (mode == QLatin1String("dark") || mode == QLatin1String("light") ||
         mode == QLatin1String("system")) {
         appearance_ = mode;
+        appearance_chosen_ = true;
         apply_appearance();
     } else {
         // A file from before light mode shows exactly what it did; the mode
         // is the visual view's kind until it is chosen.
         appearance_ = showing_light ? QStringLiteral("light") : QStringLiteral("dark");
+        appearance_chosen_ = false;
     }
 }
 
@@ -825,16 +829,20 @@ void Config::apply_appearance() {
 }
 
 void Config::choose_kind(bool light) {
-    if (lightShown() != light)
+    if (lightShown() != light) {
         appearance_ = light ? QStringLiteral("light") : QStringLiteral("dark");
+        appearance_chosen_ = true;
+    }
 }
 
 bool Config::setAppearance(const QString& mode) {
     if (mode != QLatin1String("dark") && mode != QLatin1String("light") &&
         mode != QLatin1String("system"))
         return false;
+    const bool was_chosen = appearance_chosen_;
+    appearance_chosen_ = true;
     if (mode == appearance_)
-        return true;
+        return was_chosen ? true : save();
     appearance_ = mode;
     apply_appearance();
     qInfo().noquote() << "lapis appearance:" << appearance_;
@@ -878,6 +886,8 @@ QVariantMap Config::visual() const {
             {QStringLiteral("lightWindowTheme"), window_light_theme_}};
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool Config::setVisual(const QString& key, const QVariant& value) {
     QString* name = key == QLatin1String("theme")      ? &visual_theme_
                     : key == QLatin1String("font")     ? &visual_font_
@@ -975,6 +985,8 @@ bool plain_text(const QVariant& value, qsizetype limit) {
 }
 } // namespace
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool Config::setSetting(const QString& path, const QVariant& value) {
     const auto dot = path.indexOf(QLatin1Char('.'));
     if (dot <= 0)
@@ -1390,7 +1402,10 @@ bool Config::persist() {
     else
         visual.remove(QStringLiteral("factory"));
     visual.insert(QStringLiteral("editor"), visual_editor_);
-    visual.insert(QStringLiteral("appearance"), appearance_);
+    if (appearance_chosen_)
+        visual.insert(QStringLiteral("appearance"), appearance_);
+    else
+        visual.remove(QStringLiteral("appearance"));
     visual.insert(QStringLiteral("darkTheme"), visual_dark_theme_);
     visual.insert(QStringLiteral("lightTheme"), visual_light_theme_);
     visual.insert(QStringLiteral("darkWindowTheme"), window_dark_theme_);

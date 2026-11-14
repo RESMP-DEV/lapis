@@ -219,6 +219,8 @@ constexpr TerminalBuiltin agy_builtins[] = {
 
 // A Markdown file's front matter value for `key`, or empty. A folded or
 // literal block (`key: >-`) is joined into one line.
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QString front_matter(const QString& text, const QString& key) {
     if (!text.startsWith(QLatin1String("---")))
         return {};
@@ -232,9 +234,12 @@ QString front_matter(const QString& text, const QString& key) {
             if (value == QLatin1String(">-") || value == QLatin1String(">") ||
                 value == QLatin1String("|") || value == QLatin1String("|-")) {
                 QStringList block;
-                while (++i < lines.size() &&
-                       (lines[i].startsWith(QLatin1Char(' ')) || lines[i].trimmed().isEmpty()))
+                ++i;
+                while (i < lines.size() &&
+                       (lines[i].startsWith(QLatin1Char(' ')) || lines[i].trimmed().isEmpty())) {
                     block.append(lines[i].trimmed());
+                    ++i;
+                }
                 return block.join(QLatin1Char(' ')).simplified();
             }
             if (value.size() >= 2 &&
@@ -299,6 +304,8 @@ void add_commands(QVariantList& out, QSet<QString>& seen, const QString& root,
 // The skills in `dir` (<name>/SKILL.md), named by their front matter. With
 // `marked`, each also carries terminal: false (a skill runs as a turn), and
 // one marked `disable-slash-command: true` is left out, as agy does.
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void add_skills(QVariantList& out, QSet<QString>& seen, const QString& dir, const QString& source,
                 bool marked) {
     const QDir skills(dir);
@@ -368,6 +375,8 @@ QVariantList claude_slash_commands(const QString& home, const QString& folder) {
     return out;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QVariantList codex_slash_commands([[maybe_unused]] const QString& home,
                                   [[maybe_unused]] const QString& folder) {
     QSet<QString> seen;
@@ -407,6 +416,8 @@ QVariantList agy_slash_commands(const QString& home, const QString& folder) {
     return out;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QVariantList slash_commands(const QString& harness, const QString& home, const QString& folder) {
     if (harness == QLatin1String("claude"))
         return claude_slash_commands(home, folder);

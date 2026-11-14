@@ -15,6 +15,7 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QQuickItem>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QUrl>
 
@@ -148,10 +149,23 @@ bool MediaActions::saveCopy(const QString& path, const QVariant& destination) co
         return false;
     if (QFileInfo(target).absoluteFilePath() == QFileInfo(source).absoluteFilePath())
         return true;
-    // The save panel already asked before replacing a file.
-    if (QFileInfo::exists(target) && !QFile::remove(target))
+    QFile input(source);
+    if (!input.open(QIODevice::ReadOnly))
         return false;
-    return QFile::copy(source, target);
+    // QSaveFile commits by replacing the target only after the complete copy;
+    // a failed read or write leaves an existing destination untouched.
+    QSaveFile output(target);
+    if (!output.open(QIODevice::WriteOnly))
+        return false;
+    char bytes[16384];
+    for (;;) {
+        const qint64 read = input.read(bytes, sizeof(bytes));
+        if (read == 0)
+            break;
+        if (read < 0 || output.write(bytes, read) != read)
+            return false;
+    }
+    return output.commit();
 }
 
 bool MediaActions::drag(const QString& path, bool picture, QQuickItem* source) {
@@ -176,6 +190,8 @@ bool MediaActions::drag(const QString& path, bool picture, QQuickItem* source) {
     return drag->exec(Qt::CopyAction, Qt::CopyAction) != Qt::IgnoreAction;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QString MediaActions::inkTone(const QString& path) const {
     const QFileInfo info(media_local_path(path));
     if (!info.isFile())

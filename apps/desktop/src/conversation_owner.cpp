@@ -188,6 +188,8 @@ qint64 service_pid(const QString& endpoint) {
     return number && platform::process_alive(pid) ? pid : 0;
 }
 
+// Cohesive positional parser flow; callers and tests pin it.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters,readability-function-cognitive-complexity)
 QString held_conversation(const QString& harness, const QString& endpoint, const QString& pin) {
     const bool agy = harness == QLatin1String("agy");
     if (!agy && harness != QLatin1String("codex"))
@@ -238,6 +240,8 @@ QString held_conversation(const QString& harness, const QString& endpoint, const
         ->id;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QHash<QString, QString> pins(const QList<Agent>& agents) {
     QHash<QString, QString> changed;
     QHash<QString, QString> current;

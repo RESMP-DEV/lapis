@@ -41,6 +41,8 @@ QString fixture(const char* name) {
 // edit and a reply, timed. Every third turn starts a background command
 // that a later turn's notification ends, a /compact runs between two turns,
 // and `pad` characters of output make the file as long as a test needs.
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QByteArray claude_conversation(const char* tag, int turns, int pad = 0) {
     QByteArray out;
     int record = 0;
@@ -137,6 +139,8 @@ bool tail_matches(const Read& whole, const Layout& whole_layout, const Read& tai
 
 // The end read at every cut through the file (inside records, between
 // them, mid-turn) shows what a whole reading's end shows.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void tails_match(const char* name, const QString& path, Format format) {
     const auto whole = read_file(path, format);
     const auto whole_layout = lay_out(whole.reader->items(), {});
@@ -304,7 +308,7 @@ void kept_within_budget() {
         paths << write(directory, QString::fromLatin1(name) + ".jsonl",
                        claude_conversation(name, 3));
     TranscriptModel model;
-    model.setBudget(qint64{1} << 30, 2);
+    model.setBudget(qint64{1'073'741'824}, 2);
     for (const auto& path : paths)
         model.setPath(path);
     require(model.keptCount() == 2 && !model.kept(paths[0]) && model.kept(paths[1]) &&
@@ -319,7 +323,7 @@ void kept_within_budget() {
     require(model.keptCount() == 0 && model.rowCount() > 0,
             "a smaller budget lets kept ones go, never the shown one");
     // Read ahead only into room the budget has.
-    model.setBudget(qint64{1} << 30, 1);
+    model.setBudget(qint64{1'073'741'824}, 1);
     model.warm({paths[0], paths[2]});
     wait_for([&] { return model.kept(paths[0]); });
     QCoreApplication::processEvents();
@@ -539,7 +543,7 @@ void view_switches() {
 }
 } // namespace
 
-int main(int argc, char** argv) {
+int run(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     // The view writes a chart style under ~/.lapis; keep it in a throwaway home.
@@ -558,4 +562,13 @@ int main(int argc, char** argv) {
     if (failures == 0)
         std::puts("transcript_switch_test: PASS");
     return failures == 0 ? 0 : 1;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return run(argc, argv);
+    } catch (...) {
+        std::fprintf(stderr, "transcript_switch_test: FAIL unexpected exception\n");
+        return 1;
+    }
 }

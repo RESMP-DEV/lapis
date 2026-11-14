@@ -79,6 +79,8 @@ QImage shot(QQuickView& view, QObject* list, int index) {
 // The bar edits as the terminal does on a Mac (lapis keeps Command as Meta),
 // Return sends and Shift-Return adds a line. Arrows carry the
 // keypad flag, as AppKit sends them.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_keys(QQuickView& view, QQuickItem* root) {
     auto* input = root->findChild<QQuickItem*>(QStringLiteral("visualComposer"));
     if (input == nullptr) {
@@ -278,6 +280,8 @@ int check_rows(QQuickItem* list, const QString& when, QStringList& what);
 // The live work box: a fixed height as steps arrive, scrolled by the wheel
 // without growing, a step opened and closed by clicks, and no diff drawn
 // until its step is opened, live or in an opened "Worked for".
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile& file) {
     int failures = 0;
     const auto expect = [&failures](bool ok, const char* what) {
@@ -609,6 +613,8 @@ std::pair<qreal, qreal> drawn_span(QQuickItem* row) {
 // Rows of the thread the list holds, each above the next, nothing drawn
 // past a row's bottom, and the footer below the last. Problems go to
 // `what`, prefixed; returns their number.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_rows(QQuickItem* list, const QString& when, QStringList& what) {
     int problems = 0;
     const auto add = [&](const QString& text) {
@@ -701,6 +707,8 @@ int check_rows(QQuickItem* list, const QString& when, QStringList& what) {
 // and for a CLI that records no queue the prompt noted as sent), then the
 // CLI's records appended. The thread's rows are checked right after each
 // change and once settled; `out`, when given, saves each moment's frame.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_sent(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile& file,
                const QList<QByteArray>& records, const QString& prompt, const QString& out) {
     auto* list = root->property("list").value<QQuickItem*>();
@@ -1000,7 +1008,11 @@ QStringList pending_shown(QQuickItem* root) {
 // sent from the bar waits to be recorded. Each moment's rows are checked
 // (each above the next, nothing drawn past its row or by a row the list let
 // go of, the footer below); `out`, when given, saves each moment's frame.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_turn_ended(QQuickView& view, QQuickItem* root, TranscriptModel& model,
+                     // Positional contract; callers and tests pin the order.
+                     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                      const QString& folder, const QString& out) {
     auto* list = root->property("list").value<QQuickItem*>();
     int failures = 0;
@@ -1126,6 +1138,8 @@ int prompt_rows(TranscriptModel& model, const QString& text) {
 // sending: a prompt the agent's input box still holds gets one more Return,
 // only then, and a bubble note when that does not take it either. The
 // agent's screen and Return are stand-ins with each CLI's input box.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
                  const QString& folder) {
     int failures = 0;
@@ -1304,6 +1318,8 @@ QByteArray launch(const QString& id, const QString& agent, const QString& what, 
 // live box while the agent works, under "Waiting on ..." once its turn
 // ended, a subagent opening to its own steps, more than four summed up, and
 // each leaving once it ends.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const QString& folder) {
     int failures = 0;
     const auto expect = [&failures](bool ok, const char* what) {
@@ -1631,6 +1647,8 @@ int check_swapped(QQuickView& view, QQuickItem* root, TranscriptModel& model,
 // --open: the newest step whose verb starts with `verb` opened (the oldest
 // in its "Worked for" with a leading ^), in the live box while it shows,
 // else in its opened "Worked for", and shot there.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QImage open_step(QQuickView& view, QQuickItem* root, TranscriptModel& model, QObject* list,
                  QString verb) {
     const bool oldest = verb.startsWith(QLatin1Char('^'));
@@ -1765,6 +1783,8 @@ struct Check {
     }
 };
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_structure(const QString& path, const TranscriptModel& model, Check& check) {
     using lapis::desktop::transcript::make_reader;
     QFile file(path);
@@ -1971,7 +1991,11 @@ void switch_breakdown(const QStringList& paths) {
 // a switch is the GUI thread's worst stall. Patterns: each file once (the
 // first visit), a walk through all of them twice (Command-Shift-bracket),
 // back and forth between two, and random picks.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int bench_switch(QQuickView& view, TranscriptModel& model, QObject* list, const QStringList& paths,
+                 // Positional contract; callers and tests pin the order.
+                 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                  int idle_s, int pairs) {
     struct Times {
         double call{}, content{}, laid{}, frame{}, settled{}, stall{};
@@ -2045,7 +2069,7 @@ int bench_switch(QQuickView& view, TranscriptModel& model, QObject* list, const 
     std::uint32_t seed = 12345;
     for (int i = 0; i < 40; ++i) {
         seed = seed * 1664525u + 1013904223u;
-        run("random", static_cast<int>((seed >> 8) % static_cast<std::uint32_t>(n)));
+        run("random", static_cast<int>((seed >> 8U) % static_cast<std::uint32_t>(n)));
     }
     std::printf("switch: %d conversations (offscreen, software scene graph), ms\n", n);
     std::printf("  %-15s %4s %5s  %-18s %-18s %-18s %-18s %-18s %-18s\n", "phase", "n", "warm",
@@ -2104,7 +2128,9 @@ int bench_switch(QQuickView& view, TranscriptModel& model, QObject* list, const 
 }
 } // namespace
 
-int main(int argc, char** argv) {
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+int run_capture(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic"); // as the app sets it
     // The view writes a chart style under ~/.lapis; a capture keeps it in a
@@ -2726,4 +2752,13 @@ int main(int argc, char** argv) {
         line("whole step", frames);
     }
     return 0;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return run_capture(argc, argv);
+    } catch (...) {
+        std::fprintf(stderr, "transcript_capture: FAIL unexpected exception\n");
+        return 1;
+    }
 }

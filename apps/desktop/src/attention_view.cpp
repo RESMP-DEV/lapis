@@ -171,22 +171,23 @@ void Agent::applyAttention(session::wire::AttentionSnapshot snapshot) {
     bool arrived = false;
     QSet<QString> current;
     QHash<QString, QString> next_aliases;
+    const auto* previous = attention_ ? &*attention_ : nullptr;
     for (const auto& item : snapshot.requests) {
         const auto& id = item.pending.request.id;
         const auto current_key = token(snapshot, item.pending);
         const session::wire::AttentionItem* old = nullptr;
-        if (attention_) {
+        if (previous != nullptr) {
             const auto found = std::find_if(
-                attention_->requests.begin(), attention_->requests.end(), [&](const auto& value) {
+                previous->requests.begin(), previous->requests.end(), [&](const auto& value) {
                     return value.pending.request.id == id &&
                            value.pending.source_epoch == item.pending.source_epoch;
                 });
-            if (found != attention_->requests.end())
+            if (found != previous->requests.end())
                 old = &*found;
         }
         const auto stable_key =
-            old != nullptr && attention_->attachment.generation == snapshot.attachment.generation
-                ? display_token(*attention_, old->pending, attention_token_aliases_)
+            old != nullptr && previous->attachment.generation == snapshot.attachment.generation
+                ? display_token(*previous, old->pending, attention_token_aliases_)
                 : current_key;
         next_aliases.insert(current_key, stable_key);
         current.insert(stable_key);

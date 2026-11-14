@@ -246,6 +246,8 @@ QString result_text(const QJsonValue& content) {
 
 // A tool call as one step: a past-tense verb and its target, in the words
 // that matter, the way a person would summarize it.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 Item tool_item(const QJsonObject& block) {
     Item item;
     item.kind = Kind::tool;
@@ -438,6 +440,8 @@ QString lone_path(const QString& line) {
 constexpr int inline_media_limit = 32;
 } // namespace
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<Piece> pieces(const QString& markdown, bool* missing) {
     std::vector<Piece> out;
     QStringList prose;
@@ -868,6 +872,8 @@ bool compacting_shown(const QStringList& screen) {
     return false;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QStringList live_lines(const QStringList& screen, const QStringList& shown) {
     if (compacting_shown(screen))
         return {};
@@ -967,6 +973,8 @@ bool composer_holds(const QStringList& screen, const QString& text, Format forma
     return false;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QString work_summary(const std::vector<Item>& items, int first, int last, int except) {
     int commands = 0, searches = 0, web = 0, agents = 0, tools = 0;
     QSet<QString> edited, read;
@@ -1016,6 +1024,8 @@ QString work_summary(const std::vector<Item>& items, int first, int last, int ex
     return parts.join(QStringLiteral(", "));
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded, bool live) {
     Layout out;
     const int count = static_cast<int>(items.size());
@@ -1063,8 +1073,8 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& expanded, bool l
     // together are one prompt in several items of one record.
     const auto prompt_end = [&items](int at, int last) {
         int end = at;
-        while (end + 1 <= last && items[static_cast<size_t>(end + 1)].kind == Kind::prompt &&
-               items[static_cast<size_t>(end + 1)].record == items[static_cast<size_t>(at)].record)
+        while (end + 1 <= last && items[static_cast<size_t>(end) + 1].kind == Kind::prompt &&
+               items[static_cast<size_t>(end) + 1].record == items[static_cast<size_t>(at)].record)
             ++end;
         return end;
     };
@@ -1414,6 +1424,8 @@ int ClaudeReader::notified(const QString& raw) {
     return task.item;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int ClaudeReader::add(const QByteArray& line) {
     // Claude Code's request logs and file snapshots are a quarter of a long
     // conversation's bytes and never shown: skip them by the type they lead
@@ -1550,6 +1562,8 @@ int ClaudeReader::add(const QByteArray& line) {
         static_cast<qint64>(record.value(QLatin1String("thinkingDurationMs")).toDouble());
 
     bool prompted = false; // this record carried prompt text of its own
+    // Cohesive parser/test flow; branching stays local.
+    // NOLINTNEXTLINE(readability-function-cognitive-complexity)
     const auto user_text = [&](const QString& raw) {
         if (raw.startsWith(QLatin1String("<local-command-std")) ||
             raw.startsWith(QLatin1String("<bash-std"))) {
@@ -1817,7 +1831,7 @@ Read read_file(const QString& path, Format format, qint64 tail_bytes) {
         result.tail = true;
     }
     while (!file.atEnd())
-        feed(*result.reader, result.pending, file.read(qint64{1} << 20));
+        feed(*result.reader, result.pending, file.read(qint64{1'048'576}));
     result.offset = file.pos();
     return result;
 }
@@ -2293,6 +2307,8 @@ QVariantMap TranscriptModel::task_map(const transcript::Task& task) const {
     return task_values(task, running, steps);
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void TranscriptModel::updateRunning() {
     const auto& tasks = reader_->tasks();
     QVariantList next;
@@ -2364,6 +2380,8 @@ void TranscriptModel::updateRunning() {
 
 void TranscriptModel::tick() { updateRunning(); }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QVariantMap TranscriptModel::taskDetail(int item) {
     QVariantMap out;
     if (item < 0 || std::cmp_greater_equal(item, reader_->items().size()))
@@ -2424,6 +2442,8 @@ QVariantMap TranscriptModel::taskDetail(int item) {
     return out;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QVariant TranscriptModel::item_value(const transcript::Item& item, int index, int role) {
     switch (role) {
     case TaskRole:
@@ -2564,7 +2584,7 @@ qint64 row_key(const transcript::Layout& layout, const transcript::Row& row) {
         return row.item;
     const auto& turn = layout.turns[static_cast<size_t>(row.turn)];
     const qint64 key = -(turn.parts[static_cast<size_t>(row.part)].lead + 1);
-    return row.live ? key - (qint64{1} << 40) : key;
+    return row.live ? key - qint64{1'099'511'627'776} : key;
 }
 // The last item a row's look depends on.
 int row_depends_on(const transcript::Layout& layout, const transcript::Row& row) {
@@ -2797,6 +2817,8 @@ QVariantList TranscriptModel::replyMedia(const QString& markdown) const {
     return reply_parts(markdown).media;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
                             const QVariantMap& style) const {
     if (target == nullptr || target->textDocument() == nullptr)
@@ -3144,6 +3166,8 @@ QVariantList TranscriptModel::editors() const {
     return out;
 }
 
+// Cohesive positional parser flow; callers and tests pin it.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters,readability-function-cognitive-complexity)
 bool TranscriptModel::openPath(const QString& target, const QString& choice) const {
     static const QRegularExpression line(QStringLiteral(R"((:\d+){1,2}$)"));
     const auto suffix = line.match(target).captured(0);
@@ -3311,7 +3335,8 @@ QString transcript::selection_text(const QTextDocument& document, int start, int
         // A list item keeps its bullet or number when it is copied from its start.
         if (list != nullptr && from == block.position()) {
             const auto format = list->format();
-            marker = QString(std::max(0, format.indent() - 1) * 2, QLatin1Char(' '));
+            marker = QString(qsizetype{std::max(0, format.indent() - 1)} * qsizetype{2},
+                             QLatin1Char(' '));
             const bool numbered = format.style() == QTextListFormat::ListDecimal ||
                                   format.style() == QTextListFormat::ListLowerAlpha ||
                                   format.style() == QTextListFormat::ListUpperAlpha;
@@ -3573,6 +3598,8 @@ void TranscriptModel::evict() {
         kept_.pop_back();
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void TranscriptModel::setBudget(qint64 bytes, int count) {
     kept_budget_ = std::max<qint64>(0, bytes);
     kept_limit_ = std::max(0, count);

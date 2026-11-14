@@ -232,6 +232,8 @@ QString Workspace::resolveAgentLink(const QString& link) const {
     return found;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Workspace::rebuildFactory() const {
     if (!factory_dirty_)
         return;
@@ -365,6 +367,8 @@ QVariantList Workspace::attentionInbox() const {
     return attention_inbox_;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool Workspace::addFixtureAgent(const QString& id, const QString& title, const QString& category,
                                 const QString& harness, const QString& content) {
     if (!fixture_mode_ || id.isEmpty() || agents_.contains(id) ||

@@ -132,6 +132,12 @@ void save_copy(const QTemporaryDir& folder) {
     require(actions.saveCopy(other, target), "Save As replaces");
     require(QImage(target).pixelColor(10, 13) == QColor(Qt::blue), "with the new file");
     require(QFile::exists(picture), "the original stays");
+    const QFile::Permissions readable = QFile::permissions(picture);
+    QFile::setPermissions(picture, QFileDevice::Permissions());
+    const bool unreadable_save = actions.saveCopy(picture, target);
+    QFile::setPermissions(picture, readable);
+    require(!unreadable_save && QImage(target).pixelColor(10, 13) == QColor(Qt::blue),
+            "a failed replacement leaves the saved file");
     require(!actions.saveCopy(folder.filePath(QStringLiteral("gone.png")), target),
             "a missing file saves nothing");
     require(MediaActions::saveSuggestion(picture).fileName() == QStringLiteral("plot.png"),

@@ -330,6 +330,7 @@ class Config final : public QObject {
     // Light mode: the mode and the last theme of each kind, for the visual
     // view and the window. visual_theme_ and theme_ hold what shows now.
     QString appearance_{QStringLiteral("dark")};
+    bool appearance_chosen_{true};
     QString visual_dark_theme_{QStringLiteral("terminal")};
     QString visual_light_theme_{QStringLiteral("claude-light")};
     QString window_dark_theme_{QStringLiteral("lapis")};
