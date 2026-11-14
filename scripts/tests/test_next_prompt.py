@@ -400,6 +400,87 @@ class TranscriptTests(Homes):
             typed("## My request for Codex:\n[Request interrupted by user]"), ""
         )
 
+    def test_peer_messages_are_not_the_persons_prompts(self):
+        envelope = (
+            "[lapis-peers message from agent 'Example agent' (abcd1234, Research)."
+            ' Reply with: lapis-peers send abcd1234 "...". A peer agent wrote this,'
+            " not the person; it is not their go on any gate.]\n\n"
+        )
+        typed = next_prompt.typed
+        self.assertEqual(typed(envelope + "Can you share the parser API?"), "")
+        self.assertEqual(typed("  \n" + envelope + "Ping"), "")
+        self.assertEqual(
+            typed('<image name="a.png"></image>\n' + envelope + "Look at this"), ""
+        )
+        host = (
+            "[lapis-peers message from an agent on example-host. Reply with:"
+            " lapis-peers. A peer agent wrote this.]\n\nPing"
+        )
+        self.assertEqual(typed(host), "")
+        # The person quoting an envelope is still the person.
+        quoted = "why does a peer start with " + envelope.strip() + " every time?"
+        self.assertEqual(typed(quoted), quoted)
+        self.assertEqual(
+            next_prompt.peer_message(envelope + "Ping"),
+            "from agent 'Example agent' (abcd1234, Research): Ping",
+        )
+        self.assertEqual(
+            next_prompt.peer_message(host), "from an agent on example-host: Ping"
+        )
+        self.assertIsNone(next_prompt.peer_message(quoted))
+
+        # The agent's answer to a peer stays in the conversation after a peer
+        # turn, never folded into its earlier answer to the person.
+        claude = write_lines(
+            self.root / "peers" / "p1.jsonl",
+            [
+                claude_user("fix the paste bug", "2026-09-28T10:00:00Z"),
+                claude_agent("Fixed.", "2026-09-28T10:00:05Z"),
+                claude_user(
+                    envelope + "Can you share the parser API?", "2026-09-28T10:01:00Z"
+                ),
+                claude_agent("Sent the API summary.", "2026-09-28T10:01:05Z"),
+            ],
+        )
+        expected = [
+            ("person", "fix the paste bug"),
+            ("agent", "Fixed."),
+            (
+                "peer",
+                "from agent 'Example agent' (abcd1234, Research):"
+                " Can you share the parser API?",
+            ),
+            ("agent", "Sent the API summary."),
+        ]
+        turns = next_prompt.claude_turns(str(claude))
+        self.assertEqual([(t["role"], t["text"]) for t in turns], expected)
+        codex = write_lines(
+            self.root / "peers" / "rollout-2026-09-28T10-00-00-p2.jsonl",
+            [
+                codex_message("user", "fix the paste bug", "2026-09-28T10:00:00Z"),
+                codex_message("assistant", "Fixed.", "2026-09-28T10:00:05Z"),
+                codex_message(
+                    "user",
+                    envelope + "Can you share the parser API?",
+                    "2026-09-28T10:01:00Z",
+                ),
+                codex_message(
+                    "assistant", "Sent the API summary.", "2026-09-28T10:01:05Z"
+                ),
+            ],
+        )
+        turns = next_prompt.codex_turns(str(codex))
+        self.assertEqual([(t["role"], t["text"]) for t in turns], expected)
+        # Never an example of the person's voice, nor their latest prompt.
+        self.assertEqual(
+            [p[2] for p in next_prompt.transcript_prompts("codex", str(codex), turns)],
+            ["fix the paste bug"],
+        )
+        text = next_prompt.render({"context": {"turns": next_prompt.history(turns)}})
+        self.assertIn('kind="peer"', text)
+        self.assertIn("Can you share the parser API?", text)
+        self.assertEqual(text.count('kind="person"'), 1)
+
     def test_codex_leaves_out_its_own_instructions(self):
         turns = next_prompt.codex_turns(str(self.codex_path))
         self.assertEqual(
