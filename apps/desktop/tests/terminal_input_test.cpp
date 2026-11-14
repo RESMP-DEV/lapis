@@ -442,6 +442,65 @@ void size_returns_to_this_window() {
     require(resize_frames(peer) == claim, "Showing the agent on the stage did not claim the size");
 }
 
+// A stage that eases to a new width (the sidebar sliding) holds the agent's
+// grid and sends the final size once; an unheld stage sends each new grid.
+void held_resize_sends_once() {
+    Fixture f;
+    QQuickWindow window;
+    // Tall enough that the screen's width, not its height, sets its scale.
+    window.setGeometry(100, 100, 900, 1200);
+    lapis::desktop::TerminalSurface surface(window.contentItem());
+    surface.setSize(QSizeF(900, 1200));
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    surface.setDocument(&f.document);
+    surface.setInteractive(true);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    static_cast<void>(resize_frames(peer));
+    const auto grid = [&] {
+        const auto size = surface.gridSize();
+        return lapis::session::TerminalSize{static_cast<std::uint16_t>(size.width()),
+                                            static_cast<std::uint16_t>(size.height())};
+    };
+    // Eighteen frames of a 296 px slide, as the stage's width eases.
+    const auto slide = [&](qreal from, qreal to) {
+        for (int frame = 1; frame <= 18; ++frame) {
+            const qreal t = frame / 18.0;
+            const qreal eased = 1 - (1 - t) * (1 - t) * (1 - t);
+            surface.setWidth(from + (to - from) * eased);
+            QCoreApplication::processEvents();
+        }
+    };
+    slide(900, 604);
+    const auto unheld = resize_frames(peer);
+    require(unheld.size() > 5, "An unheld stage did not follow its width");
+    require(unheld.back() == grid(), "An unheld stage did not end at its grid");
+
+    // The screen's scale shows in the cursor's height.
+    const auto cursor_height = [&] {
+        return surface.inputMethodQuery(Qt::ImCursorRectangle).toRectF().height();
+    };
+    const auto narrow_cursor = cursor_height();
+    surface.setHoldResize(true);
+    surface.setHoldScreen(true);
+    slide(604, 900);
+    require(resize_frames(peer).empty(), "A held stage resized the agent while it slid");
+    require(cursor_height() == narrow_cursor, "A held screen zoomed its glyphs with the stage");
+    require(surface.gridSize().width() > static_cast<int>(unheld.back().columns),
+            "A held stage did not track the grid it will request");
+    surface.setHoldResize(false);
+    const std::vector<lapis::session::TerminalSize> once{grid()};
+    require(resize_frames(peer) == once, "Releasing the hold did not send the final size once");
+    require(cursor_height() == narrow_cursor, "The screen's hold ended with the size's");
+    surface.setHoldScreen(false);
+    require(cursor_height() != narrow_cursor, "Releasing the screen kept the held layout");
+    surface.setHoldResize(true);
+    surface.setHoldResize(false);
+    require(resize_frames(peer).empty(), "Releasing an unchanged hold resized the agent");
+}
+
 // Links are found across the rows they wrap onto, without sentence punctuation.
 void links_follow_wrapped_rows() {
     lapis::session::Terminal terminal({20, 3});
@@ -1993,6 +2052,7 @@ int main(int argc, char** argv) {
         links_follow_wrapped_rows();
         command_links_open();
         size_returns_to_this_window();
+        held_resize_sends_once();
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";
         std::cout << "Qt IME commit/cancel, replacement rejection, paste, long paste, suggestions, "

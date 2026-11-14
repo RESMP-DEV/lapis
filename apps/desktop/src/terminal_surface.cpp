@@ -811,7 +811,7 @@ void TerminalSurface::publishFrame(bool snapshot_changed) {
         frame->agent_id = document_->agentId();
         frame->offer_key = suggestion_key_;
     }
-    frame->viewport = size();
+    frame->viewport = layoutViewport();
     frame->font_family = use_system_font_ ? QString() : resolved_font_family_;
     frame->font_pixel_size = font_pixel_size_;
     frame->minimum_scale = minimum_scale_;
@@ -1177,6 +1177,24 @@ void TerminalSurface::setHoldResize(bool hold) {
     emit holdResizeChanged();
     if (!hold)
         requestResize();
+}
+
+void TerminalSurface::setHoldScreen(bool hold) {
+    if (held_viewport_.has_value() == hold)
+        return;
+    if (hold)
+        held_viewport_ = size();
+    else
+        held_viewport_.reset();
+    emit holdScreenChanged();
+    if (!hold) {
+        publishFrame(false);
+        updateInputContext(Qt::ImCursorRectangle);
+    }
+}
+
+QSizeF TerminalSurface::layoutViewport() const {
+    return held_viewport_ && !held_viewport_->isEmpty() ? *held_viewport_ : size();
 }
 
 void TerminalSurface::setScrollToBottomOnTyping(bool on) {
@@ -1571,7 +1589,7 @@ std::optional<TerminalSurface::CellGrid> TerminalSurface::cellGrid() const {
     const QFontMetricsF metrics(cellFont());
     const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
     const qreal row_height = metrics.height() + 3;
-    const auto layout = surface_layout(snapshot, QSizeF(width(), height()), minimum_scale_,
+    const auto layout = surface_layout(snapshot, layoutViewport(), minimum_scale_,
                                        QSizeF(cell_width, row_height));
     // A screen slid down part of a row starts that much above its first row.
     const qreal first_row = layout.first_row - historySlide() / (row_height * layout.scale);

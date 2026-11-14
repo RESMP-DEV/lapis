@@ -367,6 +367,8 @@ void wait_input_ready(QQuickWindow& window, lapis::desktop::TerminalSurface& ter
 
 void wait_sidebar(QQuickWindow& window, lapis::desktop::Config& config_model, bool visible) {
     CHECK(wait_for([&] { return config_model.sidebarVisible() == visible; }, 5000));
+    // A toggle while motion is on slides the sidebar; wait for it to rest.
+    CHECK(wait_for([&] { return !window.property("sidebarSliding").toBool(); }, 5000));
     CHECK(find_visual(window.contentItem(), QStringLiteral("categoryRail"))->isVisible() ==
           visible);
 }
@@ -3630,6 +3632,152 @@ void check_hidden_sidebar_title(QQuickWindow& window, lapis::desktop::Workspace&
     CHECK(!title->isVisible());
 }
 
+// Command-B slides the sidebar: its room and the stage's edge ease while the
+// panel keeps its full width, the title line fades and the stage's top eases
+// in step, a second toggle reverses from where it is, the stage's terminal
+// holds its grid until the slide ends, and reduced motion or a change from
+// the config is instant. At rest both states are exactly as before.
+void check_sidebar_slide(QQuickWindow& window, lapis::desktop::AppWindow& preview,
+                         lapis::desktop::Config& config_model, const QString& captures) {
+    using namespace lapis::desktop;
+    const auto item = [&window](const QString& name) {
+        auto* found = find_visual(window.contentItem(), name);
+        if (found == nullptr)
+            throw std::runtime_error("missing item " + name.toStdString());
+        return found;
+    };
+    auto* rail = item(QStringLiteral("categoryRail"));
+    auto* slot = item(QStringLiteral("sidebarSlot"));
+    auto* title = item(QStringLiteral("stageTitle"));
+    auto* stage = item(QStringLiteral("focusedPane"));
+    auto* terminal = qobject_cast<TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    CHECK(terminal != nullptr);
+    const auto reveal = [&] { return window.property("sidebarReveal").toReal(); };
+    const auto sliding = [&] { return window.property("sidebarSliding").toBool(); };
+    const auto stage_x = [&] { return stage->mapToScene(QPointF(0, 0)).x(); };
+    const auto stage_top = [&] { return stage->mapToScene(QPointF(0, 0)).y(); };
+    const auto toggle = [&] { CHECK(QMetaObject::invokeMethod(&window, "toggleSidebar")); };
+    const auto save = [&](const char* name) {
+        if (!captures.isEmpty())
+            CHECK(window.grabWindow().save(QDir(captures).filePath(QString::fromLatin1(name))));
+    };
+    const int rail_width = window.property("railWidth").toInt();
+    const int title_height = window.property("stageTitleHeight").toInt();
+    // The layout has placed the frame's reveal (it lays out once per frame).
+    const auto laid_out = [&] {
+        return slot->width() == qRound((rail_width + 8) * reveal()) &&
+               stage_x() == 8 + slot->width();
+    };
+    const auto rest_shown = [&] {
+        CHECK(!sliding() && reveal() == 1.0);
+        CHECK(rail->isVisible() && rail->width() == rail_width && rail->x() == 0);
+        CHECK(slot->width() == rail_width + 8);
+        CHECK(stage_x() == 8 + rail_width + 8);
+        CHECK(stage_top() == 8);
+        CHECK(!title->isVisible());
+        CHECK(!terminal->holdResize() && !terminal->holdScreen());
+    };
+    const auto rest_hidden = [&] {
+        CHECK(!sliding() && reveal() == 0.0);
+        CHECK(!rail->isVisible() && !slot->isVisible());
+        CHECK(stage_x() == 8);
+        CHECK(stage->width() == window.width() - 16);
+        CHECK(stage_top() == title_height);
+        CHECK(title->isVisible() && title->opacity() == 1.0);
+        CHECK(!terminal->holdResize() && !terminal->holdScreen());
+    };
+
+    CHECK(config_model.sidebarVisible());
+    CHECK(window.property("motionEnabled").toBool());
+    pump(40);
+    rest_shown();
+    const auto shown_width = stage->width();
+    save("sidebar-slide-shown.png");
+
+    // The terminal is told its final size once: its hold ends only after
+    // the sidebar has reached where it was going.
+    QList<qreal> released_at;
+    QSize released_grid;
+    const auto connection = QObject::connect(terminal, &TerminalSurface::holdResizeChanged, [&] {
+        if (!terminal->holdResize()) {
+            released_at.append(reveal());
+            released_grid = terminal->gridSize();
+        }
+    });
+    const auto keyboard = window.activeFocusItem();
+
+    // The screen's scale, in its cursor's height.
+    const auto cursor_height = [&] {
+        return terminal->inputMethodQuery(Qt::ImCursorRectangle).toRectF().height();
+    };
+    const auto shown_cursor = cursor_height();
+    CHECK(shown_cursor > 0);
+
+    // Hiding: the setting changes at once (nothing waits on the motion).
+    toggle();
+    CHECK(!config_model.sidebarVisible());
+    CHECK(wait_for([&] { return reveal() <= 0.6 && reveal() >= 0.3 && laid_out(); }, 1000));
+    // Mid-slide: the panel at its full width, partly off the window's edge;
+    // the stage's edge, the title and the stage's top between their rests;
+    // the terminal keeps its grid and its glyphs' scale.
+    CHECK(sliding() && terminal->holdResize() && terminal->holdScreen());
+    CHECK(cursor_height() == shown_cursor);
+    CHECK(rail->isVisible() && rail->width() == rail_width);
+    CHECK(rail->mapToScene(QPointF(0, 0)).x() < 8);
+    CHECK(stage_x() > 8 && stage_x() < 8 + rail_width + 8);
+    CHECK(stage->width() > shown_width && stage->width() < window.width() - 16);
+    CHECK(title->isVisible() && title->opacity() > 0 && title->opacity() < 1);
+    CHECK(stage_top() > 8 && stage_top() < title_height);
+    CHECK(window.activeFocusItem() == keyboard);
+    save("sidebar-slide-mid.png");
+    CHECK(wait_for([&] { return !sliding(); }, 2000));
+    pump(20);
+    rest_hidden();
+    CHECK(window.activeFocusItem() == keyboard);
+    CHECK(released_at == QList<qreal>{0.0});
+    // The grid it asks for on release is the one it rests at: one resize.
+    CHECK(released_grid == terminal->gridSize());
+    save("sidebar-slide-hidden.png");
+
+    // Toggled again mid-slide, it turns back from where it is.
+    toggle();
+    CHECK(wait_for([&] { return reveal() >= 0.3; }, 1000));
+    toggle();
+    const auto turned = reveal();
+    CHECK(turned > 0.25 && turned < 1);
+    CHECK(sliding() && terminal->holdResize());
+    pump(20);
+    CHECK(reveal() < turned + 0.05);
+    CHECK(wait_for([&] { return !sliding(); }, 2000));
+    pump(20);
+    rest_hidden();
+    // One release for the whole round trip, at its end.
+    CHECK(released_at == (QList<qreal>{0.0, 0.0}));
+    CHECK(released_grid == terminal->gridSize());
+
+    // Reduced motion: instant both ways, no hold.
+    preview.setReducedMotion(true);
+    CHECK(!window.property("motionEnabled").toBool());
+    toggle();
+    CHECK(reveal() == 1.0 && !sliding());
+    pump(20);
+    rest_shown();
+    toggle();
+    CHECK(reveal() == 0.0 && !sliding());
+    pump(20);
+    rest_hidden();
+    preview.setReducedMotion(false);
+    CHECK(window.property("motionEnabled").toBool());
+
+    // A change from the config (a load or a restore) is instant too.
+    CHECK(config_model.setSidebarVisible(true));
+    CHECK(reveal() == 1.0 && !sliding());
+    pump(20);
+    rest_shown();
+    CHECK(released_at == (QList<qreal>{0.0, 0.0}));
+    QObject::disconnect(connection);
+}
+
 // Light mode and the Settings window, on a config of its own.
 int run_settings_window_tests() {
     using namespace lapis::desktop;
@@ -3655,6 +3803,7 @@ int run_settings_window_tests() {
     check_appearance_toggle(*window, workspace, config_model, directory, captures);
     check_sidebar_theme(*window, workspace, config_model, directory, captures);
     check_hidden_sidebar_title(*window, workspace, config_model, directory, captures);
+    check_sidebar_slide(*window, preview, config_model, captures);
     check_settings_window(*window, preview, config_model, captures);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;
