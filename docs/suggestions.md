@@ -376,7 +376,7 @@ you settled on with the agents that were waiting when you left the one before
 learn from them; they are the record for judging that order.
 
 ```sh
-python3 scripts/runtime_digest.py                  # the last day: guesses that worked, taken by prompt arm, failures, Ultra Tab, pings
+python3 scripts/runtime_digest.py                  # the last day: guesses that worked, taken by prompt arm, failures, Ultra Tab answers, pings
 python3 scripts/next_prompt_eval.py log            # acceptance: of the guesses you saw, the share you used
 python3 scripts/next_prompt_eval.py log --judge    # the ones you passed over, against what you typed
 python3 scripts/next_prompt_eval.py log --redo     # how often your next message was a redo, taken or not, by prompt arm

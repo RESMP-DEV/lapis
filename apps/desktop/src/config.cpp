@@ -440,8 +440,8 @@ void Config::apply_defaults() {
     // As in a browser, Command-W closes what is in front (the side terminal's
     // panel, else the focused agent) and the window only when the category has
     // no agent left; Command-Shift-W closes the window. On the Mac a closed
-    // window only hides and lapis keeps running. Command-M minimizes. As in a browser, Command-T
-    // opens an agent (a tab) and Command-N a category (a window). Categories answer to both the
+    // window only hides and lapis keeps running. Command-M minimizes. Command-T
+    // opens an agent and Command-N a category. Categories answer to both the
     // original Command-Option-left/right and the vertical Command-Shift-up/down.
     bindings_ = {
         {QStringLiteral("quit"), {modifier + QStringLiteral("Q")}},
@@ -520,6 +520,7 @@ void Config::apply_defaults() {
     // Each CLI lists its own models (HarnessModels) unless the config names some.
     sections_ = {};
     touched_.clear();
+    touched_keys_.clear();
     parse_sections();
     terminal_font_family_.clear();
     harness_arguments_.clear();
@@ -528,6 +529,8 @@ void Config::apply_defaults() {
     density_ = CardDensity::Comfortable;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool Config::load() {
     apply_defaults();
     diagnostic_.clear();
@@ -804,11 +807,13 @@ void Config::load_visual(const QJsonObject& root) {
     if (mode == QLatin1String("dark") || mode == QLatin1String("light") ||
         mode == QLatin1String("system")) {
         appearance_ = mode;
+        appearance_chosen_ = true;
         apply_appearance();
     } else {
         // A file from before light mode shows exactly what it did; the mode
         // is the visual view's kind until it is chosen.
         appearance_ = showing_light ? QStringLiteral("light") : QStringLiteral("dark");
+        appearance_chosen_ = false;
     }
 }
 
@@ -828,16 +833,26 @@ void Config::apply_appearance() {
 }
 
 void Config::choose_kind(bool light) {
-    if (lightShown() != light)
+    if (lightShown() != light) {
         appearance_ = light ? QStringLiteral("light") : QStringLiteral("dark");
+        appearance_chosen_ = true;
+    }
 }
 
 bool Config::setAppearance(const QString& mode) {
     if (mode != QLatin1String("dark") && mode != QLatin1String("light") &&
         mode != QLatin1String("system"))
         return false;
-    if (mode == appearance_)
+    const bool was_chosen = appearance_chosen_;
+    appearance_chosen_ = true;
+    if (mode == appearance_) {
+        if (!was_chosen) {
+            apply_appearance();
+            emit changed();
+            return save();
+        }
         return true;
+    }
     appearance_ = mode;
     apply_appearance();
     qInfo().noquote() << "lapis appearance:" << appearance_;
@@ -881,6 +896,8 @@ QVariantMap Config::visual() const {
             {QStringLiteral("lightWindowTheme"), window_light_theme_}};
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool Config::setVisual(const QString& key, const QVariant& value) {
     QString* name = key == QLatin1String("theme")      ? &visual_theme_
                     : key == QLatin1String("font")     ? &visual_font_
@@ -978,6 +995,8 @@ bool plain_text(const QVariant& value, qsizetype limit) {
 }
 } // namespace
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool Config::setSetting(const QString& path, const QVariant& value) {
     const auto dot = path.indexOf(QLatin1Char('.'));
     if (dot <= 0)
@@ -1020,14 +1039,28 @@ bool Config::setSetting(const QString& path, const QVariant& value) {
         return false;
     }
     auto section = sections_.value(section_name).toObject();
-    if (section.value(key) == stored)
+    if (section_name == QLatin1String("harnessUpdates")) {
+        // Loader-normalized names can differ in case from the stored key.
+        QStringList duplicates;
+        for (auto it = section.begin(); it != section.end(); ++it)
+            if (key.compare(it.key(), Qt::CaseInsensitive) == 0)
+                duplicates.append(it.key());
+        for (const auto& duplicate : duplicates)
+            section.remove(duplicate);
+        const bool normalized = !duplicates.isEmpty();
+        const bool enabling = stored.isUndefined();
+        if (!normalized && !enabling && section.value(key) == stored)
+            return true;
+    } else if (section.value(key) == stored) {
         return true;
+    }
     if (stored.isUndefined())
         section.remove(key);
     else
         section.insert(key, stored);
     sections_.insert(section_name, section);
     touched_.insert(section_name);
+    touched_keys_[section_name].insert(key);
     // Parsing the section again must not repeat its diagnostics.
     const auto diagnostic = diagnostic_;
     parse_sections();
@@ -1340,6 +1373,8 @@ bool read_config_for_update(const QString& path, QJsonObject& root, QString* rea
 }
 } // namespace
 
+// One serialized writer pass; branching stays local to persistence ordering.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool Config::persist() {
     const auto fail = [this](const QString& reason) {
         diagnostic_ = QStringLiteral("Could not save %1: %2").arg(source_path_, reason);
@@ -1393,16 +1428,38 @@ bool Config::persist() {
     else
         visual.remove(QStringLiteral("factory"));
     visual.insert(QStringLiteral("editor"), visual_editor_);
-    visual.insert(QStringLiteral("appearance"), appearance_);
+    if (appearance_chosen_)
+        visual.insert(QStringLiteral("appearance"), appearance_);
+    else
+        visual.remove(QStringLiteral("appearance"));
     visual.insert(QStringLiteral("darkTheme"), visual_dark_theme_);
     visual.insert(QStringLiteral("lightTheme"), visual_light_theme_);
     visual.insert(QStringLiteral("darkWindowTheme"), window_dark_theme_);
     visual.insert(QStringLiteral("lightWindowTheme"), window_light_theme_);
     visual.remove(QStringLiteral("sendOnReturn")); // Return always sends now
     root.insert(QStringLiteral("visual"), visual);
-    // Sections Settings changed; the others stay exactly as on disk.
-    for (const auto& name : std::as_const(touched_))
-        root.insert(name, sections_.value(name));
+    // Replay only Settings' changed keys onto the freshly read section, so a
+    // concurrent edit to another key in the same section survives.
+    for (const auto& name : std::as_const(touched_)) {
+        auto section = root.value(name).toObject();
+        const auto changes = sections_.value(name).toObject();
+        const auto keys = touched_keys_.value(name);
+        for (auto it = keys.begin(); it != keys.end(); ++it) {
+            if (name == QLatin1String("harnessUpdates")) {
+                QStringList aliases;
+                for (auto stored = section.begin(); stored != section.end(); ++stored)
+                    if (it->compare(stored.key(), Qt::CaseInsensitive) == 0)
+                        aliases.append(stored.key());
+                for (const auto& alias : aliases)
+                    section.remove(alias);
+            }
+            if (changes.contains(*it))
+                section.insert(*it, changes.value(*it));
+            else
+                section.remove(*it);
+        }
+        root.insert(name, section);
+    }
     if (!root.contains(QStringLiteral("version")))
         root.insert(QStringLiteral("version"), 1);
     QByteArray contents = format_config(root) + '\n';
@@ -1415,8 +1472,16 @@ bool Config::persist() {
         return fail(file.errorString());
     if (file.write(contents) != contents.size() || !file.commit())
         return fail(file.errorString());
+    for (const auto& name : std::as_const(touched_))
+        sections_.insert(name, root.value(name));
+    {
+        const auto diagnostic = diagnostic_;
+        parse_sections();
+        diagnostic_ = diagnostic;
+    }
     known_contents_ = std::move(contents);
     touched_.clear();
+    touched_keys_.clear();
     watch();
     diagnostic_.clear();
     emit changed();

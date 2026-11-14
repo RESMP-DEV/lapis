@@ -89,6 +89,6 @@ same file).
 ## License
 
 MIT; see [LICENSE](LICENSE). The Mac app also carries Qt (LGPL-3.0), MoltenVK
-(Apache-2.0) and Ghostty's VT library (MIT); their notices are in
+(Apache-2.0), Ghostty's VT library (MIT) and Sparkle (MIT); their notices are in
 [third_party/](third_party) and in the app under `Contents/Resources/Notices`,
 and each release attaches the Qt source it was built from.

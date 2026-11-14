@@ -1,8 +1,8 @@
 """What lapis did for the person in the last day, from its own runtime logs.
 
 A short, read-only digest of use rather than of code: whether guesses worked
-and were taken (by prompt arm), Ultra Tab answers against what composing
-cost, how Tab moved, ping decisions and log warnings. It
+and were taken (by prompt arm), retired Ultra Tab deck answers, how Tab moved,
+ping decisions and log warnings. It
 reads ~/.lapis/runtime only and prints counts, never prompt or transcript text.
 
     python3 scripts/runtime_digest.py            # the last 24 hours
@@ -117,13 +117,10 @@ def guesses(runtime, since):
 
 
 def ultratab(runtime, since):
-    composed = Counter(
-        e.get("event") for e in records(runtime, "ultratab_compose.jsonl", since)
-    )
     answers = Counter(
         e.get("how") for e in records(runtime, "ultratab_answers.jsonl", since)
     )
-    return {"composed": dict(composed), "answers": dict(answers)}
+    return {"answers": dict(answers)}
 
 
 def tab(runtime, since):
@@ -204,9 +201,8 @@ def lines(report):
             f" {counts['used']} taken"
             + (f" ({taken:.0%})" if taken is not None else "")
         )
-    composed = u["composed"].get("composed", 0) + u["composed"].get("fallback", 0)
     answered = sum(u["answers"].values())
-    out.append(f"ultra tab: {answered} answers, {composed} cards composed")
+    out.append(f"ultra tab: {answered} answers")
     out.append(
         f"tab: {t['tab_moves']} Tab moves, {t['choices']} choices; focus by "
         + ", ".join(f"{k} {v}" for k, v in t["agent_focus_by"].items())

@@ -16,6 +16,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
@@ -81,6 +82,8 @@ QImage shot(QQuickView& view, QObject* list, int index) {
 // The bar edits as the terminal does on a Mac (lapis keeps Command as Meta),
 // Return sends and Shift-Return adds a line. Arrows carry the
 // keypad flag, as AppKit sends them.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_keys(QQuickView& view, QQuickItem* root) {
     auto* input = root->findChild<QQuickItem*>(QStringLiteral("visualComposer"));
     if (input == nullptr) {
@@ -310,6 +313,8 @@ QQuickItem* step_titled(QQuickItem* root, const char* title) {
 // is drawn until its step is opened, and the opened step stays opened as
 // the turn ends under its "Worked for" header, which folds and shows its
 // steps as a group.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile& file) {
     int failures = 0;
     const auto expect = [&failures](bool ok, const char* what) {
@@ -470,9 +475,10 @@ void write_media_fixture(const QString& folder, QFile& file) {
     QFile pdf(QDir(folder).filePath(QStringLiteral("report.pdf")));
     if (pdf.open(QIODevice::WriteOnly))
         pdf.write("%PDF-1.4\n");
-    // Named from the home folder (the capture's own), as agents often do.
-    const auto reply = QStringLiteral("The flow, as drawn:\n\n~/diagram.png\n\nThe full write-up "
-                                      "is in ~/report.pdf for later.");
+    // Named by absolute paths in the fixture's folder, independent of HOME.
+    const auto reply =
+        QStringLiteral("The flow, as drawn:\n\n%1\n\nThe full write-up is in %2 for later.")
+            .arg(picture, pdf.fileName());
     const QJsonObject prompt{{"type", "user"},
                              {"uuid", "p1"},
                              {"timestamp", "2026-11-11T16:00:00.000Z"},
@@ -668,6 +674,8 @@ std::pair<qreal, qreal> drawn_span(QQuickItem* row) {
 // Rows of the thread the list holds, each above the next, nothing drawn
 // past a row's bottom, and the footer below the last. Problems go to
 // `what`, prefixed; returns their number.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_rows(QQuickItem* list, const QString& when, QStringList& what) {
     int problems = 0;
     const auto add = [&](const QString& text) {
@@ -760,6 +768,8 @@ int check_rows(QQuickItem* list, const QString& when, QStringList& what) {
 // and for a CLI that records no queue the prompt noted as sent), then the
 // CLI's records appended. The thread's rows are checked right after each
 // change and once settled; `out`, when given, saves each moment's frame.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_sent(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile& file,
                const QList<QByteArray>& records, const QString& prompt, const QString& out) {
     auto* list = root->property("list").value<QQuickItem*>();
@@ -770,8 +780,10 @@ int check_sent(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile
         const auto frame = view.grabWindow();
         check_rows(list, QString::fromLatin1(when), problems);
         if (!out.isEmpty())
-            (void)frame.save(
-                QStringLiteral("%1-%2.png").arg(out).arg(shot_number++, 2, 10, QLatin1Char('0')));
+            if (!frame.save(QStringLiteral("%1-%2.png")
+                                .arg(out)
+                                .arg(shot_number++, 2, 10, QLatin1Char('0'))))
+                problems.append(QStringLiteral("could not write frame %1").arg(shot_number));
     };
     QMetaObject::invokeMethod(list, "positionViewAtEnd");
     settle();
@@ -863,7 +875,7 @@ QByteArray compact(const QJsonObject& object) {
 // Each CLI's records for a finished turn ending in that reply, for the
 // next prompt that starts a turn, and for that turn's step and final reply.
 struct SentFixture {
-    const char* format;
+    const char* format{};
     QList<QByteArray> before;
     QList<QByteArray> prompt;
     QList<QByteArray> step;
@@ -1059,7 +1071,11 @@ QStringList pending_shown(QQuickItem* root) {
 // sent from the bar waits to be recorded. Each moment's rows are checked
 // (each above the next, nothing drawn past its row or by a row the list let
 // go of, the footer below); `out`, when given, saves each moment's frame.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_turn_ended(QQuickView& view, QQuickItem* root, TranscriptModel& model,
+                     // Positional contract; callers and tests pin the order.
+                     // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                      const QString& folder, const QString& out) {
     auto* list = root->property("list").value<QQuickItem*>();
     int failures = 0;
@@ -1185,6 +1201,8 @@ int prompt_rows(TranscriptModel& model, const QString& text) {
 // sending: a prompt the agent's input box still holds gets one more Return,
 // only then, and a bubble note when that does not take it either. The
 // agent's screen and Return are stand-ins with each CLI's input box.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_bubble(QQuickView& view, QQuickItem* root, TranscriptModel& model,
                  const QString& folder) {
     int failures = 0;
@@ -1735,6 +1753,8 @@ QByteArray launch(const QString& id, const QString& agent, const QString& what, 
 // live box while the agent works, under "Waiting on ..." once its turn
 // ended, a subagent opening to its own steps, more than four summed up, and
 // each leaving once it ends.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_work(QQuickView& view, QQuickItem* root, TranscriptModel& model, const QString& folder) {
     int failures = 0;
     const auto expect = [&failures](bool ok, const char* what) {
@@ -2068,6 +2088,8 @@ int check_swapped(QQuickView& view, QQuickItem* root, TranscriptModel& model,
 // --open: the newest step whose verb starts with `verb` opened in place
 // (the oldest under its header with a leading ^), its header's steps shown
 // first if they were folded, and shot there.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QImage open_step(QQuickView& view, QQuickItem* root, TranscriptModel& model, QObject* list,
                  QString verb) {
     const bool oldest = verb.startsWith(QLatin1Char('^'));
@@ -2189,6 +2211,8 @@ struct Check {
     }
 };
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int check_structure(const QString& path, const TranscriptModel& model, Check& check) {
     using lapis::desktop::transcript::make_reader;
     QFile file(path);
@@ -2395,7 +2419,11 @@ void switch_breakdown(const QStringList& paths) {
 // a switch is the GUI thread's worst stall. Patterns: each file once (the
 // first visit), a walk through all of them twice (Command-Shift-bracket),
 // back and forth between two, and random picks.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int bench_switch(QQuickView& view, TranscriptModel& model, QObject* list, const QStringList& paths,
+                 // Positional contract; callers and tests pin the order.
+                 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
                  int idle_s, int pairs) {
     struct Times {
         double call{}, content{}, laid{}, frame{}, settled{}, stall{};
@@ -2426,6 +2454,11 @@ int bench_switch(QQuickView& view, TranscriptModel& model, QObject* list, const 
         };
         while (model.rowCount() == 0 && model.loading() && timer.elapsed() < 60000)
             pass();
+        if (model.rowCount() == 0 && model.loading()) {
+            std::fprintf(stderr, "switch: %s did not load in 60 s\n", qPrintable(path));
+            stale = true;
+            return;
+        }
         times.content = ms_of(timer);
         const auto draw = [&] {
             QMetaObject::invokeMethod(list, "forceLayout");
@@ -2469,7 +2502,7 @@ int bench_switch(QQuickView& view, TranscriptModel& model, QObject* list, const 
     std::uint32_t seed = 12345;
     for (int i = 0; i < 40; ++i) {
         seed = seed * 1664525u + 1013904223u;
-        run("random", static_cast<int>((seed >> 8) % static_cast<std::uint32_t>(n)));
+        run("random", static_cast<int>((seed >> 8U) % static_cast<std::uint32_t>(n)));
     }
     std::printf("switch: %d conversations (offscreen, software scene graph), ms\n", n);
     std::printf("  %-15s %4s %5s  %-18s %-18s %-18s %-18s %-18s %-18s\n", "phase", "n", "warm",
@@ -2708,7 +2741,9 @@ int check_picker(QQuickView& view, QQuickItem* root, TranscriptModel& model,
 }
 } // namespace
 
-int main(int argc, char** argv) {
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+int run_capture(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic"); // as the app sets it
     // The view writes a chart style under ~/.lapis; a capture keeps it in a
@@ -2884,6 +2919,8 @@ int main(int argc, char** argv) {
             return 2;
         }
         model.setFormat(format);
+    } else if (sending) {
+        model.setFormat(lapis::desktop::transcript::format_of(parser.value("jsonl")));
     }
     if (!switching) {
         model.setPath(live_checks || sending ? live_file.fileName()
@@ -2979,7 +3016,7 @@ int main(int argc, char** argv) {
     // The offscreen platform reports generic names ("Sans Serif") whose
     // fallback spaces digits apart; name the Mac's interface fonts instead,
     // as the real window's platform resolves them.
-    const auto first_of = [](QStringList wanted, QFontDatabase::SystemFont fallback) {
+    const auto first_of = [](const QStringList& wanted, QFontDatabase::SystemFont fallback) {
         const auto families = QFontDatabase::families();
         for (const auto& family : wanted)
             if (families.contains(family))
@@ -3081,6 +3118,11 @@ int main(int argc, char** argv) {
                                                                  {"three quarters", rows * 3 / 4},
                                                                  {"last", -1}};
         const auto folder = parser.value("out-dir");
+        bool captures_written = true;
+        if (!folder.isEmpty() && !QFileInfo(folder).isDir()) {
+            std::fprintf(stderr, "could not write captures to %s\n", qPrintable(folder));
+            return 1;
+        }
         for (const auto& [name, row] : positions) {
             QElapsedTimer timer;
             timer.start();
@@ -3088,8 +3130,11 @@ int main(int argc, char** argv) {
             std::printf("  screen %-15s row %6d  %5lld ms\n", name, row < 0 ? rows - 1 : row,
                         static_cast<long long>(timer.elapsed()));
             if (!folder.isEmpty())
-                (void)image.save(QDir(folder).filePath(
-                    QStringLiteral("%1.png").arg(QString::fromUtf8(name).replace(' ', '-'))));
+                if (!image.save(QDir(folder).filePath(
+                        QStringLiteral("%1.png").arg(QString::fromUtf8(name).replace(' ', '-'))))) {
+                    std::fprintf(stderr, "could not write capture %s\n", name);
+                    captures_written = false;
+                }
         }
         // Every "Worked for" row opened and folded again, a few spread out.
         std::vector<int> work_rows;
@@ -3121,7 +3166,7 @@ int main(int argc, char** argv) {
             }
         }
         std::printf("problems %d\n", check.problems);
-        return check.problems == 0 ? 0 : 1;
+        return check.problems == 0 && captures_written ? 0 : 1;
     }
     if (parser.isSet("live")) {
         // What the running turn shows: its live box's steps, and compacting.
@@ -3367,4 +3412,13 @@ int main(int argc, char** argv) {
         line("whole step", frames);
     }
     return 0;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return run_capture(argc, argv);
+    } catch (...) {
+        std::fprintf(stderr, "transcript_capture: FAIL unexpected exception\n");
+        return 1;
+    }
 }

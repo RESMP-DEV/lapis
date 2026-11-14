@@ -54,8 +54,8 @@ keeps retrying while the machine is unreachable, retries at once when the Mac
 joins a network, and an agent restored at login before the network is up
 connects when it can. A window that loses its own attachment to a running
 agent (as when every agent restores at once after login) attaches again.
-The agent strip's **+** opens the same form, machines included. The category
-rail's **+** creates a category instead.
+The agent strip's **+** opens the same form, machines included. The sidebar's
+**+** creates a category instead.
 
 A new agent shows the CLI's mark and a home-relative folder such as `~/dev/lapis`;
 agents in the same folder are numbered. An agent still named after its folder
@@ -91,10 +91,11 @@ turn ended, not that the task or the process did. Claude Code's idle reminder
 after a turn is not a request.
 
 A request (a permission prompt, a question) shows as **Needs your answer** with
-a diamond mark until it is resolved, and counts for Tab and the chime once, as a
-finished turn does. Answer it in the agent's terminal; lapis never changes
-a CLI's approval policy. **Requests** (and **Review requests** in Commands)
-lists what the agent is asking; opening or selecting one never approves it.
+a diamond mark until it is resolved. Tab can return to it until then, even after
+you view and leave the agent, while the chime sounds only when it first arrives.
+Answer it in the agent's terminal; lapis never changes a CLI's approval policy.
+**Requests** (and **Review requests** in Commands) lists what the agent is
+asking; opening or selecting one never approves it.
 
 A Claude agent gets one lapis hook per event, and it only reports: it never
 prints a decision or blocks a tool, so Claude Code's own permission rules and

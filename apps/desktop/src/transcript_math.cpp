@@ -8,6 +8,7 @@
 #include <QTextList>
 #include <QTextTable>
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <tuple>
 #include <utility>
@@ -45,6 +46,8 @@ bool blank_line_after(const QString& text, qsizetype at) {
 }
 
 // Shell and money that pandoc's rule alone would take for math.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool looks_like_math(QStringView content) {
     if (content.startsWith(u'{') || content.contains(u"://"))
         return false; // ${VAR}, a URL
@@ -126,7 +129,7 @@ qsizetype closing(const QString& text, qsizetype from, QStringView close) {
 
 // ---- rendering ---------------------------------------------------------
 
-enum class Class { ordinary, binary, relation, big, function, open, close, punct };
+enum class Class : std::uint8_t { ordinary, binary, relation, big, function, open, close, punct };
 struct Symbol {
     const char16_t* text;
     Class kind;
@@ -401,7 +404,7 @@ class Parser {
     }
 
   private:
-    enum class Last { none, operand, operation };
+    enum class Last : std::uint8_t { none, operand, operation };
 
     void fail() { failed_ = true; }
 
@@ -834,10 +837,12 @@ class Parser {
             text += QString::fromUcs4(&character, 1);
             text += QChar(mark);
         }
-        run.text = text;
+        run.text = std::move(text);
         append(std::move(inner), false);
     }
 
+    // Cohesive parser/test flow; branching stays local.
+    // NOLINTNEXTLINE(readability-function-cognitive-complexity)
     void command() {
         ++p_; // the backslash
         if (p_ >= s_.size()) {
@@ -1001,6 +1006,10 @@ class Parser {
         if (name == u"not") {
             // \not= is ≠, \not\in ∉; another relation gets a slash.
             skip_spaces();
+            if (p_ >= s_.size()) {
+                fail();
+                return;
+            }
             const auto before = runs_.size();
             const auto text_before = before > 0 ? runs_.back().text.size() : 0;
             atom();
@@ -1062,6 +1071,8 @@ bool may_contain(const QString& markdown) {
     return false;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<Span> find(const QString& text) {
     std::vector<Span> out;
     if (!may_contain(text))
@@ -1224,7 +1235,8 @@ Prepared prepare(const QString& markdown) {
     auto spans = find(markdown);
     if (spans.empty())
         return out;
-    if (spans.size() > static_cast<size_t>(last_placeholder - first_placeholder + 1))
+    if (spans.size() >
+        static_cast<size_t>(last_placeholder) - static_cast<size_t>(first_placeholder) + 1)
         spans.resize(last_placeholder - first_placeholder + 1);
     QString text;
     text.reserve(markdown.size());
@@ -1241,6 +1253,8 @@ Prepared prepare(const QString& markdown) {
     return out;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void fill(QTextDocument& document, const std::vector<Span>& spans) {
     if (spans.empty())
         return;

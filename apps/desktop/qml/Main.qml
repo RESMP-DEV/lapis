@@ -1074,11 +1074,13 @@ ApplicationWindow {
         const agent = workspace.focusedAgent
         if (agent === null)
             return false
+        const choice = visualAgents[agent.agentId]
+        if (choice !== undefined)
+            return choice
         // The factory view's orchestrator always shows as its thread.
         if (factoryHomeShown && agent.agentId === factoryHomeId)
             return true
-        const choice = visualAgents[agent.agentId]
-        return choice === undefined ? visualAll : choice
+        return visualAll
     }
     // A Claude Code, Codex or Antigravity agent on this Mac can show as a
     // thread (Workspace::visualSupported), from the moment it opens.
@@ -1290,10 +1292,12 @@ ApplicationWindow {
         visualFocus()
     }
     function showFactoryHome() {
+        const previous = factoryInspectAgentId
         factoryInspectAgentId = ""
         if (factoryHomeId.length > 0
-                && (workspace.focusedAgent === null || workspace.focusedAgent.agentId !== factoryHomeId))
-            workspace.selectAgent(factoryHomeId)
+                && (workspace.focusedAgent === null || workspace.focusedAgent.agentId !== factoryHomeId)
+                && !workspace.selectAgent(factoryHomeId))
+            factoryInspectAgentId = previous
     }
     function backToFactory() {
         showFactoryHome()
@@ -1304,8 +1308,9 @@ ApplicationWindow {
             showFactoryHome()
             return
         }
+        if (!workspace.selectAgent(id))
+            return
         factoryInspectAgentId = id
-        workspace.selectAgent(id)
         visualFocus()
     }
     // A worker's terminal rather than its thread, to answer it there.
@@ -1452,7 +1457,7 @@ ApplicationWindow {
             return
         }
         if (modifiers & Qt.ShiftModifier) {
-            const ids = stripIds()
+            const ids = sidebarIds()
             const from = Math.max(0, ids.indexOf(focused))
             const to = ids.indexOf(id)
             if (to >= 0) {
@@ -3012,7 +3017,9 @@ ApplicationWindow {
     // top of the window names the agent on the stage, quietly: its
     // category's colour as a small mark, then the title its sidebar row
     // shows. Text in the gap above the stage, no bar or button: it takes no
-    // keyboard and no clicks, and hovering names the category.
+    // keyboard and no clicks, and hovering names the category. With the
+    // previews off too, nothing else on screen picks an agent, so a small
+    // agent selector sits at its right end.
     Item {
         id: stageTitle
         objectName: "stageTitle"
@@ -3022,6 +3029,9 @@ ApplicationWindow {
         x: 8
         width: window.width - 16
         height: window.stageTitleHeight
+        // The room the selector takes from each side, so the centred title
+        // never runs under it.
+        readonly property int selectorRoom: agentSelector.visible ? agentSelector.width + 8 : 0
         Row {
             anchors.centerIn: parent
             spacing: Math.round(window.chromeFont * 0.5)
@@ -3038,7 +3048,8 @@ ApplicationWindow {
             PlainText {
                 objectName: "stageTitleText"
                 anchors.verticalCenter: parent.verticalCenter
-                width: Math.min(implicitWidth, stageTitle.width - 80)
+                width: Math.max(0, Math.min(implicitWidth,
+                                            stageTitle.width - 80 - 2 * stageTitle.selectorRoom))
                 text: window.stageTitleText
                 color: window.chrome.muted
                 font.pixelSize: window.chromeFont
@@ -3050,6 +3061,61 @@ ApplicationWindow {
         ToolTip.visible: stageTitleHover.hovered && window.stageTitleGroup !== null
         ToolTip.delay: 600
         ToolTip.text: window.stageTitleGroup ? window.stageTitleGroup.name : ""
+
+        ComboBox {
+            id: agentSelector
+            objectName: "agentSelector"
+            visible: !window.stripShown && workspace.categoryAgents.length > 1
+            enabled: window.interactionArmed || popup.visible
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.min(168, Math.max(96, Math.round(stageTitle.width * 0.25)))
+            height: Math.max(window.stageTitleHeight - 2, 1)
+            model: visible ? workspace.categoryAgents : []
+            textRole: "title"
+            font.pixelSize: window.chromeFont
+            onActivated: function(index) {
+                const agent = model[index]
+                if (agent && workspace.selectAgent(agent.agentId))
+                    app.deferTerminalFocus()
+            }
+            Binding on currentIndex {
+                value: window.focusedTabIndex()
+                restoreMode: Binding.RestoreBinding
+            }
+            // As quiet as the line it sits on: muted text in the stage's
+            // palette, a frame only under the pointer or while open.
+            background: Rectangle {
+                radius: window.chromeRadius
+                color: agentSelector.hovered || agentSelector.popup.visible ? window.chrome.hover
+                                                                            : "transparent"
+                border.width: agentSelector.hovered || agentSelector.popup.visible ? 1 : 0
+                border.color: window.chrome.border
+                ColorEase on color {}
+            }
+            contentItem: PlainText {
+                leftPadding: 8
+                rightPadding: 18
+                text: agentSelector.displayText
+                color: window.chrome.muted
+                font.pixelSize: window.chromeFont
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+                ColorEase on color {}
+            }
+            indicator: PlainText {
+                x: agentSelector.width - width - 6
+                y: (agentSelector.height - height) / 2
+                text: "▾"
+                color: window.chrome.muted
+                font.pixelSize: window.chromeFont
+            }
+            popup.background: Rectangle {
+                color: window.cardColor
+                border.color: window.borderColor
+                border.width: 1
+            }
+        }
     }
 
     RowLayout {
@@ -4579,6 +4645,9 @@ ApplicationWindow {
                 // Hidden cards release their surfaces; off-screen ones are not
                 // kept, so only what is visible renders.
                 model: visible ? workspace.categoryAgents : []
+                // Cards pooled by scrolling can be rebound after a model reset;
+                // the reset itself still releases the visible delegates.
+                reuseItems: true
                 cacheBuffer: 0
                 highlight: null
                 highlightFollowsCurrentItem: false
@@ -4683,6 +4752,13 @@ ApplicationWindow {
                     id: agentTab
                     required property var modelData
                     required property int index
+                    property bool pooled
+                    property int poolCount
+                    ListView.onPooled: {
+                        pooled = true
+                        ++poolCount
+                    }
+                    ListView.onReused: pooled = false
                     readonly property bool marked: workspace.focusedAgent !== null
                                                    && workspace.focusedAgent.agentId === modelData.agentId
                     readonly property bool picked: window.isAgentSelected(modelData.agentId)
@@ -4766,6 +4842,7 @@ ApplicationWindow {
                         y: agentHeader.y + agentHeader.height + 4
                         width: parent.width - 12
                         height: parent.height - y - 6
+                        visible: !agentTab.pooled
                         document: agentTab.modelData
                         fontFamily: config.terminalFontFamily
                         fontPixelSize: window.terminalFontSize

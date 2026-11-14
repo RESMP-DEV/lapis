@@ -207,6 +207,8 @@ Item make(Kind kind, QString title, QString body, QString detail) {
 }
 
 void add_lines(Item& item, QChar sign, const QString& text) {
+    // Empty tool content has no lines; a diff's signed blank line is counted
+    // by add_unified_diff itself.
     if (text.isEmpty())
         return;
     const auto lines = text.split(QLatin1Char('\n'));
@@ -317,6 +319,8 @@ QString result_text(const QJsonValue& content) {
 
 // A tool call as one step: a past-tense verb and its target, in the words
 // that matter, the way a person would summarize it.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 Item tool_item(const QJsonObject& block) {
     Item item;
     item.kind = Kind::tool;
@@ -509,6 +513,8 @@ QString lone_path(const QString& line) {
 constexpr int inline_media_limit = 32;
 } // namespace
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<Piece> pieces(const QString& markdown, bool* missing) {
     std::vector<Piece> out;
     QStringList prose;
@@ -1002,6 +1008,8 @@ bool compacting_shown(const QStringList& screen) {
     return false;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QStringList live_lines(const QStringList& screen, const QStringList& shown) {
     if (compacting_shown(screen))
         return {};
@@ -1386,6 +1394,8 @@ QString antigravity_model_setting(const QString& settings_path) {
         .toString();
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QString work_summary(const std::vector<Item>& items, int first, int last, int except) {
     int commands = 0, searches = 0, web = 0, agents = 0, tools = 0;
     QSet<QString> edited, read;
@@ -1465,6 +1475,8 @@ int person_anchor(const Layout& layout) {
     return static_cast<int>(row - 1);
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool live,
                int expand_from, const QSet<int>& peers_open, bool request_waiting) {
     Layout out;
@@ -1498,13 +1510,9 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool li
         if (item.starts_turn && !same_prompt) {
             if (open >= 0)
                 out.turns[static_cast<size_t>(open)].closed = true;
-            out.turns.push_back({.start = i,
-                                 .last = i,
-                                 .final_reply = -1,
-                                 .steps = 0,
-                                 .duration_ms = 0,
-                                 .closed = false,
-                                 .summary = {}});
+            Turn turn;
+            turn.start = i;
+            out.turns.push_back(turn);
             open = static_cast<int>(out.turns.size()) - 1;
         }
         if (open >= 0) {
@@ -1517,8 +1525,8 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool li
     // together are one prompt in several items of one record.
     const auto prompt_end = [&items](int at, int last) {
         int end = at;
-        while (end + 1 <= last && items[static_cast<size_t>(end + 1)].kind == Kind::prompt &&
-               items[static_cast<size_t>(end + 1)].record == items[static_cast<size_t>(at)].record)
+        while (end + 1 <= last && items[static_cast<size_t>(end) + 1].kind == Kind::prompt &&
+               items[static_cast<size_t>(end) + 1].record == items[static_cast<size_t>(at)].record)
             ++end;
         return end;
     };
@@ -1531,7 +1539,10 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool li
         const int end = prompt_end(turn.start, turn.last);
         header_end[t] = end;
         turn.live = live && t + 1 == out.turns.size() && !turn.closed;
-        turn.parts.push_back({.lead = turn.start, .first = end + 1});
+        Part first_part;
+        first_part.lead = turn.start;
+        first_part.first = end + 1;
+        turn.parts.push_back(first_part);
         for (int i = end + 1; i <= turn.last; ++i) {
             const auto& item = items[static_cast<size_t>(i)];
             if (item.kind != Kind::prompt || item.queued || item.dropped)
@@ -1540,7 +1551,10 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool li
             const int lead = i;
             turn.parts.back().last = i - 1;
             i = prompt_end(i, turn.last);
-            turn.parts.push_back({.lead = lead, .first = i + 1});
+            Part steered;
+            steered.lead = lead;
+            steered.first = i + 1;
+            turn.parts.push_back(steered);
         }
         turn.parts.back().last = turn.last;
         // The final reply is the last part's last reply; a running turn's
@@ -1892,6 +1906,8 @@ int ClaudeReader::notified(const QString& raw) {
     return task.item;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int ClaudeReader::add(const QByteArray& line) {
     // Claude Code's request logs and file snapshots are a quarter of a long
     // conversation's bytes and never shown: skip them by the type they lead
@@ -2047,6 +2063,8 @@ int ClaudeReader::add(const QByteArray& line) {
         static_cast<qint64>(record.value(QLatin1String("thinkingDurationMs")).toDouble());
 
     bool prompted = false; // this record carried prompt text of its own
+    // Cohesive parser/test flow; branching stays local.
+    // NOLINTNEXTLINE(readability-function-cognitive-complexity)
     const auto user_text = [&](const QString& raw) {
         if (raw.startsWith(QLatin1String("<local-command-std")) ||
             raw.startsWith(QLatin1String("<bash-std"))) {
@@ -2265,6 +2283,7 @@ int ClaudeReader::add(const QByteArray& line) {
         for (const auto& name : attached) {
             auto item = make(Kind::prompt, {}, name);
             item.starts_turn = true;
+            taken(item);
             push(std::move(item));
         }
     }
@@ -2317,7 +2336,7 @@ Read read_file(const QString& path, Format format, qint64 tail_bytes) {
         result.tail = true;
     }
     while (!file.atEnd())
-        feed(*result.reader, result.pending, file.read(qint64{1} << 20));
+        feed(*result.reader, result.pending, file.read(qint64{1'048'576}));
     result.offset = file.pos();
     return result;
 }
@@ -2381,18 +2400,18 @@ bool same_content(const Layout& a, const std::vector<Item>& a_items, const Row& 
 
 qint64 Reader::footprint() const {
     const auto text = [](const QString& s) { return static_cast<qint64>(s.capacity()) * 2 + 24; };
-    qint64 bytes = static_cast<qint64>(items_.capacity() * sizeof(Item));
+    qint64 bytes = static_cast<qint64>(items_.capacity()) * static_cast<qint64>(sizeof(Item));
     for (const auto& item : items_) {
         bytes += text(item.title) + text(item.body) + text(item.detail) + text(item.result) +
                  text(item.tool_id) + text(item.record);
         if (item.peer)
             bytes += text(item.from.title) + text(item.from.id) + text(item.from.category) +
                      text(item.from.host);
-        bytes += static_cast<qint64>(item.diff.capacity() * sizeof(DiffLine));
+        bytes += static_cast<qint64>(item.diff.capacity()) * static_cast<qint64>(sizeof(DiffLine));
         for (const auto& line : item.diff)
             bytes += text(line.text);
     }
-    bytes += static_cast<qint64>(tasks_.capacity() * sizeof(Task));
+    bytes += static_cast<qint64>(tasks_.capacity()) * static_cast<qint64>(sizeof(Task));
     for (const auto& task : tasks_)
         bytes +=
             text(task.description) + text(task.last_check) + text(task.report) + text(task.file);
@@ -2423,7 +2442,7 @@ QVariantList diff_rows(const std::vector<transcript::DiffLine>& diff) {
 // under the same mutex before it can be deleted, so the lock keeps it alive
 // while the wake-up is queued.
 struct TranscriptModel::Mailbox {
-    enum class Kind {
+    enum class Kind : std::uint8_t {
         load,      // startLoad: the shown or a shown-before conversation
         ahead,     // warmNext: read ahead
         caught_up, // catchUp: a kept conversation brought up to date
@@ -2466,8 +2485,8 @@ struct TranscriptModel::Mailbox {
 };
 
 TranscriptModel::TranscriptModel(QObject* parent)
-    : QAbstractListModel(parent), reader_(transcript::make_reader(transcript::Format::claude)) {
-    mailbox_ = std::make_shared<Mailbox>();
+    : QAbstractListModel(parent), mailbox_(std::make_shared<Mailbox>()),
+      reader_(transcript::make_reader(transcript::Format::claude)) {
     mailbox_->waker = new QObject(this);
     mailbox_->owner = this;
     background_ = new QThreadPool(this);
@@ -2696,7 +2715,7 @@ QString file_tail(const QString& path, int lines) {
     QFile file(path);
     if (path.isEmpty() || !file.open(QIODevice::ReadOnly))
         return {};
-    constexpr qint64 window = 64 * 1024;
+    constexpr qint64 window = qint64{64} * 1024;
     if (file.size() > window)
         file.seek(file.size() - window);
     auto text = transcript::detail::without_escapes(QString::fromUtf8(file.readAll())).trimmed();
@@ -2773,14 +2792,22 @@ TranscriptModel::Child* TranscriptModel::child(const QString& path, transcript::
         Child fresh;
         fresh.path = path;
         children_.insert(children_.begin(), std::move(fresh));
-        if (children_.size() > 8)
-            children_.pop_back();
+        while (children_.size() > 8) {
+            // Idle children are bounded; the active working set is kept so a
+            // tick cannot evict the reader the next task in this pass needs.
+            const auto idle = std::find_if(children_.rbegin(), children_.rend(),
+                                           [](const Child& entry) { return !entry.active; });
+            if (idle == children_.rend())
+                break;
+            children_.erase(std::next(idle).base());
+        }
         hit = children_.begin();
     } else if (hit != children_.begin()) {
         std::rotate(children_.begin(), hit, hit + 1);
         hit = children_.begin();
     }
     auto& entry = *hit;
+    entry.active = active_children_.contains(path);
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return nullptr;
@@ -2854,6 +2881,8 @@ QVariantMap TranscriptModel::task_map(const transcript::Task& task) const {
     return task_values(task, running, steps);
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void TranscriptModel::updateRunning() {
     const auto& tasks = reader_->tasks();
     QVariantList next;
@@ -2861,6 +2890,18 @@ void TranscriptModel::updateRunning() {
     QSet<int> was;
     for (const auto& entry : std::as_const(running_))
         was.insert(entry.toMap().value(QStringLiteral("item")).toInt());
+    active_children_.clear();
+    for (const auto& task : tasks) {
+        if (!task.status.isEmpty() || task.type != transcript::Task::Type::subagent ||
+            format() == transcript::Format::claude ||
+            !transcript::task_running(task, alive_ms(task), now()))
+            continue;
+        const auto path = task_file(task);
+        if (!path.isEmpty() && !active_children_.contains(path))
+            active_children_.append(path);
+    }
+    for (auto& entry : children_)
+        entry.active = active_children_.contains(entry.path);
     for (size_t i = 0; i < tasks.size(); ++i) {
         const auto& task = tasks[i];
         if (!task.status.isEmpty() || !transcript::task_running(task, alive_ms(task), now()))
@@ -2925,6 +2966,8 @@ void TranscriptModel::updateRunning() {
 
 void TranscriptModel::tick() { updateRunning(); }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QVariantMap TranscriptModel::taskDetail(int item) {
     QVariantMap out;
     if (item < 0 || std::cmp_greater_equal(item, reader_->items().size()))
@@ -2985,6 +3028,8 @@ QVariantMap TranscriptModel::taskDetail(int item) {
     return out;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QVariant TranscriptModel::item_value(const transcript::Item& item, int index, int role) {
     switch (role) {
     case TaskRole:
@@ -3137,7 +3182,7 @@ qint64 row_key(const transcript::Layout& layout, const transcript::Row& row) {
         return row.item;
     const auto& turn = layout.turns[static_cast<size_t>(row.turn)];
     const qint64 key = -(turn.parts[static_cast<size_t>(row.part)].lead + 1);
-    return row.live ? key - (qint64{1} << 40) : key;
+    return row.live ? key - qint64{1'099'511'627'776} : key;
 }
 // The last item a row's look depends on.
 int row_depends_on(const transcript::Layout& layout, const transcript::Row& row) {
@@ -3417,6 +3462,8 @@ QVariantList TranscriptModel::replyMedia(const QString& markdown) const {
     return reply_parts(markdown).media;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
                             const QVariantMap& style) const {
     if (target == nullptr || target->textDocument() == nullptr)
@@ -3494,12 +3541,12 @@ void transcript::detail::compose(QTextDocument& document, const QString& markdow
     // format while walking the fragments can merge or split them.
     const qreal heading_scale[] = {1.0, 1.4, 1.25, 1.12, 1.0, 1.0, 1.0};
     struct BlockChange {
-        int position;
+        int position{};
         QTextBlockFormat format;
     };
     struct CharChange {
-        int position;
-        int length;
+        int position{};
+        int length{};
         QTextCharFormat format;
     };
     std::vector<BlockChange> blocks;
@@ -3785,6 +3832,8 @@ QVariantList TranscriptModel::editors() const {
     return out;
 }
 
+// Cohesive positional parser flow; callers and tests pin it.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters,readability-function-cognitive-complexity)
 bool TranscriptModel::openPath(const QString& target, const QString& choice) const {
     if (remote()) // another machine's path: nothing here opens for it
         return false;
@@ -4170,7 +4219,8 @@ QString transcript::selection_text(const QTextDocument& document, int start, int
         // A list item keeps its bullet or number when it is copied from its start.
         if (list != nullptr && from == block.position()) {
             const auto format = list->format();
-            marker = QString(std::max(0, format.indent() - 1) * 2, QLatin1Char(' '));
+            marker = QString(qsizetype{std::max(0, format.indent() - 1)} * qsizetype{2},
+                             QLatin1Char(' '));
             const bool numbered = format.style() == QTextListFormat::ListDecimal ||
                                   format.style() == QTextListFormat::ListLowerAlpha ||
                                   format.style() == QTextListFormat::ListUpperAlpha;
@@ -4190,13 +4240,15 @@ QString transcript::selection_text(const QTextDocument& document, int start, int
     return clean_copy(out);
 }
 
-transcript::Layout TranscriptModel::layoutNow() const {
+transcript::Layout TranscriptModel::layoutNow() const { return layoutOf(*reader_); }
+
+transcript::Layout TranscriptModel::layoutOf(const transcript::Reader& reader) const {
     if (expand_from_ < 0) {
         // First laid out: fix where turns start open (the turns lay out the
         // same whatever is open, so a folded layout finds them).
-        expand_from_ = transcript::expand_from(transcript::lay_out(reader_->items(), {}, live_));
+        expand_from_ = transcript::expand_from(transcript::lay_out(reader.items(), {}, live_));
     }
-    auto layout = transcript::lay_out(reader_->items(), expanded_, live_, expand_from_, opened_,
+    auto layout = transcript::lay_out(reader.items(), expanded_, live_, expand_from_, opened_,
                                       request_waiting_);
     if (tail_)
         transcript::trim_to_turns(layout);
@@ -4311,10 +4363,9 @@ void TranscriptModel::showPath(const QString& path, bool force) {
     const auto format = format_for(path);
     // Keep what was read whole; a tail is dropped, and the whole reading
     // still under way is kept when it arrives.
-    std::unique_ptr<transcript::Reader> outgoing = std::move(reader_);
     if (!path_.isEmpty() && !tail_ && !loading_)
-        keep({path_, std::move(outgoing), offset_, std::move(pending_), expanded_, view_, 0,
-              ++shown_clock_, opened_, expand_from_});
+        keep({path_, reader_->clone(), offset_, pending_, expanded_, view_, 0, ++shown_clock_,
+              opened_, expand_from_});
     expanded_.clear();
     opened_.clear();
     expand_from_ = -1;
@@ -4327,52 +4378,70 @@ void TranscriptModel::showPath(const QString& path, bool force) {
         return kept.path == path && kept.reader->format() == format;
     });
     bool warm = false;
+    std::unique_ptr<transcript::Reader> next_reader;
+    bool background_load = false;
     if (path.isEmpty()) {
-        reader_ = transcript::make_reader(format);
+        next_reader = transcript::make_reader(format);
     } else if (hit != kept_.end()) {
-        reader_ = std::move(hit->reader);
-        offset_ = hit->offset;
-        pending_ = std::move(hit->pending);
-        expanded_ = std::move(hit->expanded);
-        opened_ = std::move(hit->opened);
-        expand_from_ = hit->expand_from;
-        view_ = std::move(hit->view);
-        kept_.erase(hit);
-        // What the CLI wrote since it was last shown, before the rows are
-        // made, so they are made once. A file rewritten shorter is read
-        // again like one never shown.
-        warm = read_on(path, *reader_, offset_, pending_);
-        if (!warm) {
-            offset_ = 0;
-            pending_.clear();
-            expanded_.clear();
-            opened_.clear();
-            expand_from_ = -1;
-            view_.clear();
+        const qint64 grown = QFileInfo(path).size() - hit->offset;
+        if (grown > tail_bytes) {
+            // A large delta is caught up on the low-priority thread. The kept
+            // entry stays for that work while this clone shows its last state.
+            next_reader = hit->reader->clone();
+            offset_ = hit->offset;
+            pending_ = hit->pending;
+            expanded_ = hit->expanded;
+            opened_ = hit->opened;
+            expand_from_ = hit->expand_from;
+            view_ = hit->view;
+            loading_ = true;
+            warm = true;
+        } else {
+            next_reader = std::move(hit->reader);
+            offset_ = hit->offset;
+            pending_ = std::move(hit->pending);
+            expanded_ = std::move(hit->expanded);
+            opened_ = std::move(hit->opened);
+            expand_from_ = hit->expand_from;
+            view_ = std::move(hit->view);
+            kept_.erase(hit);
+            // What the CLI wrote since it was last shown, before the rows are
+            // made, so they are made once. A file rewritten shorter is read
+            // again like one never shown.
+            warm = read_on(path, *next_reader, offset_, pending_);
+            if (!warm) {
+                offset_ = 0;
+                pending_.clear();
+                expanded_.clear();
+                opened_.clear();
+                expand_from_ = -1;
+                view_.clear();
+            }
         }
     }
     if (!path.isEmpty() && !warm) {
         // Not kept: its end now, the rest from another thread.
-        auto read = transcript::read_end(path, format, tail_bytes, 4 * tail_bytes);
-        reader_ = std::move(read.reader);
+        auto read = transcript::read_end(path, format, tail_bytes, tail_bytes);
+        next_reader = std::move(read.reader);
         offset_ = read.offset;
         pending_ = std::move(read.pending);
         tail_ = read.tail;
         loading_ = read.tail;
-        if (tail_ && !loads_.contains(path))
-            startLoad(path, format);
+        background_load = tail_ && !loads_.contains(path);
     }
     // Each conversation shows its own choice (shownModel).
     const bool chose = chosen_.contains(path_) || chosen_.contains(path);
     path_ = path;
     live_tasks_.clear();
-    auto next = layoutNow();
-    // The reader is swapped inside the reset, so the view never sees the
-    // old rows over the new reader.
+    auto next = layoutOf(*next_reader);
+    // The old reader and rows stay consistent through reset notification; both
+    // are swapped only after that notification has begun.
     beginResetModel();
+    reader_ = std::move(next_reader);
     layout_ = std::move(next);
     endResetModel();
-    outgoing.reset();
+    if (background_load)
+        startLoad(path, format);
     emit pathChanged();
     if (was_loading != loading_)
         emit loadingChanged();
@@ -4435,14 +4504,15 @@ void TranscriptModel::startLoad(const QString& path, transcript::Format format) 
 }
 
 void TranscriptModel::received(const QString& path, transcript::Read read, bool ahead) {
-    if (!read.tail)
+    const bool tail = read.tail;
+    if (!tail)
         loads_.remove(path);
     if (path == path_) {
         // A reading of the shown conversation replaces a shorter one.
         if (tail_ && read.reader->format() == reader_->format() &&
             (!read.tail || read.reader->items().size() > reader_->items().size()))
             adopt(std::move(read));
-    } else if (!read.tail && !kept(path) && read.reader->format() == format_for(path)) {
+    } else if (!tail && !kept(path) && read.reader->format() == format_for(path)) {
         // Read for a conversation shown before, or read ahead (kept after
         // every shown one, so it never pushes one of those out).
         keep({path,
@@ -4456,7 +4526,7 @@ void TranscriptModel::received(const QString& path, transcript::Read read, bool 
               {},
               -1});
     }
-    if (!read.tail)
+    if (!tail)
         warmNext();
 }
 
@@ -4538,6 +4608,8 @@ void TranscriptModel::evict() {
         kept_.pop_back();
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void TranscriptModel::setBudget(qint64 bytes, int count) {
     kept_budget_ = std::max<qint64>(0, bytes);
     kept_limit_ = std::max(0, count);
@@ -4635,7 +4707,15 @@ void TranscriptModel::caughtUp(const QString& path, qint64 base, transcript::Rea
         entry->offset = read.offset;
         entry->pending = std::move(read.pending);
         entry->bytes = entry->reader->footprint();
-        evict();
+        if (path == path_ && !tail_ && entry->offset > offset_) {
+            transcript::Read caught{std::move(entry->reader), entry->offset,
+                                    std::move(entry->pending), false};
+            kept_.erase(entry);
+            evict();
+            adopt(std::move(caught));
+        } else {
+            evict();
+        }
     } else if (path == path_ && tail_) {
         adopt(std::move(read));
     }

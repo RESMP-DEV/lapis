@@ -1161,7 +1161,7 @@ it does not replace or refresh the original evidence.
 
 `lapis.codex-p4-managed-daemon-probe/1` is a self-contained transport-decision
 receipt. It requires `recorded_at`, `passed`, `source`, `scope`, `decision`,
-`validation` and `non_claims`. `source` identifies the Lapis revision and dirty
+`validation` and `non_claims`. `source` identifies the lapis revision and dirty
 state, Codex candidate repository/revision, candidate-source cleanliness,
 binary SHA-256 and platform. The `decision` object must state:
 

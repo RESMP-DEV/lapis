@@ -227,7 +227,7 @@ class NextPrompt final : public QObject {
                           const QString& expectedKey = {});
     [[nodiscard]] int revision() const { return revision_; }
     [[nodiscard]] int failureStreak() const { return failure_streak_; }
-    [[nodiscard]] QString lastFailure() const { return last_failure_; }
+    [[nodiscard]] const QString& lastFailure() const { return last_failure_; }
     [[nodiscard]] bool enabled() const { return settings_.automatic; }
     // What a restarted window needs to carry on (see GuiState): the offers
     // shown, each with its key, conversation, turn and whether it was seen;

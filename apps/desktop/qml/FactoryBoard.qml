@@ -87,14 +87,32 @@ Rectangle {
         property color accent: board.muted
         property bool strong: false
         signal clicked()
+        enabled: board.interactive
         implicitWidth: buttonText.implicitWidth + 16
         implicitHeight: Math.round(board.small * 1.85)
         radius: board.corner
         color: buttonHover.hovered ? board.tint(accent, 0.18) : strong ? board.tint(accent, 0.1) : "transparent"
         border.width: 1
-        border.color: buttonHover.hovered || strong ? accent : board.edge
+        border.color: activeFocus ? accent : buttonHover.hovered || strong ? accent : board.edge
+        activeFocusOnTab: enabled
         Accessible.role: Accessible.Button
         Accessible.name: label
+        Keys.onSpacePressed: function(event) {
+            if (enabled)
+                button.clicked()
+            event.accepted = true
+        }
+        Keys.onReturnPressed: function(event) {
+            if (enabled)
+                button.clicked()
+            event.accepted = true
+        }
+        Keys.onEnterPressed: function(event) {
+            if (enabled)
+                button.clicked()
+            event.accepted = true
+        }
+        Accessible.onPressAction: if (enabled) button.clicked()
         Text {
             id: buttonText
             anchors.centerIn: parent
@@ -113,6 +131,7 @@ Rectangle {
         property color accent: board.muted
         property bool filled: false
         property bool monoText: false
+        property bool elideText: false
         implicitWidth: pillText.implicitWidth + 12
         implicitHeight: Math.round(board.small * 1.5)
         radius: height / 2
@@ -121,8 +140,14 @@ Rectangle {
         border.color: board.tint(accent, filled ? 0.9 : 0.55)
         Text {
             id: pillText
-            anchors.centerIn: parent
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: 6
+            anchors.rightMargin: 6
+            anchors.verticalCenter: parent.verticalCenter
             text: pill.label
+            elide: pill.elideText ? Text.ElideRight : Text.ElideNone
+            horizontalAlignment: Text.AlignHCenter
             color: pill.filled ? board.text : pill.accent
             font.pixelSize: Math.max(10, board.small - 1)
             font.family: pill.monoText ? board.mono : Qt.application.font.family
@@ -366,6 +391,10 @@ Rectangle {
                                                    ? card.modelData.harnessId + " · " + card.modelData.machine
                                                    : card.modelData.harnessId
                                             monoText: true
+                                            elideText: true
+                                            Layout.fillWidth: true
+                                            Layout.maximumWidth: 180
+                                            Layout.minimumWidth: 0
                                         }
                                         Text {
                                             text: card.modelData.shortId.slice(0, 6)
@@ -423,6 +452,10 @@ Rectangle {
                                             label: card.modelData.receipt || ""
                                             accent: board.theme ? board.theme.plentyColor : "#6fdc8c"
                                             monoText: true
+                                            elideText: true
+                                            Layout.fillWidth: true
+                                            Layout.maximumWidth: 180
+                                            Layout.minimumWidth: 0
                                         }
                                         Item { Layout.fillWidth: true }
                                         BoardButton {

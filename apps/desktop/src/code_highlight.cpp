@@ -5,10 +5,11 @@
 #include <QStringList>
 #include <QTextCharFormat>
 #include <QTextDocument>
+#include <cstdint>
 
 namespace lapis::desktop::code {
 namespace {
-enum class Family {
+enum class Family : std::uint8_t {
     plain,
     code,
     python,
@@ -378,6 +379,8 @@ const Language& language(const QString& name) {
     return found == languages.constEnd() ? plain() : *found;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<Span> tokenize(const QString& s, const Language& l, int& state) {
     if (l.family == Family::plain)
         return {};
@@ -691,10 +694,13 @@ std::vector<Span> tokenize(const QString& s, const Language& l, int& state) {
                         lookup == QLatin1String("fun") || lookup == QLatin1String("class") ||
                         lookup == QLatin1String("struct") || lookup == QLatin1String("enum") ||
                         lookup == QLatin1String("trait") || lookup == QLatin1String("interface");
+                    // The lookup-table and capitalization rules are distinct.
+                    // NOLINTNEXTLINE(bugprone-branch-clone)
                 } else if (l.constants.contains(lookup)) {
                     role = Role::constant;
                 } else if (l.builtins.contains(word)) {
                     role = after == QLatin1Char('(') ? Role::function : Role::builtin;
+                    // NOLINTNEXTLINE(bugprone-branch-clone)
                 } else if (l.types.contains(lookup)) {
                     role = Role::type;
                 } else if (after == QLatin1Char('(') ||
@@ -733,6 +739,8 @@ std::vector<Span> tokenize(const QString& s, const Language& l, int& state) {
     return out.list;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QColor color(Role role, bool light) {
     // Tokyo Night (Night) and Tokyo Night Day, as folke/tokyonight.nvim.
     switch (role) {

@@ -53,6 +53,8 @@ bool process_alive(qint64 pid) {
     return valid_pid(pid) && (::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM);
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QList<qint64> process_tree(qint64 pid, int depth, int limit) {
     if (!process_alive(pid))
         return {};
@@ -93,7 +95,7 @@ QStringList open_files(qint64 pid) {
     }
 #elif defined(Q_OS_LINUX)
     const QDir fds(QStringLiteral("/proc/%1/fd").arg(pid));
-    for (const auto& name : fds.entryList(QDir::System | QDir::NoDotAndDotDot))
+    for (const auto& name : fds.entryList(QDir::AllEntries | QDir::System | QDir::NoDotAndDotDot))
         if (const auto target = QFileInfo(fds.filePath(name)).symLinkTarget();
             target.startsWith(QLatin1Char('/')))
             paths.append(target);

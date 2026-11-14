@@ -274,6 +274,8 @@ void offerIsPublished(NextPrompt& next, const QString& key) {
             "being seen is announced once");
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void predictsAndOffers() {
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-next-XXXXXX"));
     require(directory.isValid(), "fixture directory");

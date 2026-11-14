@@ -991,7 +991,7 @@ class Workspace final : public QObject {
     // unreachable states leave it, so a republished status is no new turn.
     QHash<const Agent*, QString> last_kind_;
     // Why an agent may need the person; the one rule that marks it unseen.
-    enum class Need { finished, quiet, request, away };
+    enum class Need : std::uint8_t { finished, quiet, request, away };
     QString markNeedsYou(Agent* item, Need need);
     void logMark(const Agent* item, const char* event, const QString& why) const;
     Looking looking_;
@@ -1095,15 +1095,19 @@ class Workspace final : public QObject {
     bool fixture_mode_{};
     // Factory view state (workspace_factory.cpp).
     QString home_agent_id_;
-    mutable QString auto_home_id_; // the automatic orchestrator, once chosen
+    mutable QString auto_home_id_;  // the automatic orchestrator, once chosen
+    mutable qint64 auto_home_at_{}; // when that choice last showed activity
     QString published_home_id_;
+    QString published_pin_id_;
     QString factory_state_path_;
     factory::State factory_state_;
     QFileSystemWatcher* factory_watcher_{};
     QTimer factory_publish_;
+    mutable QTimer factory_expiry_;
     // When each agent's settled status or requests last changed in this run.
     QHash<QString, qint64> factory_changed_at_;
     QHash<QString, QString> factory_kind_;
+    QHash<QString, bool> factory_attention_pending_;
     QHash<QString, QString> fixture_files_;
     mutable bool factory_dirty_{true};
     mutable QVariantList factory_items_;

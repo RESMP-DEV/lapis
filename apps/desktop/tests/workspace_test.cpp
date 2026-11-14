@@ -747,7 +747,7 @@ void submittedAttentionKeepsItsDisplayToken() {
     request.pending.revision = 10;
     request.pending.submitted = true;
     request.pending.status = lapis::session::attention::RequestStatus::responding;
-    attention.requests.front() = request;
+    attention.requests.front() = std::move(request);
     item.applyAttention(attention);
     const auto after = item.attentionRequests().first().toMap();
     require(arrivals == 1 &&
@@ -2597,7 +2597,7 @@ void staleDescriptorReattachesTheRunningService() {
         auto bytes = descriptor.readAll();
         require(bytes.startsWith("LAPIS-S1\n") && bytes.size() > 25, "a saved descriptor");
         for (int at = 9; at < 25; ++at)
-            bytes[at] = static_cast<char>(bytes[at] ^ 0x5a);
+            bytes[at] = static_cast<char>(static_cast<unsigned char>(bytes[at]) ^ 0x5aU);
         require(descriptor.seek(0) && descriptor.write(bytes) == bytes.size(),
                 "write a stale descriptor");
     }
@@ -3019,6 +3019,8 @@ for n, line in enumerate(sys.stdin, 1):
 // pings once, no hook bytes reach the screen, the person's own notify program
 // from the selected profile's config still runs, the notify event's thread is saved as the
 // conversation, and a restart resumes it.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void localCodexReportsTurnsThroughNotify() {
     using lapis::desktop::Agent;
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-local-codex-XXXXXX"));
@@ -7006,7 +7008,8 @@ void visualConversationFiles() {
                           R"(","source":")" + source + R"("}})"});
         return path;
     };
-    const WorkspaceOptions options{.storagePath = QDir(root).filePath(QStringLiteral("ws.json"))};
+    WorkspaceOptions options;
+    options.storagePath = QDir(root).filePath(QStringLiteral("ws.json"));
     writeRegistry(
         options.storagePath,
         QJsonObject{{"version", 2},
@@ -7087,6 +7090,8 @@ class FakeServices {
     FakeServices(const FakeServices&) = delete;
     FakeServices& operator=(const FakeServices&) = delete;
 
+    // Positional contract; callers and tests pin the order.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     void start(const QString& id, const QString& endpoint) {
         hold(id, QStringLiteral("/dev/null"));
         auto process = std::make_unique<QProcess>();
@@ -7100,6 +7105,8 @@ class FakeServices {
                    QSysInfo::machineHostName().toUtf8() + '\n');
         processes_.insert(id, std::shared_ptr<QProcess>(std::move(process)));
     }
+    // Positional contract; callers and tests pin the order.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     void hold(const QString& id, const QString& path) {
         QSaveFile file(control(id));
         require(file.open(QIODevice::WriteOnly) && file.write(QFile::encodeName(path)) > 0 &&
@@ -7110,7 +7117,9 @@ class FakeServices {
         const auto process = processes_.take(id);
         if (!process)
             return;
-        ::kill(-static_cast<pid_t>(process->processId()), SIGKILL);
+        const qint64 pid = process->processId();
+        if (pid > 0)
+            ::kill(-static_cast<pid_t>(pid), SIGKILL);
         process->waitForFinished(5000);
     }
 
@@ -7381,7 +7390,8 @@ void claudeTranscriptsAreFoundAndKept() {
     (void)saved(QStringLiteral("-other-project"), conversations.value(QStringLiteral("named")));
     const auto elsewhere =
         saved(QStringLiteral("-moved-project"), conversations.value(QStringLiteral("elsewhere")));
-    const WorkspaceOptions options{.storagePath = QDir(root).filePath(QStringLiteral("ws.json"))};
+    WorkspaceOptions options;
+    options.storagePath = QDir(root).filePath(QStringLiteral("ws.json"));
     writeRegistry(
         options.storagePath,
         QJsonObject{{"version", 2},
@@ -7489,7 +7499,8 @@ void visualThreadsAreReadAhead() {
                 R"(","timestamp":")" +
                 QDateTime::currentDateTimeUtc().addSecs(1).toString(Qt::ISODateWithMs).toUtf8() +
                 R"(","cwd":")" + work.toUtf8() + R"(","source":"cli"}})"});
-    const WorkspaceOptions options{.storagePath = QDir(root).filePath(QStringLiteral("ws.json"))};
+    WorkspaceOptions options;
+    options.storagePath = QDir(root).filePath(QStringLiteral("ws.json"));
     writeRegistry(
         options.storagePath,
         QJsonObject{{"version", 2},

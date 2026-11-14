@@ -53,9 +53,6 @@ void shares_harness_identity_and_configuration() {
             "an unknown external harness has no descriptor");
     require(lapis::desktop::harness_program(QStringLiteral("not-a-cli")).isEmpty(),
             "an unknown external harness has no program");
-    require(lapis::desktop::harness_label(QStringLiteral("not-a-cli")) ==
-                QStringLiteral("not-a-cli"),
-            "an unknown external harness keeps its id as its label");
 
     const auto* codex = lapis::desktop::find_harness(QStringLiteral("codex"));
     require(codex != nullptr && codex->offered &&

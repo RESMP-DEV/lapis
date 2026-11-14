@@ -10,6 +10,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <limits>
 
 namespace lapis::desktop {
 namespace {
@@ -31,6 +32,8 @@ void Workspace::setupFactory() {
     factory_publish_.setSingleShot(true);
     factory_publish_.setInterval(0);
     connect(&factory_publish_, &QTimer::timeout, this, &Workspace::publishFactory);
+    factory_expiry_.setSingleShot(true);
+    connect(&factory_expiry_, &QTimer::timeout, this, &Workspace::scheduleFactory);
     connect(this, &Workspace::agentsChanged, this, &Workspace::scheduleFactory);
     connect(this, &Workspace::categoriesChanged, this, &Workspace::scheduleFactory);
     connect(this, &Workspace::focusChanged, this, &Workspace::scheduleFactory);
@@ -39,6 +42,7 @@ void Workspace::setupFactory() {
 void Workspace::watchFactory(Agent* item) {
     const auto id = item->agentId();
     factory_kind_.insert(id, item->statusKind());
+    factory_attention_pending_.insert(id, item->attentionPending());
     const auto note = [this, item] {
         const auto& agent_id = item->agentId();
         const auto kind = item->statusKind();
@@ -55,10 +59,21 @@ void Workspace::watchFactory(Agent* item) {
     connect(item, &Agent::statusChanged, this, note);
     // A new request always counts as a change, whatever the status was.
     connect(item, &Agent::attentionArrived, this, [this, item] {
-        factory_changed_at_.insert(item->agentId(), QDateTime::currentMSecsSinceEpoch());
+        const auto& id = item->agentId();
+        factory_changed_at_.insert(id, QDateTime::currentMSecsSinceEpoch());
+        factory_attention_pending_.insert(id, true);
         scheduleFactory();
     });
-    connect(item, &Agent::attentionChanged, this, &Workspace::scheduleFactory);
+    connect(item, &Agent::attentionChanged, this, [this, item] {
+        const auto& id = item->agentId();
+        const bool pending = item->attentionPending();
+        // A request that is resolved changes what a verdict must describe,
+        // even when the settled status kind stays the same.
+        if (factory_attention_pending_.value(id, false) && !pending)
+            factory_changed_at_.insert(id, QDateTime::currentMSecsSinceEpoch());
+        factory_attention_pending_.insert(id, pending);
+        scheduleFactory();
+    });
     connect(item, &Agent::identityChanged, this, &Workspace::scheduleFactory);
 }
 
@@ -72,8 +87,9 @@ void Workspace::publishFactory() {
     factory_dirty_ = true;
     const auto* home = effectiveHomeAgent();
     const auto home_id = home != nullptr ? home->agentId() : QString{};
-    if (home_id != published_home_id_) {
+    if (home_id != published_home_id_ || home_agent_id_ != published_pin_id_) {
         published_home_id_ = home_id;
+        published_pin_id_ = home_agent_id_;
         emit homeAgentChanged();
     }
     emit factoryPipelineChanged();
@@ -112,14 +128,15 @@ void Workspace::reloadFactoryState() {
     if (next.loaded == factory_state_.loaded &&
         next.updated_at_ms == factory_state_.updated_at_ms &&
         next.judge_model == factory_state_.judge_model &&
-        next.agents.keys() == factory_state_.agents.keys() && next.loaded) {
-        // The folder changes for every file in it; only a new verdict publishes.
+        next.agents.size() == factory_state_.agents.size() && next.loaded) {
+        // QHash order is not identity: compare each entry by key and value.
         bool same = true;
         for (auto it = next.agents.cbegin(); it != next.agents.cend() && same; ++it) {
-            const auto& old = factory_state_.agents[it.key()];
-            same = old.stage == it->stage && old.keep_needed == it->keep_needed &&
-                   old.headline == it->headline && old.reason == it->reason &&
-                   old.receipt == it->receipt && old.judged_at_ms == it->judged_at_ms;
+            const auto old = factory_state_.agents.constFind(it.key());
+            same = old != factory_state_.agents.cend() && old->stage == it->stage &&
+                   old->keep_needed == it->keep_needed && old->headline == it->headline &&
+                   old->reason == it->reason && old->receipt == it->receipt &&
+                   old->judged_at_ms == it->judged_at_ms;
         }
         if (same)
             return;
@@ -141,7 +158,7 @@ QString Workspace::factoryAutoHome() const {
         any_agy = any_agy || agy(item->agentId());
     // A choice made before stays while it is open, unless it was the stage
     // agent and an agy agent has appeared since.
-    if (!auto_home_id_.isEmpty() && agent(auto_home_id_) != nullptr &&
+    if (auto_home_at_ > 0 && !auto_home_id_.isEmpty() && agent(auto_home_id_) != nullptr &&
         (agy(auto_home_id_) || !any_agy))
         return auto_home_id_;
     QString best;
@@ -160,7 +177,13 @@ QString Workspace::factoryAutoHome() const {
     }
     if (best.isEmpty() && focusedAgent() != nullptr)
         best = focusedAgent()->agentId();
-    auto_home_id_ = best;
+    if (best_at > 0 && !best.isEmpty() && agy(best)) {
+        auto_home_id_ = best;
+        auto_home_at_ = best_at;
+    } else {
+        auto_home_id_.clear();
+        auto_home_at_ = 0;
+    }
     return best;
 }
 
@@ -224,31 +247,31 @@ QString Workspace::resolveAgentLink(const QString& link) const {
     return found;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Workspace::rebuildFactory() const {
     if (!factory_dirty_)
         return;
     factory_dirty_ = false;
     const auto now = QDateTime::currentMSecsSinceEpoch();
     const auto* home = effectiveHomeAgent();
-    QHash<QString, QString> category_names;
-    for (const auto& category : categories_)
-        category_names.insert(category.id, category.name);
     struct Row {
-        int rank;
-        bool safe; // idle and judged safe to close: first in its stage
-        std::size_t order;
+        int rank{};
+        bool safe{}; // idle and judged safe to close: first in its stage
+        std::size_t order{};
         QVariantMap map;
     };
     std::vector<Row> rows;
     struct Waiting {
-        qint64 since;
-        std::size_t order;
+        qint64 since{};
+        std::size_t order{};
         QVariantMap map;
     };
     std::vector<Waiting> waiting;
     int counts[4] = {0, 0, 0, 0};
     int safe = 0;
     std::size_t order = 0;
+    qint64 next_expiry = std::numeric_limits<qint64>::max();
     // The sidebar's order: each category's agents in turn.
     for (const auto& category : categories_) {
         for (const auto& item : items_) {
@@ -256,10 +279,14 @@ void Workspace::rebuildFactory() const {
             const auto entry = agents_.constFind(id);
             if (entry == agents_.cend() || entry->category != category.id || item.get() == home)
                 continue;
+            const auto turn_starts = turn_starts_.value(id);
+            const qint64 changed_at =
+                std::max(factory_changed_at_.value(id),
+                         turn_starts.empty() ? qint64{0} : turn_starts.back());
             const factory::Live live{.status_kind = item->statusKind(),
                                      .attention_pending = item->attentionPending(),
-                                     .changed_at_ms = factory_changed_at_.value(id),
-                                     .finished_at_ms = waiting_since_.value(id),
+                                     .changed_at_ms = changed_at,
+                                     .finished_at_ms = waiting_since_.value(id, item->neededAtMs()),
                                      .now_ms = now};
             const auto verdict = factory_state_.agents.constFind(id);
             const auto* judged =
@@ -271,6 +298,12 @@ void Workspace::rebuildFactory() const {
             // on a running one, is stale).
             const bool current = judged != nullptr && factory::verdict_current(live, *judged) &&
                                  judged->stage == stage;
+            if (stage == QLatin1String(factory::kLanded) && !current) {
+                const qint64 expiry =
+                    live.finished_at_ms > 0 ? live.finished_at_ms + factory::kLandedRecentMs : 0;
+                if (expiry > 0)
+                    next_expiry = std::min(next_expiry, expiry);
+            }
             // Unjudged or stale: keep it, since nothing says it can go.
             const bool keep = current ? judged->keep_needed : true;
             const auto ids = item->attentionRequestIds();
@@ -298,8 +331,8 @@ void Workspace::rebuildFactory() const {
                             {"judged", current},
                             {"headline", current ? judged->headline : QString{}},
                             {"reason", current ? judged->reason : QString{}},
-                            {"receipt", judged != nullptr ? judged->receipt : QString{}},
-                            {"judgedAtMs", judged != nullptr ? judged->judged_at_ms : qint64{0}}};
+                            {"receipt", current ? judged->receipt : QString{}},
+                            {"judgedAtMs", current ? judged->judged_at_ms : qint64{0}}};
             const int rank = stage_rank(stage);
             if (rank < 4)
                 ++counts[rank];
@@ -319,6 +352,14 @@ void Workspace::rebuildFactory() const {
             rows.push_back({rank, closable, order++, std::move(map)});
         }
     }
+    if (next_expiry == std::numeric_limits<qint64>::max()) {
+        factory_expiry_.stop();
+    } else if (next_expiry <= now) {
+        factory_expiry_.start(0);
+    } else {
+        const qint64 delay = std::min<qint64>(next_expiry - now, std::numeric_limits<int>::max());
+        factory_expiry_.start(static_cast<int>(delay));
+    }
     std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
         if (a.rank != b.rank)
             return a.rank < b.rank;
@@ -331,10 +372,10 @@ void Workspace::rebuildFactory() const {
     });
     factory_items_.clear();
     for (auto& row : rows)
-        factory_items_.append(std::move(row.map));
+        factory_items_.append(QVariant::fromValue(std::move(row.map)));
     attention_inbox_.clear();
     for (auto& item : waiting)
-        attention_inbox_.append(std::move(item.map));
+        attention_inbox_.append(QVariant::fromValue(std::move(item.map)));
     factory_summary_ = {{"needsYou", counts[0]},
                         {"inProgress", counts[1]},
                         {"landed", counts[2]},
@@ -360,6 +401,8 @@ QVariantList Workspace::attentionInbox() const {
     return attention_inbox_;
 }
 
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 bool Workspace::addFixtureAgent(const QString& id, const QString& title, const QString& category,
                                 const QString& harness, const QString& content) {
     if (!fixture_mode_ || id.isEmpty() || agents_.contains(id) ||

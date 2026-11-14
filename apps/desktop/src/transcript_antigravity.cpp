@@ -60,6 +60,8 @@ void read_selection(const QString& content, Status& status) {
 }
 
 // A tool call as one step, in the same words as the other CLIs' steps.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 Item tool_item(const QJsonObject& call) {
     const auto name = text_of(call, "name");
     auto args = call.value(QLatin1String("args")).toObject();
@@ -170,6 +172,8 @@ void AntigravityReader::push(Item item) {
     items_.push_back(std::move(item));
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void AntigravityReader::call(const QJsonObject& call) {
     const auto name = text_of(call, "name");
     const auto args = call.value(QLatin1String("args")).toObject();
@@ -227,6 +231,8 @@ void AntigravityReader::call(const QJsonObject& call) {
     }
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int AntigravityReader::result(int at, const QJsonObject& record) {
     auto& step = items_[static_cast<size_t>(at)];
     attach(step, record);
@@ -369,6 +375,8 @@ void AntigravityReader::wake(const QString& why) {
     turn_since_ms_ = at_ms_;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int AntigravityReader::add(const QByteArray& line) {
     QJsonParseError error{};
     const auto document = QJsonDocument::fromJson(line, &error);
@@ -401,7 +409,7 @@ int AntigravityReader::add(const QByteArray& line) {
         // agy reads input sent while it works at its next step, inside the
         // running turn: input right after a tool step of an open turn
         // steers it. Long after one, the turn was left (interrupted).
-        constexpr qint64 steer_window_ms = 10 * 60 * 1000;
+        constexpr qint64 steer_window_ms = qint64{10} * 60 * 1000;
         const bool steers = turn_open_ && step_at_ms_ > 0 && at_ms_ >= step_at_ms_ &&
                             at_ms_ - step_at_ms_ <= steer_window_ms;
         step_at_ms_ = 0;
@@ -434,6 +442,7 @@ int AntigravityReader::add(const QByteArray& line) {
             prompt.starts_turn = !shown && !steers;
             prompt.steered = steers;
             shown = true;
+            taken(prompt);
             push(std::move(prompt));
         }
     } else if (type == QLatin1String("PLANNER_RESPONSE")) {

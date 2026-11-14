@@ -142,6 +142,8 @@ void local_file_url_contract(lapis::desktop::TerminalSurface& surface) {
     for (const auto& tested : cases)
         require(surface.localFilePath(tested.url) == tested.expected, tested.message);
 }
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void input_contract(bool background) {
     Fixture f;
     QQuickWindow window;
@@ -1048,6 +1050,10 @@ void suggestions() {
     QQuickItem other_focus(window.contentItem());
     other_focus.forceActiveFocus();
     until([&] { return !surface.hasActiveFocus(); });
+    if (!paste_request.has_value()) {
+        require(false, "the terminal asked to paste the admitted guess");
+        return;
+    }
     const auto delayed = wire::decode_paste_request(paste_request->payload);
     peer.send(wire::Kind::paste_result,
               wire::encode_paste_result({delayed.attachment, delayed.request_id, true, {}}));

@@ -1833,8 +1833,12 @@ void older_turns_start_folded() {
 }
 
 // Code colors by its language: the role at a column of a line.
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 void code_is_highlighted() {
     namespace code = lapis::desktop::code;
+    // Positional fixture helper; call sites pin the order.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     const auto role_at = [](const QString& language, const QString& line, int column,
                             int state = 0) {
         for (const auto& span : code::tokenize(line, code::language(language), state))
@@ -2210,6 +2214,7 @@ void math_is_found() {
         {"A dollar $ alone", ""},
         {"Empty $$ $$ display", ""},
         {"Escaped inside $a \\$ b$", "I:a \\$ b"},
+        {"Broken $\\not$", "I:\\not"},
     };
     for (const auto& item : cases) {
         const auto found = sources(QString::fromUtf8(item.text));
@@ -2289,6 +2294,7 @@ void math_is_rendered() {
              "x^",
              "{a",
              "a}",
+             "\\not",
          })
         require(!math::render(QString::fromUtf8(latex)).ok, "what cannot be set shows as source");
     const auto letters = math::render(QStringLiteral("x + 2\\sin y"));
@@ -2873,7 +2879,7 @@ void styled_replies_keep_their_shape() {
 }
 } // namespace
 
-int main(int argc, char** argv) {
+int run(int argc, char** argv) {
     // Text layout needs a GUI application; offscreen keeps it off the screen
     // and the Dock.
     qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -2927,4 +2933,13 @@ int main(int argc, char** argv) {
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return run(argc, argv);
+    } catch (...) {
+        std::fprintf(stderr, "transcript_test: FAIL unexpected exception\n");
+        return EXIT_FAILURE;
+    }
 }

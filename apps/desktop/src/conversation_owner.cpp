@@ -13,6 +13,7 @@
 #include <QUuid>
 #include <algorithm>
 #include <optional>
+#include <utility>
 
 namespace lapis::desktop::conversation_owner {
 namespace {
@@ -31,7 +32,7 @@ QJsonObject firstRecord(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return {};
-    return QJsonDocument::fromJson(file.readLine(qint64{1} << 20)).object();
+    return QJsonDocument::fromJson(file.readLine(qint64{1} * 1024 * 1024)).object();
 }
 
 QString canonical(const QString& path) {
@@ -75,9 +76,9 @@ qint64 antigravityStart(const QString& conversation) {
 QList<Started> codexStarted(const QString& folder, qint64 since_ms) {
     const QDir sessions(codex_home() + QStringLiteral("/sessions"));
     const auto first_day = QDateTime::fromMSecsSinceEpoch(since_ms).date();
+    const auto today = QDateTime::currentDateTime().date();
     QList<Started> found;
-    for (auto day = QDateTime::currentDateTime().date();
-         day >= first_day && first_day.daysTo(day) <= 7; day = day.addDays(-1)) {
+    for (auto day = today; day >= first_day && day.daysTo(today) <= 7; day = day.addDays(-1)) {
         // A thread started just after midnight UTC may sit in either
         // neighbouring folder, so the start day counts.
         const QDir folder_of_day(sessions.filePath(day.toString(QStringLiteral("yyyy/MM/dd"))));
@@ -99,7 +100,7 @@ QSet<QString> antigravityFolderConversations(const QString& folder) {
     const QDir cache(antigravity_home() + QStringLiteral("/cache"));
     const auto read = [&cache](const char* name) {
         QFile file(cache.filePath(QString::fromLatin1(name)));
-        if (!file.open(QIODevice::ReadOnly) || file.size() > qint64{32} << 20)
+        if (!file.open(QIODevice::ReadOnly) || file.size() > qint64{32} * 1024 * 1024)
             return QJsonObject{};
         return QJsonDocument::fromJson(file.readAll()).object();
     };
@@ -187,6 +188,8 @@ qint64 service_pid(const QString& endpoint) {
     return number && platform::process_alive(pid) ? pid : 0;
 }
 
+// Cohesive positional parser flow; callers and tests pin it.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters,readability-function-cognitive-complexity)
 QString held_conversation(const QString& harness, const QString& endpoint, const QString& pin) {
     const bool agy = harness == QLatin1String("agy");
     if (!agy && harness != QLatin1String("codex"))
@@ -225,7 +228,7 @@ QString held_conversation(const QString& harness, const QString& endpoint, const
         }
     }
     if (held.isEmpty())
-        held = opened;
+        held = std::move(opened);
     if (held.isEmpty())
         return {};
     if (held.size() > 1 && std::any_of(held.cbegin(), held.cend(),
@@ -237,6 +240,8 @@ QString held_conversation(const QString& harness, const QString& endpoint, const
         ->id;
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 QHash<QString, QString> pins(const QList<Agent>& agents) {
     QHash<QString, QString> changed;
     QHash<QString, QString> current;

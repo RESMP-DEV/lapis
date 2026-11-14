@@ -335,6 +335,7 @@ class Config final : public QObject {
     // Light mode: the mode and the last theme of each kind, for the visual
     // view and the window. visual_theme_ and theme_ hold what shows now.
     QString appearance_{QStringLiteral("dark")};
+    bool appearance_chosen_{true};
     QString visual_dark_theme_{QStringLiteral("terminal")};
     QString visual_light_theme_{QStringLiteral("claude-light")};
     QString window_dark_theme_{QStringLiteral("lapis")};
@@ -347,9 +348,11 @@ class Config final : public QObject {
     void choose_kind(bool light);
     void follow_system_appearance();
     // The sections setSetting edits, as last read, and the ones it changed
-    // since the last save: only those are written back.
+    // since the last save. Pending edits are key-granular so a save preserves
+    // concurrent changes to other keys in the same section.
     QJsonObject sections_;
     QSet<QString> touched_;
+    QHash<QString, QSet<QString>> touched_keys_;
     void parse_sections();
     AgentDefaults agent_defaults_;
     NextPromptSettings next_prompt_;

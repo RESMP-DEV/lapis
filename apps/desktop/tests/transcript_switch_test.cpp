@@ -17,7 +17,9 @@
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
 #include <QThreadPool>
+#include <cstdint>
 #include <cstdio>
+#include <tuple>
 
 using lapis::desktop::TranscriptModel;
 using namespace lapis::desktop::transcript;
@@ -40,6 +42,8 @@ QString fixture(const char* name) {
 // edit and a reply, timed. Every third turn starts a background command
 // that a later turn's notification ends, a /compact runs between two turns,
 // and `pad` characters of output make the file as long as a test needs.
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QByteArray claude_conversation(const char* tag, int turns, int pad = 0) {
     QByteArray out;
     int record = 0;
@@ -136,6 +140,8 @@ bool tail_matches(const Read& whole, const Layout& whole_layout, const Read& tai
 
 // The end read at every cut through the file (inside records, between
 // them, mid-turn) shows what a whole reading's end shows.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void tails_match(const char* name, const QString& path, Format format) {
     const auto whole = read_file(path, format);
     const auto whole_layout = lay_out(whole.reader->items(), {});
@@ -307,7 +313,7 @@ void kept_within_budget() {
         paths << write(directory, QString::fromLatin1(name) + ".jsonl",
                        claude_conversation(name, 3));
     TranscriptModel model;
-    model.setBudget(qint64{1} << 30, 2);
+    model.setBudget(qint64{1'073'741'824}, 2);
     for (const auto& path : paths)
         model.setPath(path);
     require(model.keptCount() == 2 && !model.kept(paths[0]) && model.kept(paths[1]) &&
@@ -322,7 +328,7 @@ void kept_within_budget() {
     require(model.keptCount() == 0 && model.rowCount() > 0,
             "a smaller budget lets kept ones go, never the shown one");
     // Read ahead only into room the budget has.
-    model.setBudget(qint64{1} << 30, 1);
+    model.setBudget(qint64{1'073'741'824}, 1);
     model.warm({paths[0], paths[2]});
     wait_for([&] { return model.kept(paths[0]); });
     QCoreApplication::processEvents();
@@ -331,6 +337,35 @@ void kept_within_budget() {
     model.setPath(paths[3]);
     require(model.kept(paths[2]) && !model.kept(paths[0]),
             "a conversation read ahead goes before one the person showed");
+}
+
+// A kept conversation that grew by more than the synchronous tail budget
+// switches to its last shown state at once; the low-priority thread catches
+// the large delta up and adopts it only after parsing.
+void large_growth_moves_off_the_gui_thread() {
+    QTemporaryDir directory;
+    const auto a = write(directory, QStringLiteral("a.jsonl"), claude_conversation("a", 2));
+    const auto b = write(directory, QStringLiteral("b.jsonl"), claude_conversation("b", 2));
+    TranscriptModel model;
+    model.setPath(a);
+    require(!model.loading(), "the first conversation is whole");
+    model.setPath(b);
+    const auto grown = claude_conversation("grown", 30, 50'000);
+    append(a, grown);
+    require(grown.size() > TranscriptModel::tail_bytes,
+            "the unread delta is larger than the switch budget");
+    model.setPath(a);
+    const auto shown = records(model);
+    require(model.loading() &&
+                std::ranges::all_of(
+                    shown, [](const QString& record) { return !record.startsWith("grown-"); }),
+            "the large delta is not parsed while switching");
+    wait_for([&] { return !model.loading(); }, 7000);
+    const auto caught = records(model);
+    require(!model.loading() &&
+                std::ranges::any_of(
+                    caught, [](const QString& record) { return record.startsWith("grown-"); }),
+            "the low-priority thread catches the delta up");
 }
 
 // A model destroyed while its threads read: the shown conversation's
@@ -347,7 +382,7 @@ void destroyed_while_reading() {
         write(directory, QStringLiteral("ahead.jsonl"), claude_conversation("ahead", 60, 40000));
     const auto grown = claude_conversation("grown", 60, 40000);
     require(QFileInfo(big).size() > 2 * TranscriptModel::tail_bytes, "the shown one is long");
-    enum class Case { read_ahead, catch_up, queued };
+    enum class Case : std::uint8_t { read_ahead, catch_up, queued };
     int loading = 0, reading = 0, queued = 0;
     constexpr int rounds = 36;
     for (int round = 0; round < rounds; ++round) {
@@ -355,7 +390,7 @@ void destroyed_while_reading() {
         const auto kept =
             write(directory, QStringLiteral("kept.jsonl"), claude_conversation("kept", 2));
         auto* model = new TranscriptModel;
-        model->setBudget(qint64{1} << 30, 8);
+        model->setBudget(qint64{1} * 1024 * 1024 * 1024, 8);
         if (which == Case::catch_up)
             model->setPath(kept); // read at once, then kept
         model->setPath(big);      // its end now, the rest on the global pool
@@ -569,36 +604,39 @@ void view_switches() {
     const auto place = [&] {
         const auto y = list->property("contentY").toReal();
         int row = -1;
-        QMetaObject::invokeMethod(list, "indexAt", Q_RETURN_ARG(int, row),
-                                  Q_ARG(qreal, list->property("width").toReal() / 2),
-                                  Q_ARG(qreal, y + 1));
+        const bool row_found = QMetaObject::invokeMethod(
+            list, "indexAt", Q_RETURN_ARG(int, row),
+            Q_ARG(qreal, list->property("width").toReal() / 2), Q_ARG(qreal, y + 1));
         QQuickItem* item = nullptr;
-        QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, item),
-                                  Q_ARG(int, row));
-        return std::pair{row, item != nullptr ? y - item->y() : -1.0};
+        const bool item_found = QMetaObject::invokeMethod(
+            list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, item), Q_ARG(int, row));
+        const bool valid = row_found && item_found && row >= 0 && item != nullptr;
+        return std::tuple{row, valid ? y - item->y() : -1.0, valid};
     };
-    const auto left = place();
+    const auto [left_row, left_offset, left_valid] = place();
+    require(left_valid, "the first place names a visible row");
     model.setPath(b);
     settle();
     require(view.rootObject()->property("following").toBool() && at_end(),
             "another conversation opens at its end");
     model.setPath(a);
     settle();
-    const auto back = place();
-    if (back.first != left.first || std::abs(back.second - left.second) >= 1)
+    const auto [back_row, back_offset, back_valid] = place();
+    require(back_valid, "the restored place names a visible row");
+    if (back_row != left_row || std::abs(back_offset - left_offset) >= 1)
         std::fprintf(stderr,
                      "  left at row %d +%.1f, back at row %d +%.1f (view %s, following %d)\n",
-                     left.first, left.second, back.first, back.second,
+                     left_row, left_offset, back_row, back_offset,
                      qPrintable(QVariant(model.view()).toString() +
                                 QString::number(model.view().value("row").toInt())),
                      view.rootObject()->property("following").toBool());
-    require(!view.rootObject()->property("following").toBool() && back.first == left.first &&
-                std::abs(back.second - left.second) < 1,
+    require(!view.rootObject()->property("following").toBool() && back_row == left_row &&
+                std::abs(back_offset - left_offset) < 1,
             "the place scrolled to comes back");
 }
 } // namespace
 
-int main(int argc, char** argv) {
+int run(int argc, char** argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     // The view writes a chart style under ~/.lapis; keep it in a throwaway home.
@@ -609,6 +647,7 @@ int main(int argc, char** argv) {
     tails_for_each_cli();
     cold_conversation_shows_its_end();
     kept_within_budget();
+    large_growth_moves_off_the_gui_thread();
     kept_ones_follow_their_files();
     blank_threads_wait_for_their_file();
     destroyed_while_reading();
@@ -618,4 +657,13 @@ int main(int argc, char** argv) {
     if (failures == 0)
         std::puts("transcript_switch_test: PASS");
     return failures == 0 ? 0 : 1;
+}
+
+int main(int argc, char** argv) {
+    try {
+        return run(argc, argv);
+    } catch (...) {
+        std::fprintf(stderr, "transcript_switch_test: FAIL unexpected exception\n");
+        return 1;
+    }
 }

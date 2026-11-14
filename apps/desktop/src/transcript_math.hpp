@@ -1,4 +1,5 @@
-#pragma once
+#ifndef LAPIS_DESKTOP_TRANSCRIPT_MATH_HPP
+#define LAPIS_DESKTOP_TRANSCRIPT_MATH_HPP
 
 // Math in replies: the LaTeX agents write in prose ($x_i$, $$...$$, \(..\),
 // \[..\]) found before the markdown import, so markdown never reads it, and
@@ -8,6 +9,7 @@
 
 #include <QString>
 #include <QTextCharFormat>
+#include <cstdint>
 #include <vector>
 
 class QTextDocument;
@@ -40,7 +42,7 @@ struct Span {
 
 // A piece of rendered math.
 struct Run {
-    enum class Shift { none, super, sub };
+    enum class Shift : std::uint8_t { none, super, sub };
     QString text;
     Shift shift{Shift::none};
     bool italic{};
@@ -79,3 +81,5 @@ struct Prepared {
 void fill(QTextDocument& document, const std::vector<Span>& spans);
 
 } // namespace lapis::desktop::transcript::math
+
+#endif // LAPIS_DESKTOP_TRANSCRIPT_MATH_HPP

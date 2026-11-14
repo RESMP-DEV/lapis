@@ -8,6 +8,7 @@
 #include "terminal_surface.hpp"
 #include "terminals.hpp"
 #include "transcript.hpp"
+#include "transport/local_protocol.hpp"
 #include "workspace.hpp"
 #include <QAccessible>
 #include <QDateTime>
@@ -1635,6 +1636,8 @@ void wait_tab_visible(QQuickItem& tab, QQuickItem& view) {
     CHECK(visible());
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run_attention_ui_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::fixture);
@@ -2323,8 +2326,8 @@ void wait_ready(lapis::desktop::ConversationIndex& conversations) {
 
 // The agent strip is the category's navigation: live previews in tab order
 // that never take input or resize a terminal, keep part of the neighboring
-// card in view as selection moves, and pulse an agent that finished or needs a
-// response until it is selected.
+// card in view as selection moves, and mark an agent that finished or needs a
+// response with its status shape.
 // The strip narrative is chronological and only one point above the threshold.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run_strip_ui_tests() {
@@ -2424,6 +2427,48 @@ int run_strip_ui_tests() {
     }
     CHECK(wait_for([&] { return focused_id(workspace) == QStringLiteral("shell"); }, 5000));
     capture("strip");
+
+    // A card pooled by scrolling keeps its shell for reuse but must stop being
+    // a terminal viewer until ListView hands that shell to an on-screen card.
+    auto* pooled_card = item(QStringLiteral("agentTab_agent"));
+    auto* pooled_agent =
+        QQmlProperty::read(pooled_card, QStringLiteral("modelData")).value<Agent*>();
+    CHECK(pooled_agent == workspace.agent(QStringLiteral("agent")));
+    finish_turn(*pooled_agent);
+    pump(30);
+    CHECK(pooled_agent->unseen());
+    const auto pool_events = [](QQuickItem* parent, auto&& visit) -> int {
+        int count = parent->property("poolCount").toInt();
+        for (auto* child : parent->childItems())
+            count += visit(child, visit);
+        return count;
+    };
+    CHECK(pool_events(strip, pool_events) > 0);
+    CHECK(pooled_card->property("pooled").toBool() == false);
+    const auto pooled_decoded = pooled_agent->decodedScreens();
+    CHECK(pooled_card->setProperty("pooled", true));
+    pump(30);
+    CHECK(!item(QStringLiteral("previewTerminal_agent"))->isVisible());
+    {
+        lapis::session::Terminal source{{4, 2}};
+        source.feed("pooled\n");
+        namespace wire = lapis::session::wire;
+        pooled_agent->offerSnapshot(wire::encode_snapshot(source.snapshot()));
+    }
+    pump(350);
+    CHECK(pooled_agent->decodedScreens() == pooled_decoded);
+    CHECK(pooled_card->setProperty("pooled", false));
+    pump(30);
+    auto* reused_card = item(QStringLiteral("agentTab_agent"));
+    CHECK(reused_card == pooled_card && reused_card->property("pooled").toBool() == false);
+    CHECK(item(QStringLiteral("previewTerminal_agent"))->isVisible());
+    {
+        lapis::session::Terminal source{{4, 2}};
+        source.feed("reused\n");
+        namespace wire = lapis::session::wire;
+        pooled_agent->offerSnapshot(wire::encode_snapshot(source.snapshot()));
+    }
+    CHECK(wait_for([&] { return pooled_agent->decodedScreens() > pooled_decoded; }, 5000));
 
     // A finished turn changes a card's status mark and nothing else: no cue
     // says whether it was looked at, and a card looks the same either way.
@@ -3624,6 +3669,44 @@ void check_hidden_sidebar_title(QQuickWindow& window, lapis::desktop::Workspace&
             CHECK(workspace.selectAgent(id));
         }
     }
+
+    // Previews on, the strip picks agents and no selector shows; previews off
+    // too, an agent selector at the line's right end follows the focused
+    // agent and picks another, and the title never runs under it.
+    auto* selector = item(QStringLiteral("agentSelector"));
+    const bool previews = config_model.previewsVisible();
+    CHECK(config_model.setPreviewsVisible(true));
+    pump(30);
+    CHECK(!selector->isVisible());
+    CHECK(config_model.setPreviewsVisible(false));
+    pump(30);
+    if (agents.size() > 1) {
+        CHECK(selector->isVisible());
+        const auto index_of = [&](const QString& agent) {
+            for (qsizetype i = 0; i < agents.size(); ++i)
+                if (auto* each = agents.at(i).value<Agent*>();
+                    each != nullptr && each->agentId() == agent)
+                    return static_cast<int>(i);
+            return -1;
+        };
+        CHECK(selector->property("currentIndex").toInt() == index_of(id));
+        const int other = index_of(id) == 0 ? 1 : 0;
+        const auto other_id = agents.at(other).value<Agent*>()->agentId();
+        CHECK(QMetaObject::invokeMethod(selector, "activated", Q_ARG(int, other)));
+        pump(80);
+        CHECK(workspace.focusedAgent()->agentId() == other_id);
+        CHECK(selector->property("currentIndex").toInt() == other);
+        CHECK(text->property("text").toString() == sidebar_title());
+        const auto text_right = text->mapToItem(title, QPointF(text->width(), 0)).x();
+        CHECK(text_right <= selector->x());
+        if (!captures.isEmpty())
+            CHECK(window.grabWindow().save(
+                QDir(captures).filePath(QStringLiteral("hidden-sidebar-agent-selector.png"))));
+        CHECK(workspace.selectAgent(id));
+        pump(30);
+    }
+    CHECK(config_model.setPreviewsVisible(previews));
+    pump(30);
 
     view->setProperty("visible", false);
     model->setPath(QString());

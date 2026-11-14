@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-13T21:52:04Z",
+  "agent": "Codex",
+  "base_revision": "db9f97835165f345a39aa4513468ba7cd4f39d9e",
+  "source_revision": "432261d0cbbceb1a19fb0532f1477f9b223ade46",
+  "changed_source_manifest": {
+    "algorithm": "sha256(git diff --binary base_revision..source_revision -- ':(exclude)evidence/*')",
+    "digest": "688ec6fe3b7de68f9d941b0ac6627579e5db00cb859c7e5b546055a1cf0ddaef",
+    "changed_paths": 16
+  },
+  "scope": "Remove verified dead or stale cleanup surfaces without changing user-facing behavior.",
+  "changes": [
+    "Removed the test-only harness_label API.",
+    "Synchronized transcript survey rendered/shaped names with the Claude transcript reader and added focused coverage, including mcp__ tools and document blocks.",
+    "Added Sparkle to public bundled-license notices.",
+    "Corrected lowercase-name prose, stale sandbox status wording, desktop build help, justfile description, and retired tab/window keybinding comment.",
+    "Removed the retired Ultra Tab compose-log counter while retaining and testing live answer accounting."
+  ],
+  "commands": [
+    {
+      "command": "ruff format --check scripts/transcript_survey.py scripts/runtime_digest.py scripts/tests/test_runtime_digest.py scripts/tests/test_transcript_survey.py",
+      "exit_code": 0
+    },
+    {
+      "command": "ruff check scripts/transcript_survey.py scripts/runtime_digest.py scripts/tests/test_runtime_digest.py scripts/tests/test_transcript_survey.py",
+      "exit_code": 0
+    },
+    {
+      "command": "clang-format --dry-run --Werror apps/desktop/src/harness_catalog.hpp apps/desktop/src/harness_catalog.cpp apps/desktop/tests/harness_models_test.cpp apps/desktop/src/config.cpp",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m unittest scripts.tests.test_transcript_survey scripts.tests.test_runtime_digest -v",
+      "exit_code": 0,
+      "result": "4/4 focused Python tests passed"
+    },
+    {
+      "command": "cmake --build build/desktop --target lapis_harness_models_tests lapis_config_tests --parallel 8",
+      "exit_code": 0
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -R '^(harness-models|config)$'",
+      "exit_code": 0,
+      "result": "2/2 focused desktop tests passed"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "exit_code": 0,
+      "result": "repository quality gate passed"
+    }
+  ],
+  "non_claims": [
+    "No product behavior, GUI layout, native input, GPU, packaging, or release workflow was exercised by this cleanup.",
+    "The full desktop static-analysis gate was not claimed because current main has an unrelated broad clang-tidy backlog.",
+    "Transcript survey was checked against source mappings and synthetic classification tests, not a new private-session corpus measurement."
+  ]
+}

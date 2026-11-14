@@ -11,6 +11,7 @@
 #include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <map>
@@ -31,7 +32,17 @@ namespace lapis::desktop {
 // become `other` blocks, so a CLI feature lapis has not learned yet still
 // shows up instead of vanishing.
 namespace transcript {
-enum class Kind { prompt, reply, thinking, tool, command, notice, divider, turn, other };
+enum class Kind : std::uint8_t {
+    prompt,
+    reply,
+    thinking,
+    tool,
+    command,
+    notice,
+    divider,
+    turn,
+    other
+};
 [[nodiscard]] QString kind_name(Kind kind);
 
 // One line of a tool's diff: '+' added, '-' removed, ' ' context.
@@ -111,7 +122,7 @@ struct Item {
 // command, a monitor. The reader keeps one per launch; later output checks,
 // events and the end record attach to it rather than adding rows.
 struct Task {
-    enum class Type { subagent, background, monitor };
+    enum class Type : std::uint8_t { subagent, background, monitor };
     Type type{Type::subagent};
     // The CLI's id for it: Claude Code's agentId or task id, Codex's thread
     // or process id, agy's conversation or task id. Empty until recorded.
@@ -143,7 +154,7 @@ struct Task {
 // (`alive_ms`: its start, a check or event, or its own file's last write) is
 // this old, so one whose end was never written (the CLI quit) does not run
 // forever. A monitor also stops at its own expiry.
-inline constexpr qint64 task_silence_ms = 60 * 60 * 1000;
+inline constexpr qint64 task_silence_ms = qint64{60} * 60 * 1000;
 [[nodiscard]] bool task_running(const Task& task, qint64 alive_ms, qint64 now_ms);
 
 // The model, effort and context use the agent last reported, read the same
@@ -344,7 +355,7 @@ struct Piece {
 // prompt the CLI took leaves an empty box (or its placeholder) there;
 // earlier copies of the text above it, as the CLI shows what was sent, do
 // not count.
-enum class Format;
+enum class Format : std::uint8_t;
 [[nodiscard]] bool composer_holds(const QStringList& screen, const QString& text, Format format);
 // What the CLI's input box holds, or empty: the same marked row, then the
 // rows under it that continue it (indented, up to a rule, Codex's hint row,
@@ -437,7 +448,7 @@ struct ScreenChoice {
                               const QString& reported);
 
 // The CLIs whose saved conversations lapis reads, each with its own reader.
-enum class Format { claude, codex, antigravity };
+enum class Format : std::uint8_t { claude, codex, antigravity };
 [[nodiscard]] QString format_name(Format format);
 // A format by name ("claude", "codex", "antigravity"; the CLIs' ids "agy"
 // too), or nullopt.
@@ -833,7 +844,7 @@ class TranscriptModel final : public QAbstractListModel {
     // still runs, else 0: what "Waiting on 2 subagents" counts from.
     Q_PROPERTY(double waitingSince READ waitingSince NOTIFY runningChanged)
   public:
-    enum Role {
+    enum Role : std::uint16_t {
         KindRole = Qt::UserRole + 1,
         TitleRole,
         BodyRole,
@@ -1104,7 +1115,7 @@ class TranscriptModel final : public QAbstractListModel {
     // one is never let go. A conversation not kept shows its end (the last
     // tail_bytes, read at once) and the rest is read on another thread and
     // put in above it. See docs/architecture.md (visual view loading).
-    static constexpr qint64 tail_bytes = qint64{1} << 20;
+    static constexpr qint64 tail_bytes = qint64{1} * 1024 * 1024;
     static constexpr qint64 default_kept_mb = 1024;
     static constexpr int default_kept_count = 32;
     // The budget for conversations kept parsed besides the shown one: about
@@ -1167,11 +1178,13 @@ class TranscriptModel final : public QAbstractListModel {
         qint64 offset{};
         QByteArray pending;
         qint64 modified_ms{};
+        bool active{};
     };
     // The child for `path` (a subagent's own conversation) read up to date;
     // nullptr when the file is missing.
     Child* child(const QString& path, transcript::Format format);
     std::vector<Child> children_; // most recent first, a few kept
+    QStringList active_children_; // running subagent files, never evicted
     // A Claude Code subagent's tool calls so far, counted from its file's
     // bytes as it grows (cheaper than reading it); -1 when it is missing.
     int counted_steps(const QString& path);
@@ -1274,7 +1287,7 @@ class TranscriptModel final : public QAbstractListModel {
     std::vector<Parsed> kept_;
     void keep(Parsed parsed);
     void evict();
-    qint64 kept_budget_{default_kept_mb << 20};
+    qint64 kept_budget_{default_kept_mb * 1024 * 1024};
     int kept_limit_{default_kept_count};
     quint64 shown_clock_{};
     // A whole reading (or a longer tail) of `path` from another thread.
@@ -1294,7 +1307,10 @@ class TranscriptModel final : public QAbstractListModel {
     std::shared_ptr<Mailbox> mailbox_;
     void drain();
     [[nodiscard]] transcript::Layout layoutNow() const;
-    QSet<QString> loads_;       // conversations a thread is reading
+    // The rows `reader` gives with the shown conversation's open turns and
+    // peers (layoutNow lays out reader_).
+    [[nodiscard]] transcript::Layout layoutOf(const transcript::Reader& reader) const;
+    QSet<QString> loads_;      // conversations a thread is reading
     QStringList warm_queue_;    // to read ahead, in order
     bool warming_{};            // a read-ahead or catch-up is running
     bool tail_{};               // reader_ holds only the file's end

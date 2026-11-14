@@ -28,6 +28,7 @@ RENDERED_BLOCKS = {
     "tool_use",
     "tool_result",
     "image",
+    "document",
 }
 SHAPED_TOOLS = {
     "Bash",
@@ -42,8 +43,23 @@ SHAPED_TOOLS = {
     "WebFetch",
     "WebSearch",
     "TodoWrite",
+    "Monitor",
+    "SendMessage",
+    "ScheduleWakeup",
+    "Skill",
+    "TaskStop",
+    "ToolSearch",
+    "AskUserQuestion",
 }
 SHOWN_SYSTEM = {"compact_boundary"}
+
+
+def rendered_block(kind: str) -> bool:
+    return kind in RENDERED_BLOCKS
+
+
+def shaped_tool(name: object) -> bool:
+    return isinstance(name, str) and (name in SHAPED_TOOLS or name.startswith("mcp__"))
 
 
 def sessions(root: Path, limit: int) -> list[Path]:
@@ -110,9 +126,9 @@ def main() -> int:
     home = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
     result = survey(sessions(home / "projects", args.sessions))
     unknown_blocks = {
-        k: v for k, v in result["blocks"].items() if k not in RENDERED_BLOCKS
+        k: v for k, v in result["blocks"].items() if not rendered_block(k)
     }
-    generic_tools = {k: v for k, v in result["tools"].items() if k not in SHAPED_TOOLS}
+    generic_tools = {k: v for k, v in result["tools"].items() if not shaped_tool(k)}
     if args.json:
         json.dump(
             {

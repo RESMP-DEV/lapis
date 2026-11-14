@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-12T06:47:20Z",
+  "agent": "Codex performance parent with three read-only audit subagents",
+  "base_revision": "2b20f8d5371187bb377e2c1a2154207918140c72",
+  "source_revision": "d33e25c2d2ce75a84701bf5771acdcf35bf907ad",
+  "runtime_validation_revision": "412d8fe3697a37a8e20d22501becedf9180fd6dc",
+  "source_dirty": false,
+  "scope": "Warm category-switch latency after in-category strip navigation, reduced by rebinding delegates already pooled by scrolling while retaining the bounded, noninteractive preview contract.",
+  "environment": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "cpu": "Apple M4 Max",
+    "os": "macOS 26.7.1 (25G313)",
+    "compiler": "Homebrew clang 23.1.5",
+    "cmake": "4.4.5",
+    "qt": "6.11.2",
+    "render_mode": "offscreen/software; GUI-thread delivery, scene-graph sync and next frameSwapped, not GPU presentation"
+  },
+  "changed_source_manifest": {
+    "algorithm": "shasum -a 256 of: git diff --binary --full-index 2b20f8d5371187bb377e2c1a2154207918140c72..6807f9908543b7cd61786b10747d12c970b030f7",
+    "digest": "e48fae7d6fa4ae4555f355dc3ee6fc663349c506658457664fca36d65afb8654",
+    "changed_paths": 4
+  },
+  "benchmark": {
+    "binary": "build/desktop/apps/desktop/lapis_switch_benchmark",
+    "candidate_binary_sha256": "310e62c8a4ef0ab9f38045a6f040df185ae49ddd13d386bbec9137056a4952b7",
+    "command": "lapis_switch_benchmark --agents 32 --categories 4 --switches 300 --warmup 40 --gap-ms 60 --output <ignored-build-receipt>",
+    "layout": "Both comparison states use runtime/workspace.json so atomic registry replacement does not wake the lapis.json directory watcher.",
+    "baseline_state": "d33e25c2 with ListView reuseItems disabled in the source QML",
+    "baseline_binary_sha256": "9574ffb1e554e4394fdce01550db7da2a6012b98104d16688108e0b8f58631c2",
+    "baseline_build_relationship": "Separate binary rebuilt from d33e25c2 with only the source QML reuseItems line removed; benchmark resources are linked into the binary.",
+    "candidate_state": "d33e25c2 with ListView reuseItems and pooled-viewer gating enabled",
+    "baseline_runs_ms": [
+      {"agent_p50": 11.86791706085205, "agent_p95": 24.359416961669922, "category_p50": 72.21299982070923, "category_p95": 85.2525417804718, "category_p99": 87.58899998664856},
+      {"agent_p50": 12.013542175292969, "agent_p95": 24.687291860580444, "category_p50": 71.97954201698303, "category_p95": 84.59508299827576, "category_p99": 85.2109169960022},
+      {"agent_p50": 12.0002920627594, "agent_p95": 23.99779200553894, "category_p50": 72.43816709518433, "category_p95": 82.05774998664856, "category_p99": 84.39487481117249}
+    ],
+    "candidate_runs_ms": [
+      {"agent_p50": 12.712709188461304, "agent_p95": 22.026665925979614, "category_p50": 53.18008303642273, "category_p95": 71.29875016212463, "category_p99": 79.19737505912781},
+      {"agent_p50": 11.943666934967041, "agent_p95": 22.591541051864624, "category_p50": 57.390583992004395, "category_p95": 78.60000014305115, "category_p99": 80.36337494850159},
+      {"agent_p50": 12.609375, "agent_p95": 23.469249963760376, "category_p50": 56.584625005722046, "category_p95": 75.35795903205872, "category_p99": 79.95362496376038}
+    ],
+    "median_baseline_ms": {"agent_p50": 12.0002920627594, "agent_p95": 24.359416961669922, "category_p50": 72.21299982070923, "category_p95": 84.59508299827576, "category_p99": 85.2109169960022},
+    "median_candidate_ms": {"agent_p50": 12.609375, "agent_p95": 22.591541051864624, "category_p50": 56.584625005722046, "category_p95": 75.35795903205872, "category_p99": 79.95362496376038},
+    "deltas": {
+      "category_p50_percent": -21.6421,
+      "category_p95_percent": -10.9192,
+      "category_p99_percent": -6.1697,
+      "agent_p50_percent": 5.0756,
+      "agent_p95_percent": -7.2575
+    },
+    "measurement_sequence": "Each category sample follows an agent-key switch in the same loop; those strip-navigation switches can pool off-screen delegates before the category model reset. Visible delegates are released by the reset; only delegates already in the reuse pool can be rebound.",
+    "raw_receipts": [
+      "build/performance/pooled-gate-baseline/switch-1.json",
+      "build/performance/pooled-gate-baseline/switch-2.json",
+      "build/performance/pooled-gate-baseline/switch-3.json",
+      "build/performance/pooled-gate/switch-1.json",
+      "build/performance/pooled-gate/switch-2.json",
+      "build/performance/pooled-gate/switch-3.json"
+    ]
+  },
+  "attribution": {
+    "diagnostic_preview_disabled": {
+      "category_p50_ms": 15.949875116348267,
+      "category_p95_ms": 31.828707933425903,
+      "result": "The category tail collapses when preview cards are absent; preview delegate/surface construction is material."
+    },
+    "time_sample": {
+      "tool": "macOS sample, 1 ms interval for 10 seconds on the benchmark process",
+      "raw_sample": "build/performance/profile/reuse-dense-sample-2.txt",
+      "main_thread_samples": 8236,
+      "terminal_surface_update_paint_node_samples": 3238,
+      "terminal_node_row_node_samples": 2774,
+      "add_row_text_lambda_samples": 1964,
+      "result": "Row construction and glyph/text-node work dominate; the sample includes CoreText shaping, glyph bounds and advances."
+    }
+  },
+  "rejected_candidates": [
+    {
+      "name": "Process-wide mutable ASCII advance table",
+      "result": "Rejected. With delegate reuse enabled it produced no material additional gain; without reuse, three runs regressed category p50 to 61.94-69.31 ms and p95 to 82.40-84.14 ms.",
+      "reason": "The per-surface cache remains safer because it shares neither QFont nor QFontMetricsF across render contexts."
+    },
+    {
+      "name": "Differential Config watcher path churn",
+      "result": "Deferred. A safe prototype passed the existing replacement-watch config test, but the corrected benchmark layout removed watcher contamination from the measured workload and no product-level gain was measured.",
+      "reason": "Do not mix an unmeasured watcher change into this focused rendering PR."
+    }
+  ],
+  "validation": [
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py check",
+      "result": "passed at receipt head 412d8fe3697a37a8e20d22501becedf9180fd6dc with a clean tree",
+      "receipt": "build/reports/dev/receipt.json"
+    },
+    {
+      "command": "cmake --build --preset desktop --parallel 8 && ctest --preset desktop --output-on-failure",
+      "result": "passed all 40 enabled desktop/session tests; eight intentionally disabled tests did not run",
+      "receipt": "build/desktop/Testing/Temporary/LastTest.log"
+    },
+    {
+      "command": "LAPIS_GHOSTTY_PREFIX=<validated pinned prefix> python3 scripts/lapis.py ui-review --json",
+      "result": "passed at receipt head 412d8fe3697a37a8e20d22501becedf9180fd6dc with a clean tree; all background UI, shortcut and terminal-input cases passed, including the pooled-viewer regression",
+      "receipt": "build/reports/ui-review/20261113T044105Z-hu_h5n7x/receipt.json"
+    }
+  ],
+  "setup_failures": [
+    {
+      "command": "ctest --preset desktop before building all targets",
+      "result": "Failed with missing executables; this was an incomplete build setup, not a source test failure. Building all desktop targets followed by the same CTest command passed."
+    }
+  ],
+  "non_claims": [
+    "This is an offscreen/software scene-graph switch measurement, not native GPU presentation or physical key-to-pixel latency.",
+    "The category result is a warm-pool measurement after in-category strip navigation. No direct or cold category-switch improvement is claimed, and visible delegates are released by a model reset rather than reused.",
+    "Agent-key p50 rose 5.08% in the paired runs while agent p95 improved 7.26%; the accepted tradeoff targets the much larger category-switch tail.",
+    "The preview-disabled run is attribution evidence only and changed the product feature under test.",
+    "No sustained-output, memory, native GPU, or physical-presentation claim is made."
+  ]
+}

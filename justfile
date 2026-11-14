@@ -42,7 +42,7 @@ format:
 verify-tools:
     python3 scripts/lapis.py verify-tools
 
-# Build and check the runnable desktop preview.
+# Build and check the desktop app and its session service.
 desktop:
     python3 scripts/lapis.py build
 

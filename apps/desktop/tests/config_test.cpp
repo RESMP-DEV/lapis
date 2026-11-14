@@ -580,6 +580,13 @@ void harness_updates_can_be_turned_off() {
             "a non-boolean entry is reported");
     require(config.diagnostic().contains(QStringLiteral("at least one and at most 32 characters")),
             "an empty harness name is reported");
+    require(config.setSetting(QStringLiteral("harnessUpdates.omp"), true),
+            "a normalized CLI name can be enabled");
+    const auto saved_updates = read_config(path).value(QStringLiteral("harnessUpdates")).toObject();
+    bool omp_saved = false;
+    for (auto it = saved_updates.begin(); it != saved_updates.end(); ++it)
+        omp_saved = omp_saved || it.key().compare(QStringLiteral("omp"), Qt::CaseInsensitive) == 0;
+    require(!omp_saved, "enabling removes its differently-cased key");
     const QString defaults = write_config(QDir(directory.path()), R"({"theme": "oled"})");
     config.setSourcePathForTesting(defaults);
     require(config.load() && config.harnessUpdatesOff().isEmpty(), "every CLI updates by default");
@@ -861,10 +868,10 @@ void visual_keep_budget_parses() {
     require(config.load() && config.visualKeepMB() == 1024 && config.visualKeepThreads() == 32,
             "the keep budget defaults to 1024 MB and 32 threads");
     struct Case {
-        const char* name;
+        const char* name{};
         QByteArray visual;
-        int mb;
-        int threads;
+        int mb{};
+        int threads{};
     };
     const std::array cases{
         Case{"in range", R"({"keepMB": 512, "keepThreads": 8})", 512, 8},
@@ -925,6 +932,14 @@ void settings_write_known_keys() {
     config.setSourcePathForTesting(path);
     config.setSystemDark(true);
     require(config.load(), "golden fixture loads");
+    auto concurrent = read_config(path);
+    auto concurrent_agents = concurrent.value(QStringLiteral("newAgent")).toObject();
+    concurrent_agents.insert(
+        QStringLiteral("models"),
+        QJsonObject{{QStringLiteral("codex"), QJsonArray{QStringLiteral("external")}}});
+    concurrent.insert(QStringLiteral("newAgent"), concurrent_agents);
+    static_cast<void>(write_config(QDir(directory.path()),
+                                   QJsonDocument(concurrent).toJson(QJsonDocument::Compact)));
     const auto set = [&config](const char* key, const QVariant& value) {
         require(config.setSetting(QString::fromLatin1(key), value), key);
     };
@@ -952,7 +967,7 @@ void settings_write_known_keys() {
     const auto expected = QJsonDocument::fromJson(R"({
         "keybindings": {"quit": ["Meta+Q"]},
         "custom": 1,
-        "newAgent": {"machines": {"box": {"folder": "~/w"}}, "models": {"codex": ["m1"]},
+        "newAgent": {"machines": {"box": {"folder": "~/w"}}, "models": {"codex": ["external"]},
                      "harness": "codex", "folder": "~/dev", "mode": "edits"},
         "nextPrompt": {"model": "x",
                        "providers": [{"name": "opus", "cli": "claude", "model": "claude-opus-5-5",
@@ -975,13 +990,17 @@ void settings_write_known_keys() {
         "alerts": {"finished": false},
         "keepAwake": false,
         "visual": {"theme": "tokyo-night", "font": "serif", "codeFont": "menlo", "size": 18,
-                   "all": true, "editor": "zed", "appearance": "dark",
+                   "all": true, "editor": "zed",
                    "darkTheme": "tokyo-night", "lightTheme": "claude-light",
                    "darkWindowTheme": "graphite", "lightWindowTheme": "daylight"},
         "version": 1
     })")
                               .object();
     require(read_config(path) == expected, "the saved file matches the golden file");
+    const auto merged_defaults = config.agentDefaults();
+    require(merged_defaults.models.value(QStringLiteral("codex")) ==
+                QStringList{QStringLiteral("external")},
+            "a merged section also updates the running configuration");
     require(config.agentDefaults().harness == QStringLiteral("codex") &&
                 config.agentDefaults().machineFolders.value(QStringLiteral("box")) ==
                     QStringLiteral("~/w") &&
@@ -1129,6 +1148,42 @@ void appearance_switches_kinds() {
                 mixed.themeName() == QStringLiteral("oled") &&
                 mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("claude-light"),
             "an older light thread in a dark window shows as it did");
+    require(mixed.save(), "rewriting an older mixed file succeeds");
+    saved = read_config(path);
+    visual = saved.value(QStringLiteral("visual")).toObject();
+    require(!visual.contains(QStringLiteral("appearance")) &&
+                saved.value(QStringLiteral("theme")) == QStringLiteral("oled") &&
+                visual.value(QStringLiteral("theme")) == QStringLiteral("claude-light"),
+            "an unchosen mode is not invented by a save");
+    Config legacy_reloaded;
+    legacy_reloaded.setSourcePathForTesting(path);
+    require(legacy_reloaded.load() && legacy_reloaded.themeName() == QStringLiteral("oled") &&
+                legacy_reloaded.visual().value(QStringLiteral("theme")) ==
+                    QStringLiteral("claude-light"),
+            "an older mixed appearance survives its own rewrite");
+    const auto daylight_path = write_config(QDir(directory.path()), R"({"theme":"daylight"})");
+    Config legacy_light_window;
+    legacy_light_window.setSourcePathForTesting(daylight_path);
+    require(legacy_light_window.load() &&
+                legacy_light_window.themeName() == QStringLiteral("daylight") &&
+                legacy_light_window.appearance() == QStringLiteral("dark"),
+            "an older light window with a dark thread shows as it did");
+    require(legacy_light_window.save() && legacy_light_window.load() &&
+                legacy_light_window.themeName() == QStringLiteral("daylight") &&
+                !read_config(daylight_path)
+                     .value(QStringLiteral("visual"))
+                     .toObject()
+                     .contains(QStringLiteral("appearance")),
+            "rewriting an older light window does not replace it");
+    require(legacy_light_window.setAppearance(QStringLiteral("dark")) &&
+                legacy_light_window.themeName() == QStringLiteral("lapis"),
+            "choosing the inferred mode applies it at once");
+    require(read_config(daylight_path)
+                    .value(QStringLiteral("visual"))
+                    .toObject()
+                    .value(QStringLiteral("appearance"))
+                    .toString() == QStringLiteral("dark"),
+            "the first explicit choice is saved");
     require(mixed.setAppearance(QStringLiteral("dark")) &&
                 mixed.themeName() == QStringLiteral("oled") &&
                 mixed.visual().value(QStringLiteral("theme")) == QStringLiteral("terminal"),

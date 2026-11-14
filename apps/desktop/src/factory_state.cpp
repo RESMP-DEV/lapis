@@ -33,15 +33,14 @@ State parse(const QByteArray& json) {
     if (error.error != QJsonParseError::NoError || !document.isObject())
         return state;
     const auto root = document.object();
-    if (root.contains(QStringLiteral("version")) &&
-        root.value(QStringLiteral("version")).toInt() != 1)
+    if (root.value(QStringLiteral("version")).toInt() != 1)
         return state;
     state.loaded = true;
     state.updated_at_ms = millis(root.value(QStringLiteral("updatedAtMs")));
     state.judge_model = line(root.value(QStringLiteral("judgeModel")), 80);
     const auto agents = root.value(QStringLiteral("agents")).toObject();
     for (auto it = agents.begin(); it != agents.end() && state.agents.size() < 1024; ++it) {
-        if (!it.value().isObject() || it.key().isEmpty() || it.key().size() > 64)
+        if (!it.value().isObject() || it.key().isEmpty() || it.key().toUtf8().size() > 64)
             continue;
         const auto entry = it.value().toObject();
         Verdict verdict;
@@ -54,7 +53,7 @@ State parse(const QByteArray& json) {
         verdict.reason = line(entry.value(QStringLiteral("reason")));
         verdict.receipt = line(entry.value(QStringLiteral("receipt")), 120);
         verdict.judged_at_ms = millis(entry.value(QStringLiteral("judgedAtMs")));
-        if (verdict.judged_at_ms == 0)
+        if (verdict.judged_at_ms == 0 && state.updated_at_ms > 0)
             verdict.judged_at_ms = state.updated_at_ms;
         state.agents.insert(it.key(), verdict);
     }
@@ -81,17 +80,19 @@ QString fallback_stage(const Live& live) {
         return QLatin1String(kInProgress);
     if (live.status_kind == QLatin1String("finished") ||
         live.status_kind == QLatin1String("idle")) {
-        const bool recent =
-            live.finished_at_ms > 0 && live.now_ms - live.finished_at_ms <= kLandedRecentMs;
-        // A finished turn with no recorded time ended in this run or just before it.
-        if (recent || (live.finished_at_ms == 0 && live.status_kind == QLatin1String("finished")))
+        const auto finished_at_ms =
+            live.finished_at_ms > 0 ? live.finished_at_ms : live.changed_at_ms;
+        const bool recent = finished_at_ms > 0 && live.now_ms >= finished_at_ms &&
+                            live.now_ms - finished_at_ms <= kLandedRecentMs;
+        if (recent)
             return QLatin1String(kLanded);
     }
     return QLatin1String(kIdleCull);
 }
 
 bool verdict_current(const Live& live, const Verdict& verdict) {
-    return live.changed_at_ms == 0 || live.changed_at_ms <= verdict.judged_at_ms;
+    return verdict.judged_at_ms > 0 &&
+           (live.changed_at_ms == 0 || live.changed_at_ms <= verdict.judged_at_ms);
 }
 
 QString stage(const Live& live, const Verdict* verdict) {
