@@ -38,9 +38,11 @@ window (under 860 pixels), or Command-B, hides the sidebar. The top of the
 window then holds one quiet line instead: a dot in the agent's category colour
 and the agent's title as its sidebar row names it (the category's name when no
 agent is open), muted, in the space above the stage. It is not a button and
-takes no clicks or keyboard; hovering it names the category. With the previews
-off as well and more than one agent in the category, a small agent selector at
-the line's right end picks the agent on the stage with the pointer. Commands still
+takes no clicks or keyboard; hovering it names the category. Hidden with
+Command-B the line holds no controls. Only when the window is too narrow for
+the sidebar, the previews are off and the category has more than one agent does
+a small agent selector at the line's right end pick the agent on the stage with
+the pointer. Commands still
 opens with its shortcut, and categories change with Command-1 to 9, the next
 and previous category shortcuts, the same entries in Commands, or by showing
 the sidebar again. Command-B (or the Settings switch) slides the sidebar in from

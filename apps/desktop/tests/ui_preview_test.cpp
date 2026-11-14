@@ -3674,16 +3674,27 @@ void check_hidden_sidebar_title(QQuickWindow& window, lapis::desktop::Workspace&
         }
     }
 
-    // Previews on, the strip picks agents and no selector shows; previews off
-    // too, an agent selector at the line's right end follows the focused
-    // agent and picks another, and the title never runs under it.
+    // Hidden by choice in a wide window the line has no controls, previews
+    // on or off. In a window too narrow for the sidebar with the previews
+    // off (nothing else on screen picks an agent), an agent selector at the
+    // line's right end follows the focused agent and picks another, and the
+    // title never runs under it.
     auto* selector = item(QStringLiteral("agentSelector"));
     const bool previews = config_model.previewsVisible();
-    CHECK(config_model.setPreviewsVisible(true));
-    pump(30);
-    CHECK(!selector->isVisible());
-    CHECK(config_model.setPreviewsVisible(false));
-    pump(30);
+    CHECK(!window.property("narrow").toBool());
+    for (const bool shown : {true, false}) {
+        CHECK(config_model.setPreviewsVisible(shown));
+        pump(30);
+        CHECK(!selector->isVisible());
+        CHECK(text->width() <= title->width() - 80);
+    }
+    if (!captures.isEmpty())
+        CHECK(window.grabWindow().save(
+            QDir(captures).filePath(QStringLiteral("hidden-sidebar-by-choice.png"))));
+    CHECK(agents.size() > 1); // the fixture's category has several agents
+    window.resize(640, old_size.height());
+    pump(120);
+    CHECK(window.property("narrow").toBool());
     if (agents.size() > 1) {
         CHECK(selector->isVisible());
         const auto index_of = [&](const QString& agent) {
@@ -3709,6 +3720,12 @@ void check_hidden_sidebar_title(QQuickWindow& window, lapis::desktop::Workspace&
         CHECK(workspace.selectAgent(id));
         pump(30);
     }
+    // The previews back on: the strip picks agents, so no selector.
+    CHECK(config_model.setPreviewsVisible(true));
+    pump(30);
+    CHECK(!selector->isVisible());
+    window.resize(old_size);
+    pump(80);
     CHECK(config_model.setPreviewsVisible(previews));
     pump(30);
 

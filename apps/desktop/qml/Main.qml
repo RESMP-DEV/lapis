@@ -3017,9 +3017,10 @@ ApplicationWindow {
     // top of the window names the agent on the stage, quietly: its
     // category's colour as a small mark, then the title its sidebar row
     // shows. Text in the gap above the stage, no bar or button: it takes no
-    // keyboard and no clicks, and hovering names the category. With the
-    // previews off too, nothing else on screen picks an agent, so a small
-    // agent selector sits at its right end.
+    // keyboard and no clicks, and hovering names the category. Hidden by
+    // choice (Command-B) the line has no controls at all. Only in a window too
+    // narrow for the sidebar, with the previews off too, nothing else on
+    // screen picks an agent, so a small agent selector sits at its right end.
     Item {
         id: stageTitle
         objectName: "stageTitle"
@@ -3065,7 +3066,7 @@ ApplicationWindow {
         ComboBox {
             id: agentSelector
             objectName: "agentSelector"
-            visible: !window.stripShown && workspace.categoryAgents.length > 1
+            visible: window.narrow && !window.stripShown && workspace.categoryAgents.length > 1
             enabled: window.interactionArmed || popup.visible
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
