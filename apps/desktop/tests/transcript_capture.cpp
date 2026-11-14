@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
@@ -719,8 +720,10 @@ int check_sent(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile
         const auto frame = view.grabWindow();
         check_rows(list, QString::fromLatin1(when), problems);
         if (!out.isEmpty())
-            (void)frame.save(
-                QStringLiteral("%1-%2.png").arg(out).arg(shot_number++, 2, 10, QLatin1Char('0')));
+            if (!frame.save(QStringLiteral("%1-%2.png")
+                                .arg(out)
+                                .arg(shot_number++, 2, 10, QLatin1Char('0'))))
+                problems.append(QStringLiteral("could not write frame %1").arg(shot_number));
     };
     QMetaObject::invokeMethod(list, "positionViewAtEnd");
     settle();
@@ -2026,6 +2029,11 @@ int bench_switch(QQuickView& view, TranscriptModel& model, QObject* list, const 
         };
         while (model.rowCount() == 0 && model.loading() && timer.elapsed() < 60000)
             pass();
+        if (model.loading()) {
+            std::fprintf(stderr, "switch: %s did not load in 60 s\n", qPrintable(path));
+            stale = true;
+            return;
+        }
         times.content = ms_of(timer);
         const auto draw = [&] {
             QMetaObject::invokeMethod(list, "forceLayout");
@@ -2290,6 +2298,8 @@ int run_capture(int argc, char** argv) {
             return 2;
         }
         model.setFormat(format);
+    } else if (sending) {
+        model.setFormat(lapis::desktop::transcript::format_of(parser.value("jsonl")));
     }
     if (!switching) {
         model.setPath(live_checks || sending ? live_file.fileName()
@@ -2478,6 +2488,11 @@ int run_capture(int argc, char** argv) {
                                                                  {"three quarters", rows * 3 / 4},
                                                                  {"last", -1}};
         const auto folder = parser.value("out-dir");
+        bool captures_written = true;
+        if (!folder.isEmpty() && !QFileInfo(folder).isDir()) {
+            std::fprintf(stderr, "could not write captures to %s\n", qPrintable(folder));
+            return 1;
+        }
         for (const auto& [name, row] : positions) {
             QElapsedTimer timer;
             timer.start();
@@ -2485,8 +2500,11 @@ int run_capture(int argc, char** argv) {
             std::printf("  screen %-15s row %6d  %5lld ms\n", name, row < 0 ? rows - 1 : row,
                         static_cast<long long>(timer.elapsed()));
             if (!folder.isEmpty())
-                (void)image.save(QDir(folder).filePath(
-                    QStringLiteral("%1.png").arg(QString::fromUtf8(name).replace(' ', '-'))));
+                if (!image.save(QDir(folder).filePath(
+                        QStringLiteral("%1.png").arg(QString::fromUtf8(name).replace(' ', '-'))))) {
+                    std::fprintf(stderr, "could not write capture %s\n", name);
+                    captures_written = false;
+                }
         }
         // Every "Worked for" row opened and folded again, a few spread out.
         std::vector<int> work_rows;
@@ -2518,7 +2536,7 @@ int run_capture(int argc, char** argv) {
             }
         }
         std::printf("problems %d\n", check.problems);
-        return check.problems == 0 ? 0 : 1;
+        return check.problems == 0 && captures_written ? 0 : 1;
     }
     if (parser.isSet("live")) {
         // What the running turn shows: its live box's steps, and compacting.

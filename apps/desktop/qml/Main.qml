@@ -943,11 +943,13 @@ ApplicationWindow {
         const agent = workspace.focusedAgent
         if (agent === null)
             return false
+        const choice = visualAgents[agent.agentId]
+        if (choice !== undefined)
+            return choice
         // The factory view's orchestrator always shows as its thread.
         if (factoryHomeShown && agent.agentId === factoryHomeId)
             return true
-        const choice = visualAgents[agent.agentId]
-        return choice === undefined ? visualAll : choice
+        return visualAll
     }
     // The file appears once the CLI saves its first message; until then the
     // check repeats while the thread is wanted. A Codex or Antigravity
@@ -1205,7 +1207,7 @@ ApplicationWindow {
             return
         }
         if (modifiers & Qt.ShiftModifier) {
-            const ids = stripIds()
+            const ids = sidebarIds()
             const from = Math.max(0, ids.indexOf(focused))
             const to = ids.indexOf(id)
             if (to >= 0) {
@@ -3298,11 +3300,14 @@ ApplicationWindow {
                     model: workspace.categories
                     textRole: "name"
                     font.pixelSize: window.chromeFont
-                    currentIndex: {
-                        const index = window.categoryIndex(workspace.activeCategoryId)
-                        if (index >= 0)
-                            return index
-                        return workspace.categories.length > 0 ? 0 : -1
+                    Binding on currentIndex {
+                        value: {
+                            const index = window.categoryIndex(workspace.activeCategoryId)
+                            if (index >= 0)
+                                return index
+                            return workspace.categories.length > 0 ? 0 : -1
+                        }
+                        restoreMode: Binding.RestoreBinding
                     }
                     onActivated: function(index) { window.selectCategoryByIndex(index) }
 
@@ -3399,6 +3404,28 @@ ApplicationWindow {
                         const limit = Math.max(120, window.height - 80)
                         if (categorySelector.popup.height > limit)
                             categorySelector.popup.height = limit
+                    }
+                }
+                ComboBox {
+                    id: agentSelector
+                    objectName: "agentSelector"
+                    visible: categoryBar.visible && !window.stripShown
+                    enabled: window.interactionArmed || popup.visible
+                    Layout.preferredWidth: 168
+                    Layout.maximumWidth: 168
+                    Layout.minimumWidth: 96
+                    implicitHeight: window.tabHeight
+                    model: visible ? workspace.categoryAgents : []
+                    textRole: "title"
+                    font.pixelSize: window.chromeFont
+                    onActivated: function(index) {
+                        const agent = model[index]
+                        if (agent && workspace.selectAgent(agent.agentId))
+                            app.deferTerminalFocus()
+                    }
+                    Binding on currentIndex {
+                        value: window.focusedTabIndex()
+                        restoreMode: Binding.RestoreBinding
                     }
                 }
                 CommandsButton {

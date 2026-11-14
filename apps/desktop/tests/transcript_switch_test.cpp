@@ -19,6 +19,7 @@
 #include <QThreadPool>
 #include <cstdint>
 #include <cstdio>
+#include <tuple>
 
 using lapis::desktop::TranscriptModel;
 using namespace lapis::desktop::transcript;
@@ -514,31 +515,34 @@ void view_switches() {
     const auto place = [&] {
         const auto y = list->property("contentY").toReal();
         int row = -1;
-        QMetaObject::invokeMethod(list, "indexAt", Q_RETURN_ARG(int, row),
-                                  Q_ARG(qreal, list->property("width").toReal() / 2),
-                                  Q_ARG(qreal, y + 1));
+        const bool row_found = QMetaObject::invokeMethod(
+            list, "indexAt", Q_RETURN_ARG(int, row),
+            Q_ARG(qreal, list->property("width").toReal() / 2), Q_ARG(qreal, y + 1));
         QQuickItem* item = nullptr;
-        QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, item),
-                                  Q_ARG(int, row));
-        return std::pair{row, item != nullptr ? y - item->y() : -1.0};
+        const bool item_found = QMetaObject::invokeMethod(
+            list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, item), Q_ARG(int, row));
+        const bool valid = row_found && item_found && row >= 0 && item != nullptr;
+        return std::tuple{row, valid ? y - item->y() : -1.0, valid};
     };
-    const auto left = place();
+    const auto [left_row, left_offset, left_valid] = place();
+    require(left_valid, "the first place names a visible row");
     model.setPath(b);
     settle();
     require(view.rootObject()->property("following").toBool() && at_end(),
             "another conversation opens at its end");
     model.setPath(a);
     settle();
-    const auto back = place();
-    if (back.first != left.first || std::abs(back.second - left.second) >= 1)
+    const auto [back_row, back_offset, back_valid] = place();
+    require(back_valid, "the restored place names a visible row");
+    if (back_row != left_row || std::abs(back_offset - left_offset) >= 1)
         std::fprintf(stderr,
                      "  left at row %d +%.1f, back at row %d +%.1f (view %s, following %d)\n",
-                     left.first, left.second, back.first, back.second,
+                     left_row, left_offset, back_row, back_offset,
                      qPrintable(QVariant(model.view()).toString() +
                                 QString::number(model.view().value("row").toInt())),
                      view.rootObject()->property("following").toBool());
-    require(!view.rootObject()->property("following").toBool() && back.first == left.first &&
-                std::abs(back.second - left.second) < 1,
+    require(!view.rootObject()->property("following").toBool() && back_row == left_row &&
+                std::abs(back_offset - left_offset) < 1,
             "the place scrolled to comes back");
 }
 } // namespace

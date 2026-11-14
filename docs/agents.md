@@ -86,10 +86,11 @@ turn ended, not that the task or the process did. Claude Code's idle reminder
 after a turn is not a request.
 
 A request (a permission prompt, a question) shows as **Needs your answer** with
-a diamond mark until it is resolved, and counts for Tab and the chime once, as a
-finished turn does. Answer it in the agent's terminal; lapis never changes
-a CLI's approval policy. **Requests** (and **Review requests** in Commands)
-lists what the agent is asking; opening or selecting one never approves it.
+a diamond mark until it is resolved. Tab can return to it until then, even after
+you view and leave the agent, while the chime sounds only when it first arrives.
+Answer it in the agent's terminal; lapis never changes a CLI's approval policy.
+**Requests** (and **Review requests** in Commands) lists what the agent is
+asking; opening or selecting one never approves it.
 
 A Claude agent gets one lapis hook per event, and it only reports: it never
 prints a decision or blocks a tool, so Claude Code's own permission rules and

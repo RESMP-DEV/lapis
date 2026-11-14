@@ -278,6 +278,7 @@ void parses_real_judge_output_schema() {
     require(cull.stage == QStringLiteral("idle_cull") && !cull.keep_needed &&
                 cull.judged_at_ms == 1794466793000,
             "a safe-to-close verdict");
+    require(!factory::parse(R"({"agents":{}})").loaded, "the judge's state must say its version");
 }
 
 // A fixture workspace: verdicts from the file, live overrides, the orchestrator.

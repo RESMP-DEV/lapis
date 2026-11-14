@@ -76,9 +76,9 @@ qint64 antigravityStart(const QString& conversation) {
 QList<Started> codexStarted(const QString& folder, qint64 since_ms) {
     const QDir sessions(codex_home() + QStringLiteral("/sessions"));
     const auto first_day = QDateTime::fromMSecsSinceEpoch(since_ms).date();
+    const auto today = QDateTime::currentDateTime().date();
     QList<Started> found;
-    for (auto day = QDateTime::currentDateTime().date();
-         day >= first_day && first_day.daysTo(day) <= 7; day = day.addDays(-1)) {
+    for (auto day = today; day >= first_day && day.daysTo(today) <= 7; day = day.addDays(-1)) {
         // A thread started just after midnight UTC may sit in either
         // neighbouring folder, so the start day counts.
         const QDir folder_of_day(sessions.filePath(day.toString(QStringLiteral("yyyy/MM/dd"))));

@@ -99,6 +99,7 @@ Dialog {
     function showSection(id) {
         search.text = ""
         currentSection = id
+        sectionList.currentIndex = Math.max(0, sections.findIndex(section => section.id === id))
         settingsFlick.contentY = 0
     }
     function resetSection() {

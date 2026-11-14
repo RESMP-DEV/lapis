@@ -33,8 +33,7 @@ State parse(const QByteArray& json) {
     if (error.error != QJsonParseError::NoError || !document.isObject())
         return state;
     const auto root = document.object();
-    if (root.contains(QStringLiteral("version")) &&
-        root.value(QStringLiteral("version")).toInt() != 1)
+    if (root.value(QStringLiteral("version")).toInt() != 1)
         return state;
     state.loaded = true;
     state.updated_at_ms = millis(root.value(QStringLiteral("updatedAtMs")));

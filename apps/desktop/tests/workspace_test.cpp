@@ -6856,7 +6856,9 @@ class FakeServices {
         const auto process = processes_.take(id);
         if (!process)
             return;
-        ::kill(-static_cast<pid_t>(process->processId()), SIGKILL);
+        const qint64 pid = process->processId();
+        if (pid > 0)
+            ::kill(-static_cast<pid_t>(pid), SIGKILL);
         process->waitForFinished(5000);
     }
 

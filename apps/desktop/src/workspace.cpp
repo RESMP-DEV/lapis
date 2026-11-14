@@ -2273,11 +2273,11 @@ QString Workspace::knownConversationFile(const QString& id) {
             return path;
         const auto now = QDateTime::currentMSecsSinceEpoch();
         const auto searched = claude_searched_.value(conversation, -1);
-        path = claudeTranscript(conversation, entry->launch.directory,
-                                searched < 0 || now - searched > 30'000);
-        if (path.isEmpty())
+        const bool broad_search = searched < 0 || now - searched > 30'000;
+        path = claudeTranscript(conversation, entry->launch.directory, broad_search);
+        if (broad_search)
             claude_searched_.insert(conversation, now);
-        else
+        if (!path.isEmpty())
             claude_paths_.insert(conversation, path);
         return path;
     }

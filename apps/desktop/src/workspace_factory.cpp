@@ -10,6 +10,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <limits>
 
 namespace lapis::desktop {
 namespace {
@@ -31,6 +32,8 @@ void Workspace::setupFactory() {
     factory_publish_.setSingleShot(true);
     factory_publish_.setInterval(0);
     connect(&factory_publish_, &QTimer::timeout, this, &Workspace::publishFactory);
+    factory_expiry_.setSingleShot(true);
+    connect(&factory_expiry_, &QTimer::timeout, this, &Workspace::scheduleFactory);
     connect(this, &Workspace::agentsChanged, this, &Workspace::scheduleFactory);
     connect(this, &Workspace::categoriesChanged, this, &Workspace::scheduleFactory);
     connect(this, &Workspace::focusChanged, this, &Workspace::scheduleFactory);
@@ -39,6 +42,7 @@ void Workspace::setupFactory() {
 void Workspace::watchFactory(Agent* item) {
     const auto id = item->agentId();
     factory_kind_.insert(id, item->statusKind());
+    factory_attention_pending_.insert(id, item->attentionPending());
     const auto note = [this, item] {
         const auto& agent_id = item->agentId();
         const auto kind = item->statusKind();
@@ -55,10 +59,21 @@ void Workspace::watchFactory(Agent* item) {
     connect(item, &Agent::statusChanged, this, note);
     // A new request always counts as a change, whatever the status was.
     connect(item, &Agent::attentionArrived, this, [this, item] {
-        factory_changed_at_.insert(item->agentId(), QDateTime::currentMSecsSinceEpoch());
+        const auto& id = item->agentId();
+        factory_changed_at_.insert(id, QDateTime::currentMSecsSinceEpoch());
+        factory_attention_pending_.insert(id, true);
         scheduleFactory();
     });
-    connect(item, &Agent::attentionChanged, this, &Workspace::scheduleFactory);
+    connect(item, &Agent::attentionChanged, this, [this, item] {
+        const auto& id = item->agentId();
+        const bool pending = item->attentionPending();
+        // A request that is resolved changes what a verdict must describe,
+        // even when the settled status kind stays the same.
+        if (factory_attention_pending_.value(id, false) && !pending)
+            factory_changed_at_.insert(id, QDateTime::currentMSecsSinceEpoch());
+        factory_attention_pending_.insert(id, pending);
+        scheduleFactory();
+    });
     connect(item, &Agent::identityChanged, this, &Workspace::scheduleFactory);
 }
 
@@ -256,6 +271,7 @@ void Workspace::rebuildFactory() const {
     int counts[4] = {0, 0, 0, 0};
     int safe = 0;
     std::size_t order = 0;
+    qint64 next_expiry = std::numeric_limits<qint64>::max();
     // The sidebar's order: each category's agents in turn.
     for (const auto& category : categories_) {
         for (const auto& item : items_) {
@@ -263,9 +279,13 @@ void Workspace::rebuildFactory() const {
             const auto entry = agents_.constFind(id);
             if (entry == agents_.cend() || entry->category != category.id || item.get() == home)
                 continue;
+            const auto turn_starts = turn_starts_.value(id);
+            const qint64 changed_at =
+                std::max(factory_changed_at_.value(id),
+                         turn_starts.empty() ? qint64{0} : turn_starts.back());
             const factory::Live live{.status_kind = item->statusKind(),
                                      .attention_pending = item->attentionPending(),
-                                     .changed_at_ms = factory_changed_at_.value(id),
+                                     .changed_at_ms = changed_at,
                                      .finished_at_ms = waiting_since_.value(id, item->neededAtMs()),
                                      .now_ms = now};
             const auto verdict = factory_state_.agents.constFind(id);
@@ -278,6 +298,12 @@ void Workspace::rebuildFactory() const {
             // on a running one, is stale).
             const bool current = judged != nullptr && factory::verdict_current(live, *judged) &&
                                  judged->stage == stage;
+            if (stage == QLatin1String(factory::kLanded) && !current) {
+                const qint64 expiry =
+                    live.finished_at_ms > 0 ? live.finished_at_ms + factory::kLandedRecentMs : 0;
+                if (expiry > 0)
+                    next_expiry = std::min(next_expiry, expiry);
+            }
             // Unjudged or stale: keep it, since nothing says it can go.
             const bool keep = current ? judged->keep_needed : true;
             const auto ids = item->attentionRequestIds();
@@ -325,6 +351,14 @@ void Workspace::rebuildFactory() const {
                                                {"firstToken", token}}});
             rows.push_back({rank, closable, order++, std::move(map)});
         }
+    }
+    if (next_expiry == std::numeric_limits<qint64>::max()) {
+        factory_expiry_.stop();
+    } else if (next_expiry <= now) {
+        factory_expiry_.start(0);
+    } else {
+        const qint64 delay = std::min<qint64>(next_expiry - now, std::numeric_limits<int>::max());
+        factory_expiry_.start(static_cast<int>(delay));
     }
     std::stable_sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
         if (a.rank != b.rank)

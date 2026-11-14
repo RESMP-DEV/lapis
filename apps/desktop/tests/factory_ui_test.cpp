@@ -447,8 +447,14 @@ int run(const QString& captures) {
             "run the palette command");
     until([&] { return window->property("factoryMode").toBool(); }, "the palette turns it on");
     if (window->isActive()) {
-        QKeyEvent press(QEvent::KeyPress, Qt::Key_F, Qt::MetaModifier | Qt::ShiftModifier);
-        QKeyEvent release(QEvent::KeyRelease, Qt::Key_F, Qt::MetaModifier | Qt::ShiftModifier);
+#ifdef Q_OS_MACOS
+        const Qt::KeyboardModifiers command = Qt::MetaModifier;
+#else
+        const Qt::KeyboardModifiers command = Qt::ControlModifier;
+#endif
+        const Qt::KeyboardModifiers chord = command | Qt::ShiftModifier;
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_F, chord);
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_F, chord);
         QCoreApplication::sendEvent(window, &press);
         QCoreApplication::sendEvent(window, &release);
         until([&] { return !window->property("factoryMode").toBool(); },

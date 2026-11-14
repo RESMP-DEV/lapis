@@ -343,9 +343,11 @@ class Config final : public QObject {
     void choose_kind(bool light);
     void follow_system_appearance();
     // The sections setSetting edits, as last read, and the ones it changed
-    // since the last save: only those are written back.
+    // since the last save. Pending edits are key-granular so a save preserves
+    // concurrent changes to other keys in the same section.
     QJsonObject sections_;
     QSet<QString> touched_;
+    QHash<QString, QSet<QString>> touched_keys_;
     void parse_sections();
     AgentDefaults agent_defaults_;
     NextPromptSettings next_prompt_;

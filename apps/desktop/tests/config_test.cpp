@@ -580,6 +580,13 @@ void harness_updates_can_be_turned_off() {
             "a non-boolean entry is reported");
     require(config.diagnostic().contains(QStringLiteral("at least one and at most 32 characters")),
             "an empty harness name is reported");
+    require(config.setSetting(QStringLiteral("harnessUpdates.omp"), true),
+            "a normalized CLI name can be enabled");
+    const auto saved_updates = read_config(path).value(QStringLiteral("harnessUpdates")).toObject();
+    bool omp_saved = false;
+    for (auto it = saved_updates.begin(); it != saved_updates.end(); ++it)
+        omp_saved = omp_saved || it.key().compare(QStringLiteral("omp"), Qt::CaseInsensitive) == 0;
+    require(!omp_saved, "enabling removes its differently-cased key");
     const QString defaults = write_config(QDir(directory.path()), R"({"theme": "oled"})");
     config.setSourcePathForTesting(defaults);
     require(config.load() && config.harnessUpdatesOff().isEmpty(), "every CLI updates by default");
@@ -902,6 +909,12 @@ void settings_write_known_keys() {
     config.setSourcePathForTesting(path);
     config.setSystemDark(true);
     require(config.load(), "golden fixture loads");
+    auto concurrent = read_config(path);
+    auto concurrent_agents = concurrent.value(QStringLiteral("newAgent")).toObject();
+    concurrent_agents.insert(QStringLiteral("models"), QJsonArray{QStringLiteral("external")});
+    concurrent.insert(QStringLiteral("newAgent"), concurrent_agents);
+    static_cast<void>(write_config(QDir(directory.path()),
+                                   QJsonDocument(concurrent).toJson(QJsonDocument::Compact)));
     const auto set = [&config](const char* key, const QVariant& value) {
         require(config.setSetting(QString::fromLatin1(key), value), key);
     };
@@ -929,7 +942,7 @@ void settings_write_known_keys() {
     const auto expected = QJsonDocument::fromJson(R"({
         "keybindings": {"quit": ["Meta+Q"]},
         "custom": 1,
-        "newAgent": {"machines": {"box": {"folder": "~/w"}}, "models": {"codex": ["m1"]},
+        "newAgent": {"machines": {"box": {"folder": "~/w"}}, "models": ["external"],
                      "harness": "codex", "folder": "~/dev", "mode": "edits"},
         "nextPrompt": {"model": "x", "providers": [], "auto": true},
         "harnessUpdates": {"omp": false},

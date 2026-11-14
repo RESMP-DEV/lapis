@@ -163,7 +163,7 @@ FocusScope {
     property int sendCheckMs: 1500 // shorter in the scripted checks
     Timer { id: sendCheck; interval: root.sendCheckMs; onTriggered: root.checkSent() }
     // An agent that never reports working leaves the starting state.
-    Timer { interval: 20000; running: root.sentAt > 0; onTriggered: root.sentAt = 0 }
+    Timer { id: sentTimeout; interval: 20000; onTriggered: root.sentAt = 0 }
     Timer {
         id: unsentCheck
         interval: 60000
@@ -2870,8 +2870,10 @@ FocusScope {
             // checked for having been taken.
             if (command.length === 0 && root.model) {
                 root.model.noteSent(text, working)
-                if (!working)
+                if (!working) {
                     root.sentAt = Date.now()
+                    sentTimeout.restart()
+                }
                 root.checkingText = text
                 root.retried = false
                 root.unsentText = ""
