@@ -260,13 +260,12 @@ void write_resume_record(const QString& endpoint, const ResumeRecord& record) {
         throw std::invalid_argument("Invalid resume record");
     if (!safe_existing(path))
         throw std::runtime_error("Unsafe resume record");
-    const QJsonObject object{
-        {"version", 2},
-        {"agent", record.agent},
-        {"session_id", record.session_id},
-        {"source", record.source == ResumeSource::observer  ? "observer"
-                   : record.source == ResumeSource::relayed ? "relayed"
-                                                            : "terminal"}};
+    const QJsonObject object{{"version", 2},
+                             {"agent", record.agent},
+                             {"session_id", record.session_id},
+                             {"source", record.source == ResumeSource::observer  ? "observer"
+                                        : record.source == ResumeSource::relayed ? "relayed"
+                                                                                 : "terminal"}};
     QString error;
     if (!posix::write_private_file(path, QJsonDocument(object).toJson(QJsonDocument::Compact),
                                    &error))

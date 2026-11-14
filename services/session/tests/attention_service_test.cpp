@@ -437,9 +437,8 @@ void remote_claude_sessions_are_recorded_as_relayed() {
     SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
     const QByteArray nonce("0123456789abcdef0123456789abcdef");
     const auto frame = [&nonce](const char* event, const QString& session) {
-        const QJsonObject source{{"hook_event_name", event},
-                                 {"session_id", session},
-                                 {"source", "startup"}};
+        const QJsonObject source{
+            {"hook_event_name", event}, {"session_id", session}, {"source", "startup"}};
         return "\x1b]7717;lapis-event;" + nonce + ";" +
                QJsonDocument(source).toJson(QJsonDocument::Compact).toBase64() + "\x07";
     };

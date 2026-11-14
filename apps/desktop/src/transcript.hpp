@@ -245,8 +245,7 @@ inline constexpr int expanded_finished_turns = 1;
 // is held (Turn::held; `request_waiting`: a request waits in the terminal,
 // which holds the last turn). Prompts the person queued in it still show.
 [[nodiscard]] Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled,
-                             bool live = false,
-                             int expand_from = std::numeric_limits<int>::max(),
+                             bool live = false, int expand_from = std::numeric_limits<int>::max(),
                              const QSet<int>& peers_open = {}, bool request_waiting = false);
 // The first item whose parts open by default (expanded_finished_turns): the
 // start of the oldest such finished turn, or 0 when there are fewer. Peer
@@ -1310,7 +1309,7 @@ class TranscriptModel final : public QAbstractListModel {
     // The rows `reader` gives with the shown conversation's open turns and
     // peers (layoutNow lays out reader_).
     [[nodiscard]] transcript::Layout layoutOf(const transcript::Reader& reader) const;
-    QSet<QString> loads_;      // conversations a thread is reading
+    QSet<QString> loads_;       // conversations a thread is reading
     QStringList warm_queue_;    // to read ahead, in order
     bool warming_{};            // a read-ahead or catch-up is running
     bool tail_{};               // reader_ holds only the file's end

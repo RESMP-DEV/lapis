@@ -465,14 +465,14 @@ void input_boxes_are_read() {
          QStringLiteral("fix the test\nand the docs")},
         {"agy text returned to its box, between rules",
          Format::antigravity,
-         {QStringLiteral("> count to twenty"), QStringLiteral("Interrupted · What should "
-                                                              "Antigravity CLI do instead?"),
+         {QStringLiteral("> count to twenty"),
+          QStringLiteral("Interrupted · What should "
+                         "Antigravity CLI do instead?"),
           rule, QStringLiteral("> first queued"), QStringLiteral("  second queued"), rule},
          QStringLiteral("first queued\nsecond queued")},
         {"agy empty box with a queued line above it",
          Format::antigravity,
-         {QStringLiteral("▸ say ok (alt+m to send immediately)"), rule, QStringLiteral(">"),
-          rule},
+         {QStringLiteral("▸ say ok (alt+m to send immediately)"), rule, QStringLiteral(">"), rule},
          {}},
         {"no box on the screen", Format::codex, {QStringLiteral("plain output")}, {}},
     };
@@ -525,8 +525,9 @@ void startup_screens_are_not_the_input_box() {
          false},
         {"Codex ready",
          Format::codex,
-         {QStringLiteral(">_ OpenAI Codex"), QString(), QStringLiteral("› Ask Codex to do anything"),
-          QString(), QStringLiteral("  ? for shortcuts")},
+         {QStringLiteral(">_ OpenAI Codex"), QString(),
+          QStringLiteral("› Ask Codex to do anything"), QString(),
+          QStringLiteral("  ? for shortcuts")},
          true,
          false},
         {"Codex folder trust",
@@ -600,11 +601,13 @@ void real_input_boxes_are_read() {
         QString held;
     };
     const std::vector<Case> cases{
-        {"Codex idle, placeholder faded", Format::codex,
+        {"Codex idle, placeholder faded",
+         Format::codex,
          bottom({QStringLiteral("  Tip: Paste an image to attach it to your next message."),
                  QString(), faded_box, QString(), status, hint}),
          {}},
-        {"Codex idle, placeholder as text", Format::codex,
+        {"Codex idle, placeholder as text",
+         Format::codex,
          bottom({QStringLiteral("› Ask Codex to do anything"), QString(), status, hint}),
          {}},
         {"Codex one-line draft", Format::codex,
@@ -622,7 +625,8 @@ void real_input_boxes_are_read() {
          bottom({QStringLiteral("› say ok"), QString(), QStringLiteral("  Model low fast"),
                  draft_hint}),
          QStringLiteral("say ok")},
-        {"Codex mid-turn, steer waiting, box faded", Format::codex,
+        {"Codex mid-turn, steer waiting, box faded",
+         Format::codex,
          bottom({QStringLiteral("  Run the shell command sleep 15, then reply with the one word "
                                 "done."),
                  QString(),
@@ -631,37 +635,43 @@ void real_input_boxes_are_read() {
                  QString(),
                  QStringLiteral("• Messages to be submitted after next tool call (press esc to "
                                 "interrupt and send immediately)"),
-                 QStringLiteral("  ↳ steer word apple"), QString(), QString(), faded_box,
-                 QString(), status, hint}),
+                 QStringLiteral("  ↳ steer word apple"), QString(), QString(), faded_box, QString(),
+                 status, hint}),
          {}},
         {"Codex after Escape gave a queued message back", Format::codex,
          bottom({QStringLiteral("■ Conversation interrupted - tell the model what to do "
                                 "differently."),
                  QString(), QStringLiteral("› queued word cherry"), QString(), status, draft_hint}),
          QStringLiteral("queued word cherry")},
-        {"agy idle, Auto mode placeholder", Format::antigravity,
+        {"agy idle, Auto mode placeholder",
+         Format::antigravity,
          top({QStringLiteral("  Antigravity CLI 1.5.7"), QString(), wide,
               QStringLiteral("> Auto mode: edits & safe commands auto-approved (shift+tab to "
                              "cycle)"),
               wide, agy_footer}),
          {}},
-        {"agy placeholder on a full screen", Format::antigravity,
+        {"agy placeholder on a full screen",
+         Format::antigravity,
          bottom({QStringLiteral("  done grape"), QString(), wide,
                  QStringLiteral("> Auto mode: edits & safe commands auto-approved (shift+tab to "
                                 "cycle)"),
                  wide, agy_footer}),
          {}},
-        {"agy idle, Plan mode placeholder", Format::antigravity,
+        {"agy idle, Plan mode placeholder",
+         Format::antigravity,
          top({wide, QStringLiteral("> Plan mode: research & plan only (shift+tab to cycle)"), wide,
               agy_footer}),
          {}},
-        {"agy idle, Accept-edits mode placeholder", Format::antigravity,
+        {"agy idle, Accept-edits mode placeholder",
+         Format::antigravity,
          top({wide,
               QStringLiteral("> Accept-edits mode: file edits auto-approved (shift+tab to cycle)"),
               wide, agy_footer}),
          {}},
-        {"agy idle, Default mode: an empty box", Format::antigravity,
-         top({wide, QStringLiteral(">"), wide, agy_footer}), {}},
+        {"agy idle, Default mode: an empty box",
+         Format::antigravity,
+         top({wide, QStringLiteral(">"), wide, agy_footer}),
+         {}},
         {"agy one-line draft", Format::antigravity,
          top({wide, QStringLiteral("> say ok"), wide, agy_footer}), QStringLiteral("say ok")},
         {"agy three-line draft", Format::antigravity,
@@ -672,7 +682,8 @@ void real_input_boxes_are_read() {
          top({wide, QStringLiteral("> para one"), QString(), QStringLiteral("  para two"), wide,
               agy_footer}),
          QStringLiteral("para one\n\npara two")},
-        {"agy mid-turn", Format::antigravity,
+        {"agy mid-turn",
+         Format::antigravity,
          top({narrow,
               QStringLiteral("> Run the shell command sleep 15, then reply with the one word "
                              "done."),
@@ -680,7 +691,8 @@ void real_input_boxes_are_read() {
               QStringLiteral("⣟  Running command..."), wide, QStringLiteral(">"), wide,
               QStringLiteral("esc to cancel")}),
          {}},
-        {"agy mid-turn with a queued message", Format::antigravity,
+        {"agy mid-turn with a queued message",
+         Format::antigravity,
          top({narrow, QStringLiteral("> Run the shell command sleep 15."), QString(),
               QStringLiteral("○ Bash(sleep 15) (ctrl+o to expand)"),
               QStringLiteral("⡿  Running command..."),
@@ -693,7 +705,8 @@ void real_input_boxes_are_read() {
               QStringLiteral("  ⎿  Interrupted · What should Antigravity CLI do instead?"), wide,
               QStringLiteral("> first queued"), QStringLiteral("  second queued"), wide}),
          QStringLiteral("first queued\nsecond queued")},
-        {"agy with no box showing, only an echoed prompt", Format::antigravity,
+        {"agy with no box showing, only an echoed prompt",
+         Format::antigravity,
          top({narrow, QStringLiteral("> say ok"), QString(),
               QStringLiteral("● Bash(sleep 15) (ctrl+o to expand)")}),
          {}},
@@ -711,8 +724,8 @@ void real_input_boxes_are_read() {
         top({QStringLiteral("❯ Run the shell command sleep 15, then reply with the one word done."),
              QString(), QStringLiteral("❯ reply also with the word kiwi"),
              QStringLiteral("  ctrl+x ctrl+s to send now"), QString(),
-             QStringLiteral("✻ Fermenting… (1s · thinking)"), QString(), wide,
-             QStringLiteral("❯ "), wide, QStringLiteral("  Model · ~/project"),
+             QStringLiteral("✻ Fermenting… (1s · thinking)"), QString(), wide, QStringLiteral("❯ "),
+             wide, QStringLiteral("  Model · ~/project"),
              QStringLiteral("  ⏵⏵ bypass permissions on (shift+tab to cycle)")});
     const auto claude_draft =
         top({wide, QStringLiteral("❯ say ok"), QStringLiteral("  second line"), wide,
@@ -832,12 +845,13 @@ void queue_modes_follow_settings() {
     require(model.queueMode() == "queue", "no conversation: Claude Code's");
     qputenv("HOME", saved);
 
-    require(efforts(QStringLiteral("agy")) ==
-                    QStringList{QStringLiteral("low"), QStringLiteral("medium"),
-                                QStringLiteral("high")} &&
-                efforts(QStringLiteral("claude")).size() == 5 &&
-                efforts(QStringLiteral("codex")).isEmpty(),
-            "the fallback when a listing gives none: agy low to high, Claude Code five, Codex none");
+    require(
+        efforts(QStringLiteral("agy")) == QStringList{QStringLiteral("low"),
+                                                      QStringLiteral("medium"),
+                                                      QStringLiteral("high")} &&
+            efforts(QStringLiteral("claude")).size() == 5 &&
+            efforts(QStringLiteral("codex")).isEmpty(),
+        "the fallback when a listing gives none: agy low to high, Claude Code five, Codex none");
 }
 
 // A model or effort picked in the bar shows at once, before any record:
@@ -990,37 +1004,37 @@ void started_model_shows_first() {
     using lapis::desktop::transcript::screen_model;
 
     // Start screens.
-    const auto claude_screen = screen_model(
-        {QStringLiteral("╭─── Claude Code v2.1.319 ───────────────────────╮"),
-         QStringLiteral("│                 Welcome back!                  │"),
-         QStringLiteral("│   Opus 5.5 (1M context) · Claude Max           │"),
-         QStringLiteral("│   ~/work/project                               │")},
-        Format::claude);
+    const auto claude_screen =
+        screen_model({QStringLiteral("╭─── Claude Code v2.1.319 ───────────────────────╮"),
+                      QStringLiteral("│                 Welcome back!                  │"),
+                      QStringLiteral("│   Opus 5.5 (1M context) · Claude Max           │"),
+                      QStringLiteral("│   ~/work/project                               │")},
+                     Format::claude);
     require(claude_screen.model == QStringLiteral("claude-opus-5-5[1m]") &&
                 claude_screen.effort.isEmpty(),
             "Claude Code's welcome box names its model");
     require(screen_model({QStringLiteral("│ Sonnet 5.5 · API Usage Billing │")}, Format::claude)
                     .model == QStringLiteral("claude-sonnet-5-5"),
             "Claude Code on an API key");
-    require(screen_model({QStringLiteral("  Read 3 files · 2 edits")}, Format::claude)
-                .model.isEmpty(),
-            "a line with a dot that names no model is not read");
-    const auto codex_screen = screen_model(
-        {QStringLiteral("╭───────────────────────────────────────────────╮"),
-         QStringLiteral("│ >_ OpenAI Codex (v0.157.1)                    │"),
-         QStringLiteral("│                                               │"),
-         QStringLiteral("│ model:     gpt-6-codex high   /model to change │"),
-         QStringLiteral("│ directory: ~/work/project                     │")},
-        Format::codex);
+    require(
+        screen_model({QStringLiteral("  Read 3 files · 2 edits")}, Format::claude).model.isEmpty(),
+        "a line with a dot that names no model is not read");
+    const auto codex_screen =
+        screen_model({QStringLiteral("╭───────────────────────────────────────────────╮"),
+                      QStringLiteral("│ >_ OpenAI Codex (v0.157.1)                    │"),
+                      QStringLiteral("│                                               │"),
+                      QStringLiteral("│ model:     gpt-6-codex high   /model to change │"),
+                      QStringLiteral("│ directory: ~/work/project                     │")},
+                     Format::codex);
     require(codex_screen.model == QStringLiteral("gpt-6-codex") &&
                 codex_screen.effort == QStringLiteral("high"),
             "Codex's header names its model and level");
-    require(screen_model({QStringLiteral("│ model: gpt-6-codex │")}, Format::codex)
-                .effort.isEmpty(),
-            "a header without a level");
-    require(screen_model({QStringLiteral("model: gpt-6-codex")}, Format::antigravity)
-                .model.isEmpty(),
-            "agy's screen is not read for it");
+    require(
+        screen_model({QStringLiteral("│ model: gpt-6-codex │")}, Format::codex).effort.isEmpty(),
+        "a header without a level");
+    require(
+        screen_model({QStringLiteral("model: gpt-6-codex")}, Format::antigravity).model.isEmpty(),
+        "agy's screen is not read for it");
 
     // The same model by another name.
     require(same_model(QStringLiteral("opus"), QStringLiteral("claude-opus-5-5"),
@@ -1103,8 +1117,7 @@ void started_model_shows_first() {
                 model.shownEffort() == QStringLiteral("high"),
             "its start screen beats the listed default");
     model.readStartScreen({QStringLiteral("│ model:     gpt-6-sol low   /model to change │")});
-    require(changes == 1 && model.shownModel() == QStringLiteral("gpt-6-codex"),
-            "read once");
+    require(changes == 1 && model.shownModel() == QStringLiteral("gpt-6-codex"), "read once");
 
     // A pick before the file exists: shown pending, kept by agent, carried
     // into the file when it shows, where the reply settles it.
@@ -1768,13 +1781,11 @@ void older_turns_start_folded() {
                    R"(","message":{"content":"Turn"}})"
                    "\n"
                    R"({"type":"assistant","uuid":"a)" +
-                   id +
-                   R"(","message":{"content":[{"type":"tool_use","id":"t)" + id +
+                   id + R"(","message":{"content":[{"type":"tool_use","id":"t)" + id +
                    R"(","name":"Bash","input":{"command":"make"}}]}})"
                    "\n"
                    R"({"type":"user","uuid":"r)" +
-                   id +
-                   R"(","message":{"content":[{"type":"tool_result","tool_use_id":"t)" + id +
+                   id + R"(","message":{"content":[{"type":"tool_result","tool_use_id":"t)" + id +
                    R"(","content":"ok"}]}})"
                    "\n"
                    R"({"type":"assistant","uuid":"b)" +
@@ -2755,9 +2766,9 @@ void peer_turns_fold() {
     require(model.rowCount() == 11 && kind(4) == QStringLiteral("peer") &&
                 role(4, TranscriptModel::ExpandedRole).toBool() &&
                 kind(5) == QStringLiteral("prompt") &&
-                !role(5, TranscriptModel::PeerRole).isNull() &&
-                kind(6) == QStringLiteral("work") && kind(7) == QStringLiteral("tool") &&
-                kind(8) == QStringLiteral("reply") && kind(9) == QStringLiteral("peer"),
+                !role(5, TranscriptModel::PeerRole).isNull() && kind(6) == QStringLiteral("work") &&
+                kind(7) == QStringLiteral("tool") && kind(8) == QStringLiteral("reply") &&
+                kind(9) == QStringLiteral("peer"),
             "clicking a peer row shows the whole exchange under it");
     require(model.personAnchor() == -1, "an opened exchange is not folded traffic");
     model.togglePeer(4);
@@ -2783,13 +2794,11 @@ void peer_turns_fold() {
     model.readMore();
     model.setLive(true);
     const auto& steps = *qobject_cast<lapis::desktop::LiveStepsModel*>(model.liveSteps());
-    require(model.rowCount() == 8 && kind(7) == QStringLiteral("peer") &&
-                role(7, TranscriptModel::PeerRole)
-                    .toMap()
-                    .value(QStringLiteral("working"))
-                    .toBool() &&
-                role(7, TranscriptModel::BodyRole).toString().isEmpty() && !steps.active(),
-            "a running peer turn is its row, working");
+    require(
+        model.rowCount() == 8 && kind(7) == QStringLiteral("peer") &&
+            role(7, TranscriptModel::PeerRole).toMap().value(QStringLiteral("working")).toBool() &&
+            role(7, TranscriptModel::BodyRole).toString().isEmpty() && !steps.active(),
+        "a running peer turn is its row, working");
     require(model.personAnchor() == 3, "a running peer turn keeps the anchor");
     model.togglePeer(7);
     require(kind(8) == QStringLiteral("prompt") && kind(9) == QStringLiteral("live") &&

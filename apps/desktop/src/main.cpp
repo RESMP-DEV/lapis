@@ -610,7 +610,8 @@ QObject* keep_next_prompt(std::optional<lapis::desktop::NextPrompt>& kept,
                 // removes them before the line reaches the model.
                 agents.append(QJsonObject{
                     {QStringLiteral("title"), item->title()},
-                    {QStringLiteral("category"), place.value(QStringLiteral("category")).toString()},
+                    {QStringLiteral("category"),
+                     place.value(QStringLiteral("category")).toString()},
                     {QStringLiteral("status"), item->statusLabel()},
                     {QStringLiteral("waiting"), item->unseen() || item->attentionPending()},
                     {QStringLiteral("machine"), machine},

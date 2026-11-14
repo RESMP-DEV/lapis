@@ -296,8 +296,7 @@ void cold_conversation_shows_its_end() {
             "the end shown first is the end of the whole thread");
     const auto all = read_file(big, Format::claude);
     // The latest finished turn shows its steps, as when read whole at once.
-    const int open_from =
-        lapis::desktop::transcript::expand_from(lay_out(all.reader->items(), {}));
+    const int open_from = lapis::desktop::transcript::expand_from(lay_out(all.reader->items(), {}));
     const auto whole_rows = lay_out(all.reader->items(), {}, false, open_from).rows.size();
     require(model.rowCount() == static_cast<int>(whole_rows) &&
                 model.items().size() == all.reader->items().size(),
@@ -515,18 +514,16 @@ void blank_threads_wait_for_their_file() {
     model.setShown(shown("d", "claude", QString()));
     model.noteSent(QStringLiteral("Hello there, read the README"), false);
     model.noteSent(QStringLiteral("And then the tests"), true);
-    const auto first = write(
-        directory, QStringLiteral("d.jsonl"),
-        R"({"type":"user","uuid":"d-1","message":{"content":"Hello there, read the README"}})"
-        "\n");
+    const auto first =
+        write(directory, QStringLiteral("d.jsonl"),
+              R"({"type":"user","uuid":"d-1","message":{"content":"Hello there, read the README"}})"
+              "\n");
     model.setShown(shown("d", "claude", first));
-    require(model.path() == first && model.rowCount() > 0,
-            "the file takes over when it shows");
+    require(model.path() == first && model.rowCount() > 0, "the file takes over when it shows");
     require(model.pendingPrompts() == QStringList{QStringLiteral("And then the tests")},
             "the recorded prompt leaves; the one still unrecorded waits");
-    append(first,
-           R"({"type":"user","uuid":"d-2","message":{"content":"And then the tests"}})"
-           "\n");
+    append(first, R"({"type":"user","uuid":"d-2","message":{"content":"And then the tests"}})"
+                  "\n");
     model.readMore();
     require(model.pendingPrompts().isEmpty(), "it leaves once recorded too");
     model.setShown({});

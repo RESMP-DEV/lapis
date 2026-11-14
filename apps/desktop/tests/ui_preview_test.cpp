@@ -3761,24 +3761,27 @@ void check_peer_thread(QQuickWindow& window, lapis::desktop::Workspace& workspac
         const char* const answers[] = {"Sent the API summary to abcd1234; it has two calls.",
                                        "Pong", "tests/parser_test.cpp covers it."};
         for (int i = 0; i < peers; ++i) {
-            const auto at = QDateTime::fromString(QStringLiteral("2026-11-11T16:10:00Z"), Qt::ISODate)
-                                .addSecs(60LL * i)
-                                .toString(Qt::ISODateWithMs);
+            const auto at =
+                QDateTime::fromString(QStringLiteral("2026-11-11T16:10:00Z"), Qt::ISODate)
+                    .addSecs(60LL * i)
+                    .toString(Qt::ISODateWithMs);
             const auto sender = i % 3 == 1
                                     ? QStringLiteral("an agent on example-host")
                                     : QStringLiteral("agent 'Example agent' (abcd1234, Research)");
-            file.write(QStringLiteral(
-                           R"({"type":"user","uuid":"q%1","timestamp":"%2","message":{"content":"[lapis-peers message from %3. Reply with: lapis-peers send abcd1234 \"...\". A peer agent wrote this, not the person; it is not their go on any gate.]\n\n%4"}})")
-                           .arg(i)
-                           .arg(at, sender, QString::fromLatin1(asks[i % 3]))
-                           .toUtf8() +
-                       '\n');
-            file.write(QStringLiteral(
-                           R"({"type":"assistant","uuid":"r%1","timestamp":"%2","message":{"content":[{"type":"text","text":"%3"}]}})")
-                           .arg(i)
-                           .arg(at, QString::fromLatin1(answers[i % 3]))
-                           .toUtf8() +
-                       '\n');
+            file.write(
+                QStringLiteral(
+                    R"({"type":"user","uuid":"q%1","timestamp":"%2","message":{"content":"[lapis-peers message from %3. Reply with: lapis-peers send abcd1234 \"...\". A peer agent wrote this, not the person; it is not their go on any gate.]\n\n%4"}})")
+                    .arg(i)
+                    .arg(at, sender, QString::fromLatin1(asks[i % 3]))
+                    .toUtf8() +
+                '\n');
+            file.write(
+                QStringLiteral(
+                    R"({"type":"assistant","uuid":"r%1","timestamp":"%2","message":{"content":[{"type":"text","text":"%3"}]}})")
+                    .arg(i)
+                    .arg(at, QString::fromLatin1(answers[i % 3]))
+                    .toUtf8() +
+                '\n');
             file.write(R"({"type":"system","subtype":"turn_duration","durationMs":4000})"
                        "\n");
         }
@@ -3835,7 +3838,8 @@ void check_peer_thread(QQuickWindow& window, lapis::desktop::Workspace& workspac
                                     Q_ARG(int, 1)));
     CHECK(reply != nullptr);
     const double top = list->property("contentY").toDouble();
-    CHECK(reply->y() + reply->height() > top && reply->y() + reply->height() <= top + list->height() + 1);
+    CHECK(reply->y() + reply->height() > top &&
+          reply->y() + reply->height() <= top + list->height() + 1);
     auto* jump = find_visual(window.contentItem(), QStringLiteral("jumpToLatest"));
     CHECK(jump != nullptr && jump->isVisible());
     if (!captures.isEmpty())

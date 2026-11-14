@@ -77,8 +77,8 @@ LaunchedModel launched_model(const QString& harness, const QStringList& words) {
     // A TOML string value as Codex's -c takes it: "x" or 'x', else as is.
     const auto toml = [](QString value) {
         value = value.trimmed();
-        if (value.size() >= 2 && (value.front() == QLatin1Char('"') ||
-                                  value.front() == QLatin1Char('\'')) &&
+        if (value.size() >= 2 &&
+            (value.front() == QLatin1Char('"') || value.front() == QLatin1Char('\'')) &&
             value.back() == value.front())
             value = value.mid(1, value.size() - 2);
         return value;

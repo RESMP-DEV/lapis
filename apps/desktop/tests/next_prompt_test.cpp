@@ -896,15 +896,15 @@ void sessionHooksParse() {
                 hook_of(settings.random, 5).isUndefined() &&
                 hook_of(settings.providers, 0).isUndefined(),
             "the default reaches Claude Code entries without their own");
-    const auto again = lapis::desktop::parse_next_prompt(
-        QJsonObject{{QStringLiteral("random"), settings.random}});
+    const auto again =
+        lapis::desktop::parse_next_prompt(QJsonObject{{QStringLiteral("random"), settings.random}});
     require(again.random == settings.random, "a hook round-trips on its entry");
     for (const auto* bad : {R"([])", R"([""])", R"(["  "])", R"([1])", R"("register")",
                             R"(["a","b","c","d","e","f","g","h","i"])"}) {
-        const auto parsed = lapis::desktop::parse_next_prompt(QJsonDocument::fromJson(
-            QByteArray(R"({"sessionHook": )") + bad +
-            R"(, "providers": [{"cli": "claude", "model": "m"}]})")
-                                                                  .object());
+        const auto parsed = lapis::desktop::parse_next_prompt(
+            QJsonDocument::fromJson(QByteArray(R"({"sessionHook": )") + bad +
+                                    R"(, "providers": [{"cli": "claude", "model": "m"}]})")
+                .object());
         require(parsed.sessionHook.isEmpty() && parsed.providers.size() == 1 &&
                     !parsed.providers.at(0).toObject().contains(QStringLiteral("sessionHook")),
                 "an invalid default is no default");

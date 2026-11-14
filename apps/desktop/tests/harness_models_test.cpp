@@ -544,8 +544,8 @@ cat >/dev/null
     require(known("codex-sol") == expect("gpt-6-sol", "", "", "launch"), "Codex's -m");
     add("agy-id", "agy", programs.value(QStringLiteral("agy")),
         words("--model gemini-4-hydrogen-xhigh"));
-    require(known("agy-id") == expect("gemini-4-hydrogen-xhigh", "xhigh", "Gemini 4 Hydrogen",
-                                      "launch"),
+    require(known("agy-id") ==
+                expect("gemini-4-hydrogen-xhigh", "xhigh", "Gemini 4 Hydrogen", "launch"),
             "agy: its level from the id, its family's name as its file reports it");
     add("agy-saved", "agy", programs.value(QStringLiteral("agy")), {});
     require(known("agy-saved") ==
@@ -573,8 +573,8 @@ cat >/dev/null
         ssh_options + QStringList{QStringLiteral("-t"), QStringLiteral("box"), remote_codex});
     require(known("remote-codex") == expect("gpt-6-sol", "low", "", "launch"),
             "a remote Codex's launch words");
-    const auto remote_plain = QStringLiteral(
-        R"(cd '/work/x' && exec "${SHELL:-/bin/sh}" -lic 'codex')");
+    const auto remote_plain =
+        QStringLiteral(R"(cd '/work/x' && exec "${SHELL:-/bin/sh}" -lic 'codex')");
     add("remote-plain", "codex", QStringLiteral("/usr/bin/ssh"),
         ssh_options + QStringList{QStringLiteral("-t"), QStringLiteral("box"), remote_plain});
     require(workspace.agentModel(QStringLiteral("remote-plain")).isEmpty(),

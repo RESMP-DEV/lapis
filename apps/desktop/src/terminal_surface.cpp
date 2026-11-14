@@ -1591,8 +1591,8 @@ std::optional<TerminalSurface::CellGrid> TerminalSurface::cellGrid() const {
     const QFontMetricsF metrics(cellFont());
     const qreal cell_width = metrics.horizontalAdvance(QLatin1Char('M'));
     const qreal row_height = metrics.height() + 3;
-    const auto layout = surface_layout(snapshot, layoutViewport(), minimum_scale_,
-                                       QSizeF(cell_width, row_height));
+    const auto layout =
+        surface_layout(snapshot, layoutViewport(), minimum_scale_, QSizeF(cell_width, row_height));
     // A screen slid down part of a row starts that much above its first row.
     const qreal first_row = layout.first_row - historySlide() / (row_height * layout.scale);
     return CellGrid{cell_width * layout.scale,

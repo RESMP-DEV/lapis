@@ -205,12 +205,13 @@ void codex_file_is_followed() {
     // The first turn is closed and the latest finished: prompt, its "Worked
     // for" header, its steps as rows, its reply.
     const int first_steps = model.data(model.index(1), TranscriptModel::StepsRole).toInt();
-    require(first_steps > 0 && model.rowCount() == 3 + first_steps &&
-                model.data(model.index(1), TranscriptModel::ExpandedRole).toBool() &&
-                model.data(model.index(2), TranscriptModel::InWorkRole).toBool() &&
-                model.data(model.index(model.rowCount() - 1), TranscriptModel::KindRole)
-                        .toString() == "reply",
-            "model: the first turn shows its steps between prompt and reply");
+    require(
+        first_steps > 0 && model.rowCount() == 3 + first_steps &&
+            model.data(model.index(1), TranscriptModel::ExpandedRole).toBool() &&
+            model.data(model.index(2), TranscriptModel::InWorkRole).toBool() &&
+            model.data(model.index(model.rowCount() - 1), TranscriptModel::KindRole).toString() ==
+                "reply",
+        "model: the first turn shows its steps between prompt and reply");
     require(model.data(model.index(1), TranscriptModel::KindRole).toString() == "work" &&
                 model.data(model.index(1), TranscriptModel::TitleRole).toString() ==
                     "Worked for 3m 12s",

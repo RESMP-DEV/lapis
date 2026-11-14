@@ -582,31 +582,31 @@ int run_new_session(const QString& captures) {
     require(workspace.setFixtureLaunch("fresh", QStringLiteral("claude"),
                                        {QStringLiteral("--model"), QStringLiteral("opus"),
                                         QStringLiteral("--effort"), QStringLiteral("xhigh")}) &&
-                workspace.setFixtureLaunch(
-                    "booting", QStringLiteral("codex"),
-                    {QStringLiteral("-m"), QStringLiteral("gpt-6-sol"), QStringLiteral("-c"),
-                     QStringLiteral("model_reasoning_effort=high")}) &&
+                workspace.setFixtureLaunch("booting", QStringLiteral("codex"),
+                                           {QStringLiteral("-m"), QStringLiteral("gpt-6-sol"),
+                                            QStringLiteral("-c"),
+                                            QStringLiteral("model_reasoning_effort=high")}) &&
                 workspace.setFixtureLaunch(
                     "remote", QStringLiteral("/usr/bin/ssh"),
-                    {QStringLiteral("-o"), QStringLiteral("ControlPath=none"),
-                     QStringLiteral("-t"), QStringLiteral("box"),
-                     QStringLiteral(
-                         R"(cd '/work/x' && s=0199a000-0000-7000-8000-00000000c0de && )"
-                         R"(o=--session-id && { exec "${SHELL:-/bin/sh}" -lic )"
-                         R"('claude --model opus --effort high '"$o $s"; })")}),
+                    {QStringLiteral("-o"), QStringLiteral("ControlPath=none"), QStringLiteral("-t"),
+                     QStringLiteral("box"),
+                     QStringLiteral(R"(cd '/work/x' && s=0199a000-0000-7000-8000-00000000c0de && )"
+                                    R"(o=--session-id && { exec "${SHELL:-/bin/sh}" -lic )"
+                                    R"('claude --model opus --effort high '"$o $s"; })")}),
             "launch commands");
     // Claude Code's model list from a stand-in CLI: its default entry names
     // Fable 5.2, and "opus" is an alias for claude-opus-5-5.
     const auto stand_in = QDir(directory.path()).filePath("bin/claude");
     QDir().mkpath(QFileInfo(stand_in).absolutePath());
-    write(stand_in,
-          "#!/bin/sh\nread -r line\n"
-          R"sh(echo '{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":[)sh"
-          R"sh({"value":"default","displayName":"Default (recommended)","description":"Fable 5.2 · Best for everyday tasks","resolvedModel":"claude-fable-5-2","supportedEffortLevels":["low","medium","high"]},)sh"
-          R"sh({"value":"opus","displayName":"Opus 5.5","resolvedModel":"claude-opus-5-5","supportedEffortLevels":["low","high","xhigh","max"]}]}}}')sh"
-          "\ncat >/dev/null\n");
-    QFile::setPermissions(stand_in, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
-                                        QFileDevice::ExeOwner);
+    write(
+        stand_in,
+        "#!/bin/sh\nread -r line\n"
+        R"sh(echo '{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":[)sh"
+        R"sh({"value":"default","displayName":"Default (recommended)","description":"Fable 5.2 · Best for everyday tasks","resolvedModel":"claude-fable-5-2","supportedEffortLevels":["low","medium","high"]},)sh"
+        R"sh({"value":"opus","displayName":"Opus 5.5","resolvedModel":"claude-opus-5-5","supportedEffortLevels":["low","high","xhigh","max"]}]}}}')sh"
+        "\ncat >/dev/null\n");
+    QFile::setPermissions(stand_in,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
     HarnessModels models(
         [&](const QString& id) { return id == QLatin1String("claude") ? stand_in : QString(); },
         QDir(directory.path()).filePath("home"));

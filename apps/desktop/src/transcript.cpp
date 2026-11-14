@@ -1481,8 +1481,8 @@ int person_anchor(const Layout& layout) {
 
 // Cohesive parser/test flow; branching stays local.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool live,
-               int expand_from, const QSet<int>& peers_open, bool request_waiting) {
+Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool live, int expand_from,
+               const QSet<int>& peers_open, bool request_waiting) {
     Layout out;
     const int count = static_cast<int>(items.size());
     std::vector<int> turn_of(items.size(), -1);
@@ -1618,9 +1618,9 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool li
             const auto& item = items[static_cast<size_t>(i)];
             if (item.dropped)
                 continue;
-            turn.held = (item.kind == Kind::prompt && !item.queued && !item.peer) ||
-                        (item.kind == Kind::tool && !item.answered &&
-                         item.title == QLatin1String("Asked"));
+            turn.held =
+                (item.kind == Kind::prompt && !item.queued && !item.peer) ||
+                (item.kind == Kind::tool && !item.answered && item.title == QLatin1String("Asked"));
         }
         turn.folded = !turn.held && !peers_open.contains(turn.start);
     }
@@ -2383,8 +2383,8 @@ bool same_content(const Layout& a, const std::vector<Item>& a_items, const Row& 
         return p.kind == q.kind && p.record == q.record && p.title == q.title && p.body == q.body &&
                p.result == q.result && p.answered == q.answered && p.failed == q.failed &&
                p.queued == q.queued && p.steered == q.steered && p.at_ms == q.at_ms &&
-               p.duration_ms == q.duration_ms && (p.task < 0) == (q.task < 0) &&
-               p.peer == q.peer && p.from == q.from;
+               p.duration_ms == q.duration_ms && (p.task < 0) == (q.task < 0) && p.peer == q.peer &&
+               p.from == q.from;
     };
     if (x.peer) {
         // A peer turn's row also shows its reply.
@@ -4309,8 +4309,8 @@ void TranscriptModel::setShown(const QVariantMap& shown) {
     const auto agent = shown.value(QStringLiteral("agent")).toString();
     const auto path = shown.value(QStringLiteral("path")).toString();
     const auto harness = shown.value(QStringLiteral("harness")).toString();
-    const auto blank = path.isEmpty() && !agent.isEmpty() ? transcript::format_named(harness)
-                                                          : std::nullopt;
+    const auto blank =
+        path.isEmpty() && !agent.isEmpty() ? transcript::format_named(harness) : std::nullopt;
     const auto given = shown.value(QStringLiteral("started")).toMap();
     Started started;
     if (!agent.isEmpty())
@@ -4551,9 +4551,8 @@ void TranscriptModel::adopt(transcript::Read read, bool appended) {
     // up at the end, and turns open by default from the same item. A reading
     // that only appended to the shown one (a warm catch-up) keeps every item
     // where it was, so its state carries over unchanged.
-    const auto shift = appended ? 0
-                                : static_cast<int>(new_items.size()) -
-                                      static_cast<int>(old_items.size());
+    const auto shift =
+        appended ? 0 : static_cast<int>(new_items.size()) - static_cast<int>(old_items.size());
     const auto moved = [&](const QSet<int>& marked) {
         if (appended)
             return marked;

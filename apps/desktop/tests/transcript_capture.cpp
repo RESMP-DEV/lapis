@@ -391,8 +391,7 @@ int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile
     click(view, last_step);
     (void)view.grabWindow();
     settle();
-    expect(named(root, "detailRule").empty() && unmoved(last_step, last_at),
-           "and closes in place");
+    expect(named(root, "detailRule").empty() && unmoved(last_step, last_at), "and closes in place");
     view.resize(full);
     // Clicking the edit opens it in place with its diff; again closes. The
     // row under the pointer stays where it is.
@@ -1526,14 +1525,23 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
         {"claude", "claude", nullptr, QStringLiteral("Queued · read at the next step"),
          QStringLiteral("Sending now · read in a moment"), QStringLiteral("Interrupt and send"),
          QStringLiteral("\x18\x13")},
-        {"codex", "codex", nullptr, QStringLiteral("Steering · read after the current step"),
-         interrupting, QStringLiteral("Interrupt and send"), {}},
+        {"codex",
+         "codex",
+         nullptr,
+         QStringLiteral("Steering · read after the current step"),
+         interrupting,
+         QStringLiteral("Interrupt and send"),
+         {}},
         {"agy-queue", "antigravity", "queue", QStringLiteral("Queued · sent when this turn ends"),
          QStringLiteral("Sending now · read at the next step"),
          QStringLiteral("Stop · queued text returns to the box"), QStringLiteral("\x1bm")},
-        {"agy-immediate", "antigravity", "send-immediately",
-         QStringLiteral("Sent · read at the next step"), {},
-         QStringLiteral("Stop · queued text returns to the box"), {}},
+        {"agy-immediate",
+         "antigravity",
+         "send-immediately",
+         QStringLiteral("Sent · read at the next step"),
+         {},
+         QStringLiteral("Stop · queued text returns to the box"),
+         {}},
     };
     const auto fixtures = sent_fixtures();
     for (const auto& c : cases) {
@@ -1554,9 +1562,8 @@ int check_send_now(QQuickView& view, QQuickItem* root, TranscriptModel& model,
                 return 1;
             settings.write(QByteArray(R"({"queuedMessages":")") + c.mode + "\"}");
         }
-        const auto& fixture = *std::ranges::find_if(fixtures, [&c](const SentFixture& f) {
-            return qstrcmp(f.format, c.format) == 0;
-        });
+        const auto& fixture = *std::ranges::find_if(
+            fixtures, [&c](const SentFixture& f) { return qstrcmp(f.format, c.format) == 0; });
         // A turn running: its prompt and a step recorded, no reply yet.
         QFile file(QDir(folder).filePath(QStringLiteral("sendnow-%1.jsonl").arg(name)));
         if (!file.open(QIODevice::WriteOnly))

@@ -1888,8 +1888,7 @@ QVariantMap Workspace::agentModel(const QString& id) const {
         // The CLI's own default, as this Mac's CLI has it.
         if (agy) {
             auto* transcript = qobject_cast<TranscriptModel*>(transcript_);
-            const auto saved =
-                transcript ? transcript->antigravityModelSetting() : QString();
+            const auto saved = transcript ? transcript->antigravityModelSetting() : QString();
             const auto split = transcript::split_level(saved);
             // "Gemini 4 Hydrogen (XHigh)" as the id of that family's level.
             QString chosen = split.model;
@@ -2503,10 +2502,8 @@ void Workspace::setupRemoteThreads() {
     remote_threads_ = new RemoteThreads(
         runtime, [this](const QString& agent) { return remoteTarget(agent); }, this);
     connect(remote_threads_, &RemoteThreads::changed, this, &Workspace::remoteThreadChanged);
-    connect(remote_threads_, &RemoteThreads::uploadProgress, this,
-            &Workspace::attachmentProgress);
-    connect(remote_threads_, &RemoteThreads::uploadFinished, this,
-            &Workspace::attachmentUploaded);
+    connect(remote_threads_, &RemoteThreads::uploadProgress, this, &Workspace::attachmentProgress);
+    connect(remote_threads_, &RemoteThreads::uploadFinished, this, &Workspace::attachmentUploaded);
     auto* transcript = qobject_cast<TranscriptModel*>(transcript_);
     const auto mirrors = QDir(runtime).filePath(QStringLiteral("remote")) + QLatin1Char('/');
     transcript->setRemoteCheck([this, mirrors](const QString& agent, const QString& path) {

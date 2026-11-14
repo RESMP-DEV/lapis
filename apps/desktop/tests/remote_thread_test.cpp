@@ -11,16 +11,16 @@
 #include "agent_checkpoint.hpp"
 
 #include <QDateTime>
-#include <QGuiApplication>
-#include <QQmlComponent>
-#include <QQmlEngine>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QQmlComponent>
+#include <QQmlEngine>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QThread>
@@ -208,13 +208,16 @@ void remoteClaudeFollowsItsRelayedSession() {
     const int before = machine.calls();
     // The service reports the end just before it exits.
     require(waitFor([&] { return workspace.restartAgent(id); }, 10000), "restart the agent");
-    require(waitFor([&] { return machine.calls() > before && !machine.lastAgentCall().isEmpty() &&
-                                 conversationIn(machine.lastAgentCall()) == cleared; },
-                    10000),
+    require(waitFor(
+                [&] {
+                    return machine.calls() > before && !machine.lastAgentCall().isEmpty() &&
+                           conversationIn(machine.lastAgentCall()) == cleared;
+                },
+                10000),
             "the restart resumes the relayed session");
     const auto restarted = machine.lastAgentCall();
-    require(restarted.contains(QStringLiteral(R"re(p="[-]-(resume|session-id) ($s|%1)")re")
-                                   .arg(original)),
+    require(restarted.contains(
+                QStringLiteral(R"re(p="[-]-(resume|session-id) ($s|%1)")re").arg(original)),
             "it still stops a process left on the previous session");
     const auto host = QStringLiteral("\n-t\nbuildbox\n");
     QString expected = first;
@@ -239,13 +242,13 @@ QByteArray record(int n) {
     return n % 2 == 1
                ? QStringLiteral(R"({"type":"user","uuid":"u%1","message":{"role":"user",)"
                                 R"("content":"prompt %1"}})")
-                     .arg(n)
-                     .toUtf8() +
+                         .arg(n)
+                         .toUtf8() +
                      '\n'
                : QStringLiteral(R"({"type":"assistant","uuid":"a%1","message":{"role":)"
                                 R"("assistant","content":[{"type":"text","text":"reply %1"}]}})")
-                     .arg(n)
-                     .toUtf8() +
+                         .arg(n)
+                         .toUtf8() +
                      '\n';
 }
 // Positional contract; callers and tests pin the order.
@@ -357,8 +360,8 @@ while True:
         for (auto& c : folder)
             if (!(c.isLetterOrNumber() && c.unicode() < 128))
                 c = QLatin1Char('-');
-        return root.filePath(QStringLiteral("home/.claude/projects/%1/%2.jsonl")
-                                 .arg(folder, conversation));
+        return root.filePath(
+            QStringLiteral("home/.claude/projects/%1/%2.jsonl").arg(folder, conversation));
     }
     [[nodiscard]] QString cache(const QString& conversation) const {
         return root.filePath(QStringLiteral("runtime/remote/buildbox/%1.jsonl").arg(conversation));
@@ -408,7 +411,12 @@ void remoteThreadFollowsTheFile() {
                 },
                 10000),
             "it reconnects and resumes at the cache's size");
-    require(waitFor([&] { view.show(); return view.items() == itemsIn(remote); }, 5000),
+    require(waitFor(
+                [&] {
+                    view.show();
+                    return view.items() == itemsIn(remote);
+                },
+                5000),
             "no row is repeated");
     const auto calls = fixture.machine->calls();
     const auto resumed = fixture.machine->call(calls);
@@ -424,9 +432,19 @@ void remoteThreadFollowsTheFile() {
 
     // Truncated there: the copy resets and reloads.
     writeFile(remote, records(101, 102));
-    require(waitFor([&] { view.show(); return readFile(cache) == readFile(remote); }, 10000),
+    require(waitFor(
+                [&] {
+                    view.show();
+                    return readFile(cache) == readFile(remote);
+                },
+                10000),
             "a truncated file resets the mirror");
-    require(waitFor([&] { view.show(); return view.items() == itemsIn(remote); }, 5000),
+    require(waitFor(
+                [&] {
+                    view.show();
+                    return view.items() == itemsIn(remote);
+                },
+                5000),
             "and the thread reloads");
 
     // Nothing in a remote thread resolves on this Mac.
@@ -451,12 +469,13 @@ void remoteThreadFollowsTheFile() {
     require(!model->remote(), "a local thread is not remote");
 
     // The mirror's files are private, under this test's runtime folder.
-    require(QFileInfo(fixture.root.filePath(QStringLiteral("runtime/remote/buildbox")))
-                    .permissions() == (QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
-                                       QFile::ReadUser | QFile::WriteUser | QFile::ExeUser),
-            "the mirror's folder is 0700");
-    require((QFileInfo(cache).permissions() & ~(QFile::ReadOwner | QFile::WriteOwner |
-                                                 QFile::ReadUser | QFile::WriteUser)) == 0,
+    require(
+        QFileInfo(fixture.root.filePath(QStringLiteral("runtime/remote/buildbox"))).permissions() ==
+            (QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner | QFile::ReadUser |
+             QFile::WriteUser | QFile::ExeUser),
+        "the mirror's folder is 0700");
+    require((QFileInfo(cache).permissions() &
+             ~(QFile::ReadOwner | QFile::WriteOwner | QFile::ReadUser | QFile::WriteUser)) == 0,
             "the mirror is 0600");
 
     // Not shown any more: its helper stops a moment later.
@@ -475,9 +494,12 @@ void remoteThreadFollowsClear() {
     require(waitFor([&] { return view.show() == fixture.cache(first); }, 10000),
             "the first conversation shows");
     auto* agent = workspace.agent(id);
-    require(waitFor([agent] { return agent->connectionState() == QStringLiteral("ended") ||
-                                     agent->connectionState() == QStringLiteral("disconnected"); },
-                    10000),
+    require(waitFor(
+                [agent] {
+                    return agent->connectionState() == QStringLiteral("ended") ||
+                           agent->connectionState() == QStringLiteral("disconnected");
+                },
+                10000),
             "the stand-in agent ended");
     const auto endpoint = endpointOf(fixture.options.storagePath, id);
     const auto cleared = QStringLiteral("c1ea0000-0000-4000-8000-000000000001");
@@ -489,9 +511,12 @@ void remoteThreadFollowsClear() {
     QObject::connect(&workspace, &Workspace::remoteThreadChanged,
                      [&changed](const QString& agent) { changed = agent; });
     require(waitFor([&] { return changed == id; }, 5000), "the mirror reports the move");
-    require(waitFor([&] { return view.show() == fixture.cache(cleared) &&
-                                 view.items() == itemsIn(fixture.transcript(cleared)); },
-                    10000),
+    require(waitFor(
+                [&] {
+                    return view.show() == fixture.cache(cleared) &&
+                           view.items() == itemsIn(fixture.transcript(cleared));
+                },
+                10000),
             "the thread moves to the new conversation");
 }
 
@@ -520,14 +545,19 @@ void remoteThreadShowsALargeFileTailFirst() {
             "the end is at most the asked size, cut at a line start");
     const auto appended = records(9001, 9002);
     appendFile(remote, appended);
-    require(waitFor([&] { return view.show() == tail && readFile(tail).endsWith(appended); },
-                    10000),
-            "the end follows what the CLI appends while the rest arrives");
+    require(
+        waitFor([&] { return view.show() == tail && readFile(tail).endsWith(appended); }, 10000),
+        "the end follows what the CLI appends while the rest arrives");
     fixture.clear(QStringLiteral("slow"));
     require(waitFor([&] { return view.show() == fixture.cache(conversation); }, 30000),
             "then the thread moves to the whole mirror");
     require(readFile(fixture.cache(conversation)) == readFile(remote) &&
-                waitFor([&] { view.show(); return view.items() == itemsIn(remote); }, 10000),
+                waitFor(
+                    [&] {
+                        view.show();
+                        return view.items() == itemsIn(remote);
+                    },
+                    10000),
             "which is the whole file");
     require(waitFor([&] { return !QFileInfo::exists(tail); }, 15000), "the end's copy goes");
 }
@@ -543,29 +573,44 @@ void remoteThreadFailuresSayWhy() {
 
     fixture.marker(QStringLiteral("no-python"));
     view.show();
-    require(waitFor([&] { view.show(); return !workspace.visualSupported(id); }, 10000) &&
+    require(waitFor(
+                [&] {
+                    view.show();
+                    return !workspace.visualSupported(id);
+                },
+                10000) &&
                 view.reason() == QStringLiteral("python3 is not installed on buildbox"),
             "no python3 there: the terminal shows, and why");
     fixture.clear(QStringLiteral("no-python"));
 
     fixture.marker(QStringLiteral("fail-255"), "Permission denied (publickey,password).\n");
-    require(waitFor([&] { view.show(); return view.reason().contains(QStringLiteral(
-                                                  "needs a password")); },
-                    10000) &&
+    require(waitFor(
+                [&] {
+                    view.show();
+                    return view.reason().contains(QStringLiteral("needs a password"));
+                },
+                10000) &&
                 !workspace.visualSupported(id),
             "ssh that would ask for a password fails, and says so");
     fixture.clear(QStringLiteral("fail-255"));
 
     fixture.marker(QStringLiteral("fail-3"), "something broke\n");
-    require(waitFor([&] { view.show(); return view.reason().contains(QStringLiteral("exit 3")); },
-                    10000),
+    require(waitFor(
+                [&] {
+                    view.show();
+                    return view.reason().contains(QStringLiteral("exit 3"));
+                },
+                10000),
             "another exit is reported with its code");
     fixture.clear(QStringLiteral("fail-3"));
 
     // Recovered: the missing file is waited for, and the thread may show.
-    require(waitFor([&] { view.show(); return view.state().value(QStringLiteral("phase")) ==
-                                                QStringLiteral("waiting"); },
-                    10000) &&
+    require(waitFor(
+                [&] {
+                    view.show();
+                    return view.state().value(QStringLiteral("phase")) == QStringLiteral("waiting");
+                },
+                10000) &&
                 workspace.visualSupported(id) &&
                 view.reason() == QStringLiteral("The conversation file is not on buildbox yet") &&
                 view.state()
@@ -584,14 +629,17 @@ void remoteThreadFailuresSayWhy() {
         view.show();
         return view.state().value(QStringLiteral("behind")).toBool();
     };
-    require(waitFor(behind, 10000) &&
-                workspace.visualSupported(id) &&
+    require(waitFor(behind, 10000) && workspace.visualSupported(id) &&
                 view.reason().startsWith(QStringLiteral("Lost the connection to buildbox")),
             "a lost connection keeps the cached thread, marked behind");
     fixture.clear(QStringLiteral("fail-255"));
-    require(waitFor([&] { view.show(); return view.state().value(QStringLiteral("phase")) ==
-                                                QStringLiteral("following"); },
-                    10000),
+    require(waitFor(
+                [&] {
+                    view.show();
+                    return view.state().value(QStringLiteral("phase")) ==
+                           QStringLiteral("following");
+                },
+                10000),
             "and it reconnects");
 }
 
@@ -655,7 +703,8 @@ void remoteAttachmentsUploadFirst() {
 void composerMentionsOnlyRemoteCopies() {
     QQmlEngine engine;
     QQmlComponent component(&engine);
-    component.setData(R"(import QtQuick
+    component.setData(
+        R"(import QtQuick
 Item {
     width: 900; height: 700
     property var sent: []
@@ -674,8 +723,7 @@ Item {
     }
 }
 )",
-                      QUrl::fromLocalFile(
-                          QStringLiteral(LAPIS_QML_DIR "/RemoteComposerCheck.qml")));
+        QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_DIR "/RemoteComposerCheck.qml")));
     std::unique_ptr<QObject> root(component.create());
     if (!root)
         std::cerr << component.errorString().toStdString() << '\n';

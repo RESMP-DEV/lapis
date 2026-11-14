@@ -33,8 +33,7 @@ constexpr qint64 head_bytes = 4096;
 constexpr int upload_timeout_ms = 120'000;
 
 bool uuid(const QString& text) {
-    return QUuid::fromString(text).toString(QUuid::WithoutBraces) == text &&
-           text == text.toLower();
+    return QUuid::fromString(text).toString(QUuid::WithoutBraces) == text && text == text.toLower();
 }
 // A machine name as a folder name: its own characters (validMachine allows
 // letters, digits, '.', '_', ':' and '-'), ':' made '_'.
@@ -66,16 +65,15 @@ QString headHash(const QString& path, qint64 length) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return {};
-    return QString::fromLatin1(
-        QCryptographicHash::hash(file.read(std::min(length, head_bytes)),
-                                 QCryptographicHash::Sha256)
-            .toHex());
+    return QString::fromLatin1(QCryptographicHash::hash(file.read(std::min(length, head_bytes)),
+                                                        QCryptographicHash::Sha256)
+                                   .toHex());
 }
 QString sshFailure(int code, const QByteArray& errors, const QString& machine) {
     const auto text = QString::fromUtf8(errors);
     if (code == 255) {
-        for (const auto* sign : {"Permission denied", "Host key verification failed",
-                                 "password", "passphrase", "publickey"})
+        for (const auto* sign : {"Permission denied", "Host key verification failed", "password",
+                                 "passphrase", "publickey"})
             if (text.contains(QLatin1String(sign), Qt::CaseInsensitive))
                 return QStringLiteral("ssh to %1 needs a password or a key it cannot use "
                                       "without asking")
@@ -122,8 +120,8 @@ struct RemoteThreads::Mirror {
     bool stopping{};
     qint64 remote_size{};
     qint64 inode{};
-    qint64 size{};     // bytes in the mirror
-    bool complete{};   // the mirror once held all the file had
+    qint64 size{};   // bytes in the mirror
+    bool complete{}; // the mirror once held all the file had
     bool tail_active{};
     qint64 tail_base{};
     qint64 tail_size{};
@@ -281,12 +279,11 @@ void RemoteThreads::setShown(const QString& agent) {
 }
 
 QStringList RemoteThreads::helperArguments(const Mirror& mirror) const {
-    QStringList words{QStringLiteral("python3"),       QStringLiteral("-"),
-                      QStringLiteral("follow"),        QStringLiteral("--cli"),
-                      QStringLiteral("claude"),        QStringLiteral("--conversation"),
-                      mirror.target.conversation,      QStringLiteral("--folder"),
-                      mirror.target.folder,            QStringLiteral("--offset"),
-                      QString::number(mirror.size)};
+    QStringList words{
+        QStringLiteral("python3"),  QStringLiteral("-"),         QStringLiteral("follow"),
+        QStringLiteral("--cli"),    QStringLiteral("claude"),    QStringLiteral("--conversation"),
+        mirror.target.conversation, QStringLiteral("--folder"),  mirror.target.folder,
+        QStringLiteral("--offset"), QString::number(mirror.size)};
     if (mirror.size > 0) {
         words << QStringLiteral("--head") << headHash(mirror.full(), mirror.size);
         if (mirror.inode > 0)
@@ -540,11 +537,12 @@ void RemoteThreads::finished(Mirror& mirror, int code, bool crashed) {
     if (why.isEmpty())
         why = mirror.error_frame;
     if (why.isEmpty())
-        why = mirror.hello ? QStringLiteral("Lost the connection to %1 (retrying)")
-                                 .arg(mirror.target.machine)
-                           : QStringLiteral("The thread helper on %1 stopped (exit %2)")
-                                 .arg(mirror.target.machine)
-                                 .arg(code);
+        why =
+            mirror.hello
+                ? QStringLiteral("Lost the connection to %1 (retrying)").arg(mirror.target.machine)
+                : QStringLiteral("The thread helper on %1 stopped (exit %2)")
+                      .arg(mirror.target.machine)
+                      .arg(code);
     mirror.reason = std::move(why);
     mirror.phase = mirror.hello ? Mirror::Phase::retrying : Mirror::Phase::failed;
     retry(mirror);
@@ -615,9 +613,9 @@ QVariantMap RemoteThreads::state(const QString& agent) const {
     if (found == nullptr)
         return {};
     static const std::map<Mirror::Phase, const char*> names{
-        {Mirror::Phase::idle, "idle"},           {Mirror::Phase::connecting, "connecting"},
-        {Mirror::Phase::waiting, "waiting"},     {Mirror::Phase::following, "following"},
-        {Mirror::Phase::retrying, "retrying"},   {Mirror::Phase::failed, "failed"}};
+        {Mirror::Phase::idle, "idle"},         {Mirror::Phase::connecting, "connecting"},
+        {Mirror::Phase::waiting, "waiting"},   {Mirror::Phase::following, "following"},
+        {Mirror::Phase::retrying, "retrying"}, {Mirror::Phase::failed, "failed"}};
     const bool cached = !path(*found).isEmpty();
     const bool failing =
         found->phase == Mirror::Phase::failed || found->phase == Mirror::Phase::retrying;
@@ -748,8 +746,8 @@ QString RemoteThreads::upload(const QString& agent, const QString& local, QStrin
         emit uploadProgress(token, std::min(1.0, static_cast<double>(*written) / total));
     });
     auto done = std::make_shared<bool>(false);
-    const auto finish = [this, token, process, done, name, machine = target->machine](
-                            int code, bool started) {
+    const auto finish = [this, token, process, done, name,
+                         machine = target->machine](int code, bool started) {
         if (std::exchange(*done, true))
             return;
         uploads_.remove(token);
@@ -767,10 +765,9 @@ QString RemoteThreads::upload(const QString& agent, const QString& local, QStrin
                           : QStringLiteral("ssh is not available on this Mac");
         emit uploadFinished(token, {}, why);
     };
-    connect(process, &QProcess::finished, this,
-            [finish](int code, QProcess::ExitStatus status) {
-                finish(status == QProcess::CrashExit ? -1 : code, true);
-            });
+    connect(process, &QProcess::finished, this, [finish](int code, QProcess::ExitStatus status) {
+        finish(status == QProcess::CrashExit ? -1 : code, true);
+    });
     connect(process, &QProcess::errorOccurred, this, [finish](QProcess::ProcessError failure) {
         if (failure == QProcess::FailedToStart)
             finish(-1, false);
