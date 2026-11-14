@@ -378,10 +378,20 @@ void alert_for_agents(std::optional<lapis::desktop::Alerts>& alerts,
     };
     seen.emplace(workspace, looking);
     const auto log = attention_log();
-    alerts.emplace(
-        workspace, config,
-        [&config, sounds](Chime chime) { sounds->play(chime, config, lapis::desktop::play_sound); },
-        looking);
+    // One test of looking for the marks, the chime and the seen screens; the
+    // workspace stops using them before what they read is gone.
+    workspace.setLooking(looking);
+    workspace.setUnchanged(
+        [seen = &*seen](const lapis::desktop::Agent* item) { return seen->unchanged(item); });
+    workspace.setMarkLog(log);
+    QObject::connect(&*seen, &QObject::destroyed, &workspace, [&workspace] {
+        workspace.setLooking({});
+        workspace.setUnchanged({});
+        workspace.setMarkLog({});
+    });
+    alerts.emplace(workspace, config, [&config, sounds](Chime chime) {
+        sounds->play(chime, config, lapis::desktop::play_sound);
+    });
     alerts->setSeen(&*seen);
     alerts->setLog(log);
     QObject::connect(&config, &lapis::desktop::Config::changed, &*alerts,
@@ -714,6 +724,8 @@ int run_headless(lapis::desktop::Workspace& workspace, lapis::desktop::Config& c
         qInfo().noquote() << "lapis restore:" << workspace.workspaceError();
         return 0;
     }
+    // No window: nobody is looking at any agent.
+    workspace.setLooking([](const Agent*) { return false; });
     std::optional<WorkspaceControl> control;
     std::unique_ptr<lapis::desktop::Terminals> terminals;
     bool handed_over = false;
@@ -772,22 +784,13 @@ int run_headless(lapis::desktop::Workspace& workspace, lapis::desktop::Config& c
 // AppWindow creates. Lives outside main() to keep main's branching flat.
 void wire_window(QQuickWindow& window, lapis::desktop::AppWindow& view,
                  lapis::desktop::Workspace& workspace, const QCommandLineParser& parser) {
-    QObject::connect(&window, &QQuickWindow::activeChanged, &view, [&view, &window] {
-        if (window.isActive())
-            view.assignTerminalFocus();
+    QObject::connect(&window, &QQuickWindow::activeChanged, &view, [&view, &window, &workspace] {
+        if (!window.isActive())
+            return;
+        view.assignTerminalFocus();
+        // Coming back to the window with an agent on the stage is looking at it.
+        workspace.noteLooking(QStringLiteral("window"));
     });
-    if (!workspace.fixtureMode()) {
-        // The Dock badge counts agents waiting on you in any category, so it
-        // shows from another app.
-#ifdef Q_OS_MACOS
-        // Linux badges need an installed desktop file; the Dock needs nothing.
-        const auto badge = [&workspace] { qGuiApp->setBadgeNumber(workspace.attentionAgents()); };
-        QObject::connect(&workspace, &lapis::desktop::Workspace::categoriesChanged, &window, badge);
-        badge();
-        QObject::connect(qApp, &QCoreApplication::aboutToQuit, &window,
-                         [] { qGuiApp->setBadgeNumber(0); });
-#endif
-    }
     if (parser.isSet(QStringLiteral("capture")))
         capture_window(window, workspace, view,
                        {.image_path = parser.value(QStringLiteral("capture")),
@@ -858,6 +861,8 @@ int main(int argc, char** argv) {
             workspace.setHarnessUpdatesOff(config.harnessUpdatesOff());
             workspace.setAgentDefaults(config.agentDefaults());
             workspace.setTabAway(config.tabAway());
+            workspace.setVisualKeep(config.visualKeepMB(), config.visualKeepThreads(),
+                                    config.visualAll());
         };
         configure();
         QObject::connect(&config, &Config::changed, &workspace, configure);

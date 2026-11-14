@@ -38,6 +38,14 @@ double seconds_since_input() {
                                                   kCGAnyInputEventType);
 }
 
+bool reveal_in_file_manager(const QString& path) {
+    NSURL* const url = [NSURL fileURLWithPath:path.toNSString()];
+    if (url == nil)
+        return false;
+    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ url ]];
+    return true;
+}
+
 bool login_item_enabled() {
     if (@available(macOS 13.0, *))
         return login_item().status == SMAppServiceStatusEnabled;

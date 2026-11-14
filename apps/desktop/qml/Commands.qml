@@ -24,7 +24,7 @@ Dialog {
     readonly property var filteredCommands: {
         const terms = search.text.toLowerCase().trim().split(/\s+/).filter(t => t.length)
         return commands.filter(command => terms.every(term =>
-            (command.label + " " + command.shortcut).toLowerCase().includes(term)))
+            (command.label + " " + command.shortcut + " " + (command.keywords || "")).toLowerCase().includes(term)))
     }
     signal requested(string commandId)
     modal: true

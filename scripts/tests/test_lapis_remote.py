@@ -318,7 +318,11 @@ class IdentityTests(unittest.TestCase):
             registry.write_text(
                 json.dumps(
                     {
-                        "categories": [{"id": "general", "name": "General"}],
+                        # A category's colour is the desktop's own: read
+                        # past, and not passed on to the phone.
+                        "categories": [
+                            {"id": "general", "name": "General", "color": "pink"}
+                        ],
                         "agents": [
                             entry("a", harness="codex", resumeThread="t"),
                             entry(
@@ -331,10 +335,11 @@ class IdentityTests(unittest.TestCase):
                     }
                 )
             )
-            agents = {
-                agent["id"]: agent
-                for agent in remote.load_workspace(registry)["agents"]
-            }
+            workspace = remote.load_workspace(registry)
+            agents = {agent["id"]: agent for agent in workspace["agents"]}
+        self.assertEqual(
+            workspace["categories"], [{"id": "general", "name": "General"}]
+        )
         self.assertEqual(sorted(agents), ["a", "b", "c", "d"])
         self.assertEqual(
             (agents["a"]["mode"], agents["a"]["arguments"]), ("codex", ["resume", "t"])

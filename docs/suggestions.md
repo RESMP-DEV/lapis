@@ -160,8 +160,9 @@ build has no extension loaded; reload it once.
   pressed Return (or since Tab twice sent a guess) moves to the next agent that
   needs you. Only agents truly waiting on you count: a request, or a turn that
   finished with no background tasks, subagents or wakeups in flight, unseen or
-  with a guess, and not parked (looked at for 2.5 seconds and left without a
-  prompt). An agent at work, or paused while its own background work runs,
+  with a guess you have not seen, and not parked (looked at for 2.5 seconds and
+  left without a prompt). A turn you looked at, its guess included, waits no
+  longer. An agent at work, or paused while its own background work runs,
   never does. Among those, a request, an unseen turn or an unseen guess
   waiting over four hours comes first, then work categories, requests, turns
   you have not seen, and the newest.

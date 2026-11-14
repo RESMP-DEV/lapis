@@ -1,8 +1,8 @@
 """What lapis did for the person in the last day, from its own runtime logs.
 
 A short, read-only digest of use rather than of code: whether guesses worked
-and were taken (by prompt arm), Ultra Tab answers against what composing
-cost, how Tab moved, ping decisions and log warnings. It
+and were taken (by prompt arm), retired Ultra Tab deck answers, how Tab moved,
+ping decisions and log warnings. It
 reads ~/.lapis/runtime only and prints counts, never prompt or transcript text.
 
     python3 scripts/runtime_digest.py            # the last 24 hours

@@ -1,4 +1,5 @@
 #include "harness_models.hpp"
+#include "platform/published_task.hpp"
 
 #include <QDir>
 #include <QDirIterator>
@@ -387,7 +388,10 @@ void HarnessModels::readFiles() {
     for (const auto* id : {"kimi", "opencode", "omp"})
         if (!installed.contains(QString::fromLatin1(id)))
             set(QString::fromLatin1(id), {});
-    pool_.start([this, installed, home = home_] {
+    // The destructor waits for the pool, so `this` outlives the worker and
+    // the event it queues. PublishedTask makes both hand-offs, through Qt's
+    // uninstrumented queues, visible to ThreadSanitizer.
+    pool_.start(platform::PublishedTask([this, installed, home = home_] {
         QHash<QString, std::vector<ModelChoice>> found;
         if (installed.contains(QStringLiteral("kimi")))
             found.insert(QStringLiteral("kimi"), read_kimi(home));
@@ -396,12 +400,11 @@ void HarnessModels::readFiles() {
         if (installed.contains(QStringLiteral("omp")))
             found.insert(QStringLiteral("omp"), read_omp(home));
         QMetaObject::invokeMethod(
-            this,
-            [this, found = std::move(found)]() mutable {
+            this, platform::PublishedTask([this, found = std::move(found)]() mutable {
                 for (auto it = found.begin(); it != found.end(); ++it)
                     set(it.key(), std::move(it.value()));
-            },
+            }),
             Qt::QueuedConnection);
-    });
+    }));
 }
 } // namespace lapis::desktop

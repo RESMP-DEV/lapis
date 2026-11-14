@@ -85,9 +85,10 @@ QString Agent::statusLabel() const {
                                                  : QStringLiteral("Quiet");
     if (kind == QStringLiteral("working"))
         return QStringLiteral("Working");
-    // An agent waiting on an answer reads as a finished turn: it is yours to
-    // look at, and it pinged as one.
-    if (kind == QStringLiteral("waiting") || kind == QStringLiteral("finished"))
+    // A pending request blocks the agent until you answer in its terminal.
+    if (kind == QStringLiteral("waiting"))
+        return QStringLiteral("Needs your answer");
+    if (kind == QStringLiteral("finished"))
         return QStringLiteral("Turn finished");
     if (kind == QStringLiteral("idle"))
         return QStringLiteral("Ready");
@@ -115,6 +116,20 @@ QString Agent::attentionDiagnostic() const {
 int Agent::attentionCount() const {
     return attention_ ? static_cast<int>(attention_->requests.size())
                       : static_cast<int>(requests_.size());
+}
+QStringList Agent::attentionRequestIds() const {
+    if (!attention_)
+        return requests_.keys();
+    QStringList ids;
+    for (const auto& item : attention_->requests) {
+        const auto& id = item.pending.request.id;
+        const auto* number = std::get_if<std::int64_t>(&id);
+        ids.append(number ? QStringLiteral("n") + QString::number(*number)
+                          : QStringLiteral("s") +
+                                QString::fromLatin1(
+                                    QByteArray::fromStdString(std::get<std::string>(id)).toHex()));
+    }
+    return ids;
 }
 QString Agent::attentionReason() const {
     if (!attention_)
@@ -156,22 +171,23 @@ void Agent::applyAttention(session::wire::AttentionSnapshot snapshot) {
     bool arrived = false;
     QSet<QString> current;
     QHash<QString, QString> next_aliases;
+    const auto* previous = attention_ ? &*attention_ : nullptr;
     for (const auto& item : snapshot.requests) {
         const auto& id = item.pending.request.id;
         const auto current_key = token(snapshot, item.pending);
         const session::wire::AttentionItem* old = nullptr;
-        if (attention_) {
+        if (previous != nullptr) {
             const auto found = std::find_if(
-                attention_->requests.begin(), attention_->requests.end(), [&](const auto& value) {
+                previous->requests.begin(), previous->requests.end(), [&](const auto& value) {
                     return value.pending.request.id == id &&
                            value.pending.source_epoch == item.pending.source_epoch;
                 });
-            if (found != attention_->requests.end())
+            if (found != previous->requests.end())
                 old = &*found;
         }
         const auto stable_key =
-            old != nullptr && attention_->attachment.generation == snapshot.attachment.generation
-                ? display_token(*attention_, old->pending, attention_token_aliases_)
+            old != nullptr && previous->attachment.generation == snapshot.attachment.generation
+                ? display_token(*previous, old->pending, attention_token_aliases_)
                 : current_key;
         next_aliases.insert(current_key, stable_key);
         current.insert(stable_key);

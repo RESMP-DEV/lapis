@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-14T06:00:59Z",
+  "agent": "Codex",
+  "base_revision": "a44c6cb4576951eda03ddf8e7ae76107c8c5ff86",
+  "integration_revision": "ee73f8547c809d465f7b7dfedae2f63d2517a2d9",
+  "merge_revision": "a02b86b3cc77939923f90ffe3df606e4efae60bd",
+  "source_revision": "000c8c9f71b0dbf45aa76e985dd5838f2ffb6922",
+  "changed_source_manifest": {
+    "algorithm": "sha256(git diff --binary base_revision..source_revision -- ':(exclude)evidence/*')",
+    "digest": "0f9de5c9762c35c98176e16c9b8856a6976d4f1fa0d48eeb88f772a4040a651e",
+    "changed_paths": 80
+  },
+  "scope": "Merge the visual thread-loading, visual-view, sidebar/status, media/settings, and Factory stack into current main while preserving main's pooled preview decoding.",
+  "merge_resolution": [
+    "Took the integration branch's deliberate unseen-cue deletion and removed main's now-dangling pulseRunning alias; retained main's pooled, poolCount, ListView pooling handlers, and invisible pooled terminal surface.",
+    "Kept main's pooled-decode regression with assertions for unseen cue and pulse state removed, and combined the required transcript and local-protocol includes.",
+    "Combined the integration UI/attention status row with current main's unexercised runtime-tool wording, fixed the six-row count, sidebar wording, stale pulse comment, and runtime digest wording.",
+    "Replaced partial aggregate initializers, fixed no-op QVariant moves, moved dead owned/text values, bounded arithmetic, narrowed internal enum bases, added the transcript math include guard, and repaired Cppcheck initializer/value findings."
+  ],
+  "review_repairs": [
+    "A pre-light-mode file keeps visual.appearance absent until the user chooses a mode, so rewriting it no longer changes the window theme on the next launch; regression tests cover both mixed light-thread/dark-window and light-window/dark-thread inputs.",
+    "Save As now streams through QSaveFile and replaces the destination only after a complete copy; a source-read failure regression proves the existing destination survives.",
+    "The review sweep also repaired Factory keyboard/accessibility activation and receipt eliding, the orchestrator terminal override, narrow-window agent selection and sidebar range order, key-granular config saves, case-insensitive harness update keys, Linux descriptor enumeration, safe-close staleness and landed expiry refresh, Factory state version enforcement, Codex scan/search windows, send/capture timing and format handling, and the documented Tab-versus-chime lifetime.",
+    "Cold transcript switches keep synchronous parsing at the 1 MiB tail; warm deltas above 1 MiB show the kept state and parse on the low-priority catch-up thread before adoption.",
+    "The public site no longer advertises the removed Dock badge; it points to the persistent Requests list instead.",
+    "The second review wave repaired Factory selection rollback, agent-scoped send checks, final task-detail loads, running-state config adoption, signed blank diff lines, malformed \\not handling, active child-reader retention, reset-safe reader replacement, new request timestamps, capture fixture paths, benchmark loading checks, and attachment-only prompt acknowledgement.",
+    "Append-only warm catch-up adoption now preserves already-open work rows and the saved scroll place, carries only prompts sent after the warm clone, and protects the shown catch-up entry from budget eviction; the warm-growth regression covers all four.",
+    "A newly inserted active child reader is marked active before eviction, and a restored request reuses its saved wait timestamp when the request set was previously unknown.",
+    "Sent prompts carry stable tickets across cloned readers; in-flight readers are retained on switch, the selected catch-up starts immediately, completed delivery clears loading and stale kept state, a completed whole read replaces a protected cold-tail placeholder, and only a genuinely restored unseen wait reuses its saved age. Warm-growth cases prove prompts survive switches during loading.",
+    "Codex subagent rollout searches cache hits only; a recursive miss is retried so a rollout created under a later day folder is found."
+  ],
+  "validation": [
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "passed on 000c8c9 content; receipt build/reports/quality/receipt.json"
+    },
+    {
+      "command": "python3 scripts/lapis.py build",
+      "result": "passed on 000c8c9 content: configure, build, 49/49 enabled CTest, clang-format, 116/116 clang-tidy jobs, and Cppcheck"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -LE screen",
+      "result": "49/49 enabled tests passed after the analyzer-defect repairs"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -R '^(factory|factory-ui|transcript|transcript-clis|transcript-switch|workspace-visual-files)$'",
+      "result": "6/6 focused integration suites passed at the merge revision"
+    },
+    {
+      "command": "python3 scripts/lapis.py ui-review --json",
+      "result": "passed on 000c8c9 content; receipt build/reports/ui-review/20261114T055859Z-8n9olyao/receipt.json"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -R '^(transcript|transcript-switch|transcript-clis)$'",
+      "result": "3/3 passed at 583d1dd; transcript-switch includes a >1 MiB warm-growth case proving the GUI shows the kept state while the low-priority thread catches up"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen build/desktop/apps/desktop/lapis_transcript_capture --jsonl apps/desktop/tests/visual/codex/rollout-2026-11-10T10-00-00-0199a000-0000-7000-8000-00000000c0de.jsonl --send 'check reader' --then /dev/null",
+      "result": "passed at f05480c: format codex, send 0 row problems"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen build/desktop/apps/desktop/lapis_transcript_capture --jsonl apps/desktop/tests/visual/codex/rollout-2026-11-10T10-00-00-0199a000-0000-7000-8000-00000000c0de.jsonl --check --out-dir build/reports/nonexistent-captures",
+      "result": "failed as required at f05480c with exit 1 and 'could not write captures to build/reports/nonexistent-captures'"
+    },
+    {
+      "command": "python3 scripts/lapis.py asan",
+      "result": "default headless preset passed 18/18"
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-asan --output-on-failure --no-tests=error",
+      "result": "desktop-enabled ASan/UBSan passed 49/49 enabled tests"
+    },
+    {
+      "command": "python3 scripts/check_cli_launch.py --build-dir build/desktop-asan",
+      "result": "15/17 cases passed; backpressure and snapshot-limit timed out and reproduced identically on current main a44c6cb4"
+    },
+    {
+      "command": "python3 scripts/lapis.py tsan",
+      "result": "default headless preset passed 18/18"
+    },
+    {
+      "command": "QSG_RENDER_LOOP=threaded ctest --test-dir build/desktop-tsan --output-on-failure --no-tests=error",
+      "result": "47/49 enabled tests passed; next-prompt timed out and terminal-input missed a deadline, and both reproduced identically on current main a44c6cb4"
+    },
+    {
+      "command": "LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app && python3 scripts/package_macos.py verify",
+      "result": "ad-hoc signed arm64 bundle, strict signature/linkage checks, MoltenVK GPU enumeration, and launchd headless host passed on 000c8c9 content"
+    }
+  ],
+  "static_analysis_state": {
+    "pre_cleanup_current_main_unique_findings": 41,
+    "pre_cleanup_integration_unique_findings": 98,
+    "shared": 30,
+    "integration_only": 68,
+    "resolved_from_current_main": 11,
+    "pre_cleanup_categories": {
+      "readability-function-cognitive-complexity": 55,
+      "bugprone-easily-swappable-parameters": 24,
+      "other": 19
+    },
+    "cleanup_revision": "000c8c9f71b0dbf45aa76e985dd5838f2ffb6922",
+    "remaining_unique_findings": 0,
+    "desktop_clang_tidy_jobs_passed": 116,
+    "note": "Concrete optional-access, move, arithmetic, shift, enum, loop, branch, and exception-escape defects were repaired. Cohesive parser/test complexity and fixed positional contracts are suppressed only at the offending declarations with local reasons; thresholds and global baselines were not changed."
+  },
+  "non_claims": [
+    "No Developer ID Application identity is installed; packaging used the documented ad-hoc LAPIS_SIGN_IDENTITY=- fallback and does not qualify distribution signing, notarization, DMG publication, or appcast release.",
+    "ui-review is offscreen/software and does not exercise native macOS input, system IME, system clipboard, or native GPU presentation.",
+    "The package verifier enumerated MoltenVK GPU hardware but did not present a native user-facing frame.",
+    "Both vision-review lanes failed provider-side (Grok max turns; Z.AI insufficient balance), so the saved UI captures were not independently visually inspected.",
+    "The four current-main sanitizer failures described above are baseline observations, not integration regressions; this receipt does not claim those baseline cases passed.",
+    "No Developer ID signing result is claimed beyond the ad-hoc fallback above."
+  ]
+}

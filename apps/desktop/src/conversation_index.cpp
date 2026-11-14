@@ -1,4 +1,5 @@
 #include "conversation_index.hpp"
+#include "platform/published_task.hpp"
 
 #include <QDate>
 #include <QDateTime>
@@ -516,8 +517,12 @@ ConversationIndex::~ConversationIndex() {
 void ConversationIndex::refresh() {
     if (scanning_->exchange(true))
         return;
-    scan_pool_.start([paths = ScanPaths{claude_home_, codex_home_, cache_path_}, busy = scanning_,
-                      alive = alive_, memory = memory_, self = this] {
+    // PublishedTask makes both hand-offs, through Qt's uninstrumented
+    // queues, visible to ThreadSanitizer.
+    scan_pool_.start(platform::PublishedTask([paths =
+                                                  ScanPaths{claude_home_, codex_home_, cache_path_},
+                                              busy = scanning_, alive = alive_, memory = memory_,
+                                              self = this] {
         QElapsedTimer timer;
         timer.start();
         auto found = scan(paths, *alive, *memory);
@@ -530,14 +535,14 @@ void ConversationIndex::refresh() {
         // queued callback belongs to that QObject and is discarded on deletion.
         if (!QMetaObject::invokeMethod(
                 self,
-                [self, alive, busy, found = std::move(found)]() mutable {
+                platform::PublishedTask([self, alive, busy, found = std::move(found)]() mutable {
                     busy->store(false);
                     if (alive->load())
                         self->setConversations(std::move(found));
-                },
+                }),
                 Qt::QueuedConnection))
             busy->store(false);
-    });
+    }));
 }
 
 void ConversationIndex::setConversations(std::vector<Conversation> all) {

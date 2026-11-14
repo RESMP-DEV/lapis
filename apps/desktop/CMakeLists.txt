@@ -18,13 +18,16 @@ if(LAPIS_PACKAGE AND LAPIS_SPARKLE_FRAMEWORK)
         "<key>SUEnableAutomaticChecks</key><true/>")
 endif()
 add_library(lapis_desktop_core STATIC
-    src/workspace.cpp src/workspace.hpp
+    src/workspace.cpp src/workspace.hpp src/category_colors.hpp
+    src/workspace_factory.cpp src/factory_state.cpp src/factory_state.hpp
     src/harness_catalog.cpp src/harness_catalog.hpp
     src/workspace_control.cpp src/workspace_control.hpp
     src/alerts.cpp src/alerts.hpp
     src/chime_sounds.cpp src/chime_sounds.hpp
     src/platform/chime_file.cpp src/platform/chime_file.hpp
     src/conversation_index.cpp src/conversation_index.hpp
+    src/conversation_owner.cpp src/conversation_owner.hpp
+    src/platform/process_files.cpp src/platform/process_files.hpp
     src/terminals.cpp src/terminals.hpp
     src/next_prompt.cpp src/next_prompt.hpp
     src/tab_ranker.cpp src/tab_ranker.hpp
@@ -43,10 +46,13 @@ add_library(lapis_desktop_core STATIC
     src/gui_state.cpp src/gui_state.hpp
     src/app_paths.cpp src/app_paths.hpp
     src/desktop_actions.cpp src/desktop_actions.hpp src/platform_desktop.hpp
+    src/media_actions.cpp src/media_actions.hpp
     src/shell_environment.cpp src/shell_environment.hpp
     src/tool_status.cpp src/tool_status.hpp
     src/app_window.cpp src/app_window.hpp
-    src/transcript.cpp src/transcript.hpp
+    src/transcript.cpp src/transcript.hpp src/transcript_parts.hpp
+    src/transcript_codex.cpp src/transcript_antigravity.cpp
+    src/transcript_math.cpp src/transcript_math.hpp
     src/code_highlight.cpp src/code_highlight.hpp
     src/slash_commands.cpp src/slash_commands.hpp)
 target_include_directories(lapis_desktop_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -90,7 +96,7 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_core Qt6::QuickControls2)
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml qml/SettingsPreview.qml qml/FactoryBoard.qml)
 # A development bundle has its own identity, so macOS never mistakes it for
 # the installed app: `open` would otherwise bring the installed lapis forward,
 # and the two would share notification and preference state.
@@ -163,10 +169,32 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_history_strip_tests PRIVATE lapis_project_options lapis_desktop_core)
     add_test(NAME history-strip COMMAND lapis_history_strip_tests)
     set_tests_properties(history-strip PROPERTIES TIMEOUT 20)
+    add_executable(lapis_media_actions_tests tests/media_actions_test.cpp)
+    target_link_libraries(lapis_media_actions_tests PRIVATE lapis_project_options lapis_desktop_core)
+    add_test(NAME media-actions COMMAND lapis_media_actions_tests)
+    set_tests_properties(media-actions PROPERTIES TIMEOUT 20)
     add_executable(lapis_transcript_tests tests/transcript_test.cpp)
     target_link_libraries(lapis_transcript_tests PRIVATE lapis_project_options lapis_desktop_core)
     add_test(NAME transcript COMMAND lapis_transcript_tests)
     set_tests_properties(transcript PROPERTIES TIMEOUT 20)
+    # The other CLIs' readers, against the synthetic conversations in tests/visual.
+    add_executable(lapis_transcript_clis_tests tests/transcript_clis_test.cpp)
+    target_link_libraries(lapis_transcript_clis_tests PRIVATE lapis_project_options
+        lapis_desktop_core)
+    target_compile_definitions(lapis_transcript_clis_tests PRIVATE
+        LAPIS_VISUAL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/visual")
+    add_test(NAME transcript-clis COMMAND lapis_transcript_clis_tests)
+    set_tests_properties(transcript-clis PROPERTIES TIMEOUT 20)
+    # Switching agents in the visual view: a cold thread's end first, threads
+    # kept within a budget, kept ones following their files, the view's place.
+    add_executable(lapis_transcript_switch_tests tests/transcript_switch_test.cpp)
+    target_link_libraries(lapis_transcript_switch_tests PRIVATE lapis_project_options
+        lapis_desktop_core)
+    target_compile_definitions(lapis_transcript_switch_tests PRIVATE
+        LAPIS_VISUAL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/visual"
+        LAPIS_TRANSCRIPT_QML="${CMAKE_CURRENT_SOURCE_DIR}/qml/Transcript.qml")
+    add_test(NAME transcript-switch COMMAND lapis_transcript_switch_tests)
+    set_tests_properties(transcript-switch PROPERTIES TIMEOUT 60)
     # Offscreen contact sheet and scroll timing of the visual view (a review
     # tool); its --keys check of the bar's editing keys is a CTest entry.
     add_executable(lapis_transcript_capture tests/transcript_capture.cpp)
@@ -175,6 +203,9 @@ if(BUILD_TESTING)
         LAPIS_TRANSCRIPT_QML="${CMAKE_CURRENT_SOURCE_DIR}/qml/Transcript.qml")
     add_test(NAME transcript-keys COMMAND lapis_transcript_capture --keys)
     set_tests_properties(transcript-keys PROPERTIES TIMEOUT 30)
+    add_test(NAME transcript-live COMMAND lapis_transcript_capture --live-checks)
+    add_test(NAME transcript-media COMMAND lapis_transcript_capture --media-checks)
+    set_tests_properties(transcript-live transcript-media PROPERTIES TIMEOUT 30)
     add_executable(lapis_cell_shapes_tests tests/cell_shapes_test.cpp)
     target_link_libraries(lapis_cell_shapes_tests PRIVATE lapis_project_options lapis_desktop_core)
     add_test(NAME cell-shapes COMMAND lapis_cell_shapes_tests)
@@ -218,6 +249,15 @@ if(BUILD_TESTING)
     add_test(NAME workspace-local-codex COMMAND lapis_workspace_tests --case local-codex)
     set_tests_properties(workspace-local-codex PROPERTIES TIMEOUT 90
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # The sidebar's walk and category colours; no process or window.
+    add_test(NAME workspace-sidebar COMMAND lapis_workspace_tests --case sidebar)
+    set_tests_properties(workspace-sidebar PROPERTIES TIMEOUT 20
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # The visual view's files, with stand-in processes and a restore through
+    # the real session service; windowless.
+    add_test(NAME workspace-visual-files COMMAND lapis_workspace_tests --case visual-files)
+    set_tests_properties(workspace-visual-files PROPERTIES TIMEOUT 60
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     # These launch the real desktop host or QML windows. On a Mac someone is
     # using they would show windows, so they run only on request.
     set_tests_properties(workspace workspace-remote-hooks workspace-retired-plans
@@ -245,6 +285,22 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_config_tests PRIVATE lapis_project_options lapis_desktop_core)
     add_test(NAME config COMMAND lapis_config_tests)
     set_tests_properties(config PROPERTIES TIMEOUT 20)
+
+    # The factory view: the judge's file, stage rules, the orchestrator and
+    # the workspace requests; and its window, always offscreen and software.
+    add_executable(lapis_factory_tests tests/factory_test.cpp)
+    target_link_libraries(lapis_factory_tests PRIVATE lapis_project_options lapis_desktop_core)
+    add_test(NAME factory COMMAND lapis_factory_tests)
+    set_tests_properties(factory PROPERTIES TIMEOUT 30
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    add_executable(lapis_factory_ui_tests tests/factory_ui_test.cpp)
+    target_link_libraries(lapis_factory_ui_tests PRIVATE lapis_project_options lapis_desktop_core
+        Qt6::QuickControls2)
+    target_compile_definitions(lapis_factory_ui_tests PRIVATE
+        LAPIS_QML_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/qml/Main.qml")
+    add_test(NAME factory-ui COMMAND lapis_factory_ui_tests --background)
+    set_tests_properties(factory-ui PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic")
 
     add_executable(lapis_tool_status_tests tests/tool_status_test.cpp)
     target_link_libraries(lapis_tool_status_tests PRIVATE lapis_project_options lapis_desktop_core)

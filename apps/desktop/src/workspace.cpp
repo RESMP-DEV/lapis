@@ -1,7 +1,9 @@
 #include "workspace.hpp"
 #include "agent_checkpoint.hpp"
 #include "app_paths.hpp"
+#include "category_colors.hpp"
 #include "conversation_index.hpp"
+#include "conversation_owner.hpp"
 #include "harness_catalog.hpp"
 #include "hook_relay.hpp"
 #include "live_connection.hpp"
@@ -35,6 +37,8 @@
 #include <chrono>
 #include <iterator>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -437,6 +441,8 @@ QString codex_profile(const QStringList& arguments) {
     }
     return profile;
 }
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QString remoteHookPreamble(const QString& cli, const QString& codex_profile = {}) {
     QString preamble = QStringLiteral(
         R"sh(export LAPIS_HOOK_NONCE="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" )sh"
@@ -731,6 +737,7 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
       headless_(options.headless), update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
       fixture_mode_(mode == WorkspaceMode::fixture) {
     transcript_ = new TranscriptModel(this);
+    setupFactory();
     // Before selecting clears the arriving agent's unseen mark, so a choice
     // is recorded with the state the person chose from.
     choice_settle_.setSingleShot(true);
@@ -739,11 +746,9 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
     // Only intent-driven selection and navigation below call noteFocusMove;
     // structural changes may reassign focus without a person's move.
     harness_updates_off_ = options.harnessUpdatesOff;
-    // Selecting an agent is looking at it.
-    connect(this, &Workspace::focusChanged, this, [this] {
-        if (auto* focused = focusedAgent())
-            focused->setUnseen(false);
-    });
+    // Showing an agent on the stage, by any path, is looking at it while the
+    // person is at the window.
+    connect(this, &Workspace::focusChanged, this, [this] { noteLooking(QStringLiteral("focus")); });
     const auto add = [this](const char* title, const char* directory, const char* activity,
                             const char* accent, std::string_view content) {
         items_.push_back(std::make_unique<Agent>(
@@ -781,10 +786,17 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
                 ? QDir(rootDirectory()).filePath(QStringLiteral("runtime/workspace.json"))
                 : QFileInfo(options.storagePath).absoluteFilePath();
         restore();
+        // The factory judge writes its verdicts beside the registry.
+        setFactoryStatePath(QDir(QFileInfo(storage_path_).absolutePath())
+                                .filePath(QStringLiteral("factory_state.json")));
         // Tab's move log lives beside the registry, owner-only.
         tab_ranker_ = std::make_unique<TabRanker>(QFileInfo(storage_path_).absolutePath());
         restoreSelection();
         rememberInitialFocus();
+        // A few file and process lookups per unnamed agy or Codex agent.
+        conversation_pins_.setInterval(5000);
+        connect(&conversation_pins_, &QTimer::timeout, this, &Workspace::pinConversations);
+        conversation_pins_.start();
         return;
     }
     add("Codex", "lapis", "UI preview", "#87cbac", "~/lapis\r\n\r\n> Ready for the next step.\r\n");
@@ -881,11 +893,44 @@ void Workspace::nextAgent(int delta) {
     emit focusChanged();
 }
 
+void Workspace::nextAgentAcrossCategories(int delta) {
+    if (delta == 0)
+        return;
+    // The sidebar's order, and where the active category's agents begin.
+    QStringList order;
+    qsizetype boundary = 0;
+    for (const auto& group : categories_) {
+        if (group.id == active_category_)
+            boundary = order.size();
+        for (const auto& item : items_)
+            if (agents_.value(item->agentId()).category == group.id)
+                order.append(item->agentId());
+    }
+    if (order.isEmpty())
+        return;
+    const auto count = order.size();
+    const auto* focused = focusedAgent();
+    qsizetype target = 0;
+    if (focused != nullptr) {
+        const auto here = order.indexOf(focused->agentId());
+        if (here < 0)
+            return;
+        target = here + delta;
+    } else {
+        // An empty category sits between the agents before and after it.
+        target = delta > 0 ? boundary + delta - 1 : boundary + delta;
+    }
+    selectAgent(order.at(((target % count) + count) % count));
+}
+
 // Truly waiting on the person: a request, or a turn its observer saw finish
 // with no background work in flight (a turn paused on its own background work
 // reads as working until it ends or its deadline passes) that is unseen or has
-// a guess. An agent at work, unknown, ended or closing never is, and neither
+// a guess not yet seen. A turn the person looked at, with any guess it shows,
+// waits no longer. An agent at work, unknown, ended or closing never is, and neither
 // is one whose quiet is only an output estimate: silence is not a finished turn.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
                                                        const Agent* exclude) const {
     std::vector<TabCandidate> out;
@@ -900,7 +945,8 @@ std::vector<TabCandidate> Workspace::waitingCandidates(const QVariantMap& ready,
         const bool request = item->attentionPending();
         const bool finished = kind == QLatin1String("finished") ||
                               (kind == QLatin1String("idle") && item->hasAttentionSource());
-        if (!request && !(finished && (item->unseen() || guess != ready.end())))
+        const bool fresh_guess = guess != ready.end() && !guess->toBool();
+        if (!request && !(finished && (item->unseen() || fresh_guess)))
             continue;
         if (!request && parked(item.get()))
             continue;
@@ -1108,7 +1154,10 @@ void Workspace::noteStructuralFocus() {
     const auto* focused = focusedAgent();
     last_focus_id_ = focused != nullptr ? focused->agentId() : QString{};
 }
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Workspace::watch(Agent* item) {
+    watchFactory(item);
     // Its unseen mark and whether it is at work outlive a window (GuiState).
     connect(item, &Agent::unseenChanged, this, &Workspace::marksChanged);
     connect(item, &Agent::statusChanged, this, &Workspace::marksChanged);
@@ -1121,9 +1170,33 @@ void Workspace::watch(Agent* item) {
             reattachIfDisconnected(id);
         });
     });
-    // A request pings as a finished turn does, and marks the agent the same way
-    // (below); lapis shows no separate request state.
-    connect(item, &Agent::attentionArrived, this, [this, item] { emit turnFinished(item); });
+    // A request pings as a finished turn does and marks the agent the same
+    // way, once per request: one that comes back after a reconnect or with a
+    // new revision is the request already marked.
+    connect(item, &Agent::attentionArrived, this, [this, item] {
+        auto& known = known_requests_[item->agentId()];
+        const auto ids = item->attentionRequestIds();
+        const bool was_unknown = known.empty();
+        const bool had_pending = std::any_of(
+            ids.begin(), ids.end(), [&known](const QString& id) { return known.contains(id); });
+        const bool fresh = std::any_of(ids.begin(), ids.end(),
+                                       [&known](const QString& id) { return !known.contains(id); });
+        if (known.size() > 256)
+            known.clear();
+        for (const auto& id : ids)
+            known.insert(id);
+        // The inbox orders by the first request still pending, not each new one.
+        if (!had_pending) {
+            const auto arrived = QDateTime::currentMSecsSinceEpoch();
+            const auto restored = item->neededAtMs();
+            waiting_since_.insert(item->agentId(),
+                                  was_unknown && item->restoredUnseen() && restored > 0
+                                      ? std::min(restored, arrived)
+                                      : arrived);
+        }
+        emit needsYou(item, fresh ? markNeedsYou(item, Need::request) : QStringLiteral("repeat"));
+        emit turnFinished(item);
+    });
     last_kind_.insert(item, item->statusKind());
     connect(item, &Agent::statusChanged, this, [this, item] { noteStatus(item); });
     // For Tab's ranking: when it began waiting, and when its turns started.
@@ -1148,49 +1221,42 @@ void Workspace::watch(Agent* item) {
             waiting_since_.insert(id, at);
         }
     });
-    connect(item, &Agent::attentionArrived, this, [this, item] {
-        waiting_since_.insert(item->agentId(), QDateTime::currentMSecsSinceEpoch());
-    });
-    connect(item, &Agent::unseenChanged, this, [this] {
-        if (!batching_categories_)
-            emit categoriesChanged();
-    });
-    // A new request marks an unselected agent; the category's request count
-    // and its unseen count change together, so publish them once.
+    // The category's request count follows the agent's (the mark follows
+    // attentionArrived above).
     connect(item, &Agent::attentionChanged, this,
             [this, item, count = item->attentionCount()]() mutable {
                 const int updated = item->attentionCount();
                 if (updated == count)
                     return;
-                batching_categories_ = true;
-                if (updated > count && item != focusedAgent())
-                    item->setUnseen(true);
-                batching_categories_ = false;
                 count = updated;
                 emit categoriesChanged();
             });
 }
-int Workspace::attentionAgents() const {
-    return static_cast<int>(std::count_if(items_.begin(), items_.end(),
-                                          [](const auto& item) { return item->unseen(); }));
-}
 QVariantList Workspace::categories() const {
     QVariantList result;
+    std::size_t position = 0;
     for (const auto& category : categories_) {
         int count = 0;
-        int unseen = 0;
-        int agents = 0;
+        QVariantList agents;
         for (const auto& item : items_)
             if (agents_.value(item->agentId()).category == category.id) {
                 count += item->attentionCount();
-                unseen += item->unseen() ? 1 : 0;
-                ++agents;
+                agents.append(QVariant::fromValue(item.get()));
             }
-        result.append(QVariantMap{{"id", category.id},
-                                  {"name", category.name},
-                                  {"attentionCount", count},
-                                  {"unseenCount", unseen},
-                                  {"agentCount", agents}});
+        // The colour shown: the chosen one when this build knows it, else
+        // the one the category's position gives it.
+        const auto chosen = category.color.toStdString();
+        const auto shown = category_color_known(chosen) ? std::string_view(chosen)
+                                                        : category_color_for_position(position);
+        ++position;
+        result.append(QVariantMap{
+            {"id", category.id},
+            {"name", category.name},
+            {"attentionCount", count},
+            {"agentCount", static_cast<int>(agents.size())},
+            {"agents", agents},
+            {"color", QString::fromLatin1(shown.data(), static_cast<qsizetype>(shown.size()))},
+            {"colorChoice", category.color}});
     }
     return result;
 }
@@ -1285,6 +1351,25 @@ bool Workspace::renameCategory(const QString& id, const QString& name) {
             return true;
         }
     return fail(QStringLiteral("Category no longer exists."));
+}
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+bool Workspace::setCategoryColor(const QString& id, const QString& color) {
+    if (!mutableRegistry())
+        return false;
+    if (!color.isEmpty() && !category_color_known(color.toStdString()))
+        return fail(QStringLiteral("Choose one of the category colours."));
+    auto* place = category(id);
+    if (place == nullptr)
+        return fail(QStringLiteral("Category no longer exists."));
+    if (place->color == color)
+        return true;
+    const auto previous = checkpoint();
+    place->color = color;
+    if (!commit(previous))
+        return false;
+    emit categoriesChanged();
+    return true;
 }
 bool Workspace::removeCategory(const QString& id) {
     if (!mutableRegistry())
@@ -1416,11 +1501,13 @@ QString Workspace::agentConversation(const QString& id) const {
     if (entry == agents_.cend())
         return {};
     // The observer's (or, for other CLIs, the hook's) record follows /new
-    // and /resume; a resumed agent without one yet has lapis's pair.
+    // and /resume; without one, the conversation lapis pinned to the agent
+    // from its own process (agy, Codex before its first turn ends), else the
+    // one lapis resumed.
     const auto record = session::read_resume_record(entry->endpoint);
     if (record && record->agent == entry->harness && resumable(*record, entry->harness))
         return record->session_id;
-    return entry->managed_resume_identity;
+    return entry->conversation.isEmpty() ? entry->managed_resume_identity : entry->conversation;
 }
 bool Workspace::moveAgent(const QString& id, const QString& categoryId) {
     if (!mutableRegistry())
@@ -1607,6 +1694,7 @@ bool Workspace::discardAgent(const QString& id) {
     worked_remotely_.remove(id);
     reloading_.remove(id);
     last_kind_.remove(item);
+    known_requests_.remove(id);
     waiting_since_.remove(id);
     parked_at_.remove(id);
     turn_starts_.remove(id);
@@ -1760,6 +1848,8 @@ QVariantMap Workspace::agentDefaults() const {
             {QStringLiteral("mode"), agent_defaults_.mode},
             {QStringLiteral("machines"), machines}};
 }
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::optional<Workspace::ResumeLaunch> Workspace::agentLaunch(const AgentRequest& request) {
     const auto refuse = [this](const QString& message) -> std::optional<ResumeLaunch> {
         fail(message);
@@ -1923,6 +2013,8 @@ QJsonObject Workspace::agentRecord(const AgentRecord& agent, const QString& id,
         serialized.insert(QStringLiteral("named"), true);
     if (agent.auto_title)
         serialized.insert(QStringLiteral("autoTitle"), true);
+    if (!agent.conversation.isEmpty())
+        serialized.insert(QStringLiteral("conversation"), agent.conversation);
     const auto resume_option = resumeOption(agent.harness);
     if (agent.managed_resume_index >= 0 &&
         agent.managed_resume_index + 1 < agent.launch.arguments.size() &&
@@ -1946,9 +2038,14 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
         return saveError(
             QStringLiteral("Workspace registry could not be loaded; it has not been overwritten."));
     QJsonArray groups;
-    for (const auto& category : categories_)
-        groups.append(QJsonObject{
-            {"id", category.id}, {"name", category.name}, {"selected", category.selected}});
+    for (const auto& category : categories_) {
+        QJsonObject group{
+            {"id", category.id}, {"name", category.name}, {"selected", category.selected}};
+        // Only a chosen colour is written; earlier builds ignore the field.
+        if (!category.color.isEmpty())
+            group.insert(QStringLiteral("color"), category.color);
+        groups.append(group);
+    }
     QJsonArray agents;
     for (const auto& item : items_) {
         const auto entry = agents_.constFind(item->agentId());
@@ -1959,11 +2056,14 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
     }
     for (const auto& kept : unreadable_agents_)
         agents.append(kept);
-    const auto data = QJsonDocument(QJsonObject{{"version", 2},
-                                                {"activeCategory", active_category_},
-                                                {"categories", groups},
-                                                {"agents", agents}})
-                          .toJson(QJsonDocument::Compact);
+    QJsonObject root{{"version", 2},
+                     {"activeCategory", active_category_},
+                     {"categories", groups},
+                     {"agents", agents}};
+    // The factory view's pinned orchestrator; earlier builds ignore it.
+    if (!home_agent_id_.isEmpty())
+        root.insert(QStringLiteral("homeAgent"), home_agent_id_);
+    const auto data = QJsonDocument(root).toJson(QJsonDocument::Compact);
     if (data.size() > qint64{1024} * 1024)
         return saveError(QStringLiteral("Workspace metadata exceeds the 1 MiB limit."));
     QString failure;
@@ -1986,6 +2086,12 @@ void Workspace::loadCategories(const QJsonArray& groups) {
         if (!validName(category.id) || !validName(category.name) || category.selected.size() > 80 ||
             ids.contains(category.id))
             throw std::runtime_error("Invalid or duplicate category");
+        // A colour is optional and never makes the registry unreadable: a
+        // name this build does not know is kept (a later build's hue) and
+        // shown as the position's colour; anything but a short name is dropped.
+        if (const auto color = group.value(QStringLiteral("color")).toString();
+            color.size() <= 32 && validName(color))
+            category.color = color;
         ids.insert(category.id);
         categories.push_back(category);
     }
@@ -2024,17 +2130,53 @@ bool resumable(const session::ResumeRecord& record, const QString& harness) {
 }
 
 // Where Claude Code saved a conversation on this Mac: one folder per project
-// under its projects directory. Empty when it has not saved one.
-QString claudeTranscript(const QString& conversation) {
+// under its projects directory. Empty when it has not saved one. The folder
+// Claude Code names after `directory` (each character other than a letter or
+// digit made a '-') is looked in first; `search` false looks only there.
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+QString claudeTranscript(const QString& conversation, const QString& directory = {},
+                         bool search = true) {
     const QDir projects(
         qEnvironmentVariable("CLAUDE_CONFIG_DIR", QDir::homePath() + QStringLiteral("/.claude")) +
         QStringLiteral("/projects"));
     const auto transcript = conversation + QStringLiteral(".jsonl");
+    if (!directory.isEmpty()) {
+        QString folder = directory;
+        for (auto& c : folder)
+            if (!(c.isLetterOrNumber() && c.unicode() < 128))
+                c = QLatin1Char('-');
+        if (const auto path = projects.filePath(folder + QLatin1Char('/') + transcript);
+            QFileInfo::exists(path))
+            return path;
+    }
+    if (!search)
+        return {};
     for (const auto& folder : projects.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
         const auto path = projects.filePath(folder + QLatin1Char('/') + transcript);
         if (QFileInfo::exists(path))
             return path;
     }
+    return {};
+}
+
+// The rollout Codex saved a thread in, under sessions/YYYY/MM/DD (newest
+// days first, no symlinks), or empty.
+QString codexRollout(const QDir& directory, const QString& conversation, int depth) {
+    if (depth == 0) {
+        QDirIterator rollouts(
+            directory.path(),
+            {QStringLiteral("rollout-*-") + conversation + QStringLiteral(".jsonl")},
+            QDir::Files | QDir::NoSymLinks, QDirIterator::NoIteratorFlags);
+        return rollouts.hasNext() ? rollouts.next() : QString();
+    }
+    const auto pattern = QStringLiteral("[0-9]").repeated(depth == 3 ? 4 : 2);
+    for (const auto& folder :
+         directory.entryList({pattern}, QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks,
+                             QDir::Name | QDir::Reversed))
+        if (auto found = codexRollout(QDir(directory.filePath(folder)), conversation, depth - 1);
+            !found.isEmpty())
+            return found;
     return {};
 }
 
@@ -2050,20 +2192,146 @@ bool conversationSaved(const session::ResumeRecord& record) {
     }
     return true;
 }
+
+bool pinnedHarness(const QString& harness) {
+    return harness == QLatin1String("agy") || harness == QLatin1String("codex");
+}
 } // namespace
-QString Workspace::conversationFile(const QString& id) const {
+conversation_owner::Agent Workspace::conversationOwner(const QString& id) const {
+    const auto& entry = *agents_.constFind(id);
+    const auto record = session::read_resume_record(entry.endpoint);
+    const bool recorded =
+        record && record->agent == entry.harness && resumable(*record, entry.harness);
+    auto known = recorded ? record->session_id : agentConversation(id);
+    if (QUuid::fromString(known).isNull())
+        known.clear();
+    return {id, entry.harness, entry.launch.directory, entry.endpoint, known, recorded};
+}
+void Workspace::pinConversations() {
+    if (fixture_mode_)
+        return;
+    QList<conversation_owner::Agent> owners;
+    for (auto entry = agents_.cbegin(); entry != agents_.cend(); ++entry)
+        if (pinnedHarness(entry->harness) && agentMachine(*entry).isEmpty())
+            owners.append(conversationOwner(entry.key()));
+    applyPins(conversation_owner::pins(owners));
+}
+void Workspace::applyPins(const QHash<QString, QString>& pins) {
+    if (pins.isEmpty())
+        return;
+    for (auto pin = pins.cbegin(); pin != pins.cend(); ++pin)
+        if (const auto entry = agents_.find(pin.key()); entry != agents_.end())
+            entry->conversation = pin.value();
+    // Kept in memory regardless; the registry carries it across restarts.
+    if (storage_path_.isEmpty() || storage_failed_)
+        return;
+    const auto error = error_;
+    if (!save()) {
+        qWarning().noquote() << "Conversation pin not saved:" << error_;
+        error_ = error;
+    }
+}
+QString Workspace::conversationFile(const QString& id) {
+    if (fixture_mode_)
+        return fixture_files_.value(id);
     const auto entry = agents_.constFind(id);
-    if (entry == agents_.cend() || entry->harness != QLatin1String("claude") ||
-        !agentMachine(*entry).isEmpty())
+    if (entry == agents_.cend() || !agentMachine(*entry).isEmpty())
+        return {};
+    const auto& harness = entry->harness;
+    if (harness != QLatin1String("claude") && !pinnedHarness(harness))
+        return {};
+    if (pinnedHarness(harness)) {
+        // Codex names its conversation when its first turn ends; agy never
+        // does. Until then the agent's own process says which it writes, and
+        // that choice is pinned (conversation_owner.hpp). An agent with none
+        // yet is placed among all of them, so no two take one conversation.
+        if (const auto owner = conversationOwner(id); owner.known.isEmpty())
+            pinConversations();
+        else if (!owner.recorded)
+            if (const auto held =
+                    conversation_owner::held_conversation(harness, owner.endpoint, owner.known);
+                !held.isEmpty() && held != owner.known)
+                applyPins({{id, held}});
+    }
+    return knownConversationFile(id);
+}
+QString Workspace::knownConversationFile(const QString& id) {
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend() || !agentMachine(*entry).isEmpty())
+        return {};
+    const auto& harness = entry->harness;
+    const bool codex = harness == QLatin1String("codex");
+    if (harness != QLatin1String("claude") && !pinnedHarness(harness))
         return {};
     const auto conversation = agentConversation(id);
     // A conversation id is a UUID; anything else never names a file.
     if (QUuid::fromString(conversation).isNull())
         return {};
-    return claudeTranscript(conversation);
+    if (harness == QLatin1String("claude")) {
+        // Transcripts never move either; a cached one is checked to exist.
+        // One not saved yet is looked for again as the view asks (every
+        // two seconds), searching every project folder at most every 30.
+        auto path = claude_paths_.value(conversation);
+        if (!path.isEmpty() && QFileInfo::exists(path))
+            return path;
+        const auto now = QDateTime::currentMSecsSinceEpoch();
+        const auto searched = claude_searched_.value(conversation, -1);
+        const bool broad_search = searched < 0 || now - searched > 30'000;
+        path = claudeTranscript(conversation, entry->launch.directory, broad_search);
+        if (broad_search)
+            claude_searched_.insert(conversation, now);
+        if (!path.isEmpty())
+            claude_paths_.insert(conversation, path);
+        return path;
+    }
+    if (!codex)
+        return conversation_owner::antigravity_transcript(conversation);
+    // Rollouts never move, so a thread's path is looked up once.
+    auto path = rollout_paths_.value(conversation);
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        path = codexRollout(QDir(conversation_owner::codex_home() + QStringLiteral("/sessions")),
+                            conversation, 3);
+        if (!path.isEmpty())
+            rollout_paths_.insert(conversation, path);
+    }
+    return path;
 }
+void Workspace::setVisualKeep(int mb, int threads, bool ahead) {
+    auto* transcript = qobject_cast<TranscriptModel*>(transcript_);
+    transcript->setBudget(qint64{mb} * 1024 * 1024, threads);
+    // Once a run: a few seconds after launch, or after every agent is
+    // switched to show as a thread.
+    if (!ahead || warm_scheduled_ || fixture_mode_ || headless_)
+        return;
+    warm_scheduled_ = true;
+    QTimer::singleShot(4000, this, [this] { warmThreads(); });
+}
+
+void Workspace::warmThreads() {
+    // Only conversations already known: the pin timer places the rest, and
+    // reading ahead must not search every agent's processes in one go.
+    QList<std::pair<qint64, QString>> found;
+    for (auto entry = agents_.cbegin(); entry != agents_.cend(); ++entry) {
+        const auto path = knownConversationFile(entry.key());
+        if (!path.isEmpty())
+            found.append({QFileInfo(path).lastModified().toMSecsSinceEpoch(), path});
+    }
+    std::ranges::sort(found, [](const auto& a, const auto& b) { return a.first > b.first; });
+    QStringList paths;
+    for (const auto& [modified, path] : found)
+        paths << path;
+    qobject_cast<TranscriptModel*>(transcript_)->warm(paths);
+}
+
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
 QString Workspace::forkConversation(const QString& id, const QString& record, bool before) const {
-    const auto source = conversationFile(id);
+    // A fork copies Claude Code's own records; other CLIs' files differ.
+    const auto entry = agents_.constFind(id);
+    if (entry == agents_.cend() || entry->harness != QLatin1String("claude") ||
+        !agentMachine(*entry).isEmpty() || QUuid::fromString(agentConversation(id)).isNull())
+        return {};
+    const auto source = claudeTranscript(agentConversation(id));
     if (source.isEmpty() || QUuid::fromString(record).isNull())
         return {};
     QFile in(source);
@@ -2071,7 +2339,7 @@ QString Workspace::forkConversation(const QString& id, const QString& record, bo
         return {};
     // A fork is a copy of the conversation up to the record, under a new id,
     // beside the original: what Claude Code's own fork writes.
-    const auto fork = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    auto fork = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const auto original = agentConversation(id);
     const auto marker = QStringLiteral("\"uuid\":\"%1\"").arg(record).toUtf8();
     QByteArray out;
@@ -2531,6 +2799,8 @@ void Workspace::applyStartupDefaults(const AgentRecord& agent, ResumeLaunch& pla
     }
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 auto Workspace::restoredLaunch(const AgentRecord& agent, QString* diagnostic)
     -> std::optional<ResumeLaunch> {
     try {
@@ -2548,7 +2818,12 @@ auto Workspace::restoredLaunch(const AgentRecord& agent, QString* diagnostic)
         const auto option = resumeOption(agent.harness);
         ResumeLaunch plan{std::move(launch), agent.managed_resume_index,
                           agent.managed_resume_identity};
-        const auto record = session::read_resume_record(agent.endpoint);
+        auto record = session::read_resume_record(agent.endpoint);
+        // With no record from the CLI, the conversation lapis pinned from the
+        // agent's own process (an agy agent's, always) is the one to resume.
+        if (!record && !agent.conversation.isEmpty())
+            record = session::ResumeRecord{agent.harness, agent.conversation,
+                                           session::ResumeSource::legacy};
         if (record && !resumable(*record, agent.harness)) {
             // Retire only a proven lapis-owned pair. Explicit user arguments stay
             // authoritative, including when old derived metadata no longer matches.
@@ -2634,6 +2909,8 @@ void Workspace::loadManagedResume(const QJsonValue& value, AgentRecord& agent) {
     agent.managed_resume_index = index;
     agent.managed_resume_identity = identity;
 }
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Workspace::loadAgents(const QJsonArray& agents) {
     QMap<QString, AgentRecord> metadata;
     std::vector<std::unique_ptr<Agent>> restored;
@@ -2678,6 +2955,10 @@ void Workspace::loadAgents(const QJsonArray& agents) {
                 loadManagedResume(object.value(QStringLiteral("managedResume")), agent);
             agent.named = object.value(QStringLiteral("named")).toBool();
             agent.auto_title = object.value(QStringLiteral("autoTitle")).toBool();
+            // A pin that is not a conversation id is dropped; it is found again.
+            if (const auto pinned = object.value(QStringLiteral("conversation")).toString();
+                !QUuid::fromString(pinned).isNull())
+                agent.conversation = pinned;
             // "account" named a retired lapis-managed plan; it is ignored and
             // dropped on the next save, and the agent uses its machine's own
             // sign-in from its next start (see prepareStart).
@@ -2777,6 +3058,9 @@ void Workspace::restore() {
         if (std::none_of(categories_.begin(), categories_.end(),
                          [&](const auto& category) { return category.id == active_category_; }))
             active_category_ = categories_.front().id;
+        if (const auto home = root.value(QStringLiteral("homeAgent")).toString();
+            agents_.contains(home))
+            home_agent_id_ = home;
         connectRestoredAgents();
     } catch (const std::exception& error) {
         items_.clear();
@@ -2788,6 +3072,8 @@ void Workspace::restore() {
         fail(QStringLiteral("Cannot restore workspace: ") + QString::fromUtf8(error.what()));
     }
 }
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Workspace::connectRestoredAgents() {
     // Save the full restart plan before constructing create-mode connections.
     // Existing-service reconnections keep their separate path below.
@@ -3040,12 +3326,14 @@ void Workspace::finishClosing(Agent* item) {
 }
 void Agent::restoreUnseen(bool unseen, qint64 neededAtMs) {
     needed_at_ms_ = std::max<qint64>(0, neededAtMs);
+    restored_unseen_ = unseen;
     if (unseen_ == unseen)
         return;
     unseen_ = unseen;
     emit unseenChanged();
 }
 void Agent::setUnseen(bool unseen) {
+    restored_unseen_ = false;
     if (unseen_ == unseen)
         return;
     unseen_ = unseen;
@@ -3074,28 +3362,97 @@ void Agent::noteOutput() {
         quiet_timer_.start(output_timing_.quiet_ms);
 }
 
-// A turn ending marks an unselected agent; new requests are marked where the
-// request count changes.
+// The attention marks, in one place:
+//
+// - A finished turn (a status that settles from working, or a turn the
+//   observer reports) or a new request marks the agent unseen exactly once,
+//   unless the person is looking at it then (looking()): then it is seen as it
+//   happens. A turn ending on a screen the person already saw marks nothing.
+// - Looking clears the mark for good: the agent comes onto the stage by any
+//   path while the window is active, or the window becomes active (or the
+//   person returns to it) with the agent on the stage (noteLooking()). Only a
+//   new finished turn or request marks it again.
+// - Reconnecting, an unknown status and a lost connection are not settled
+//   statuses: a republished status after them is no new turn, and a turn that
+//   ended meanwhile counts once. A request back after a reconnect is the one
+//   already marked.
+// - Restarts keep marks (restoreMarks); a turn that ended while no window ran
+//   is marked once (watchFinishWhileAway).
+// - Tab, the chime and agent_state.json read this mark; the window does not
+//   draw it. The status mark shows only what the agent is doing.
+namespace {
+bool transient_kind(const QString& kind) {
+    return kind == QLatin1String("connecting") || kind == QLatin1String("unknown") ||
+           kind == QLatin1String("disconnected");
+}
+} // namespace
+bool Workspace::looking(const Agent* item) const {
+    if (item == nullptr)
+        return false;
+    return looking_ ? looking_(item) : item == focusedAgent();
+}
+void Workspace::logMark(const Agent* item, const char* event, const QString& why) const {
+    if (!mark_log_ || item == nullptr)
+        return;
+    mark_log_({{QStringLiteral("at"), QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+               {QStringLiteral("event"), QLatin1String(event)},
+               {QStringLiteral("kind"), QStringLiteral("mark")},
+               {QStringLiteral("id"), item->agentId()},
+               {QStringLiteral("status"), item->statusKind()},
+               {QStringLiteral("why"), why}});
+}
+QString Workspace::markNeedsYou(Agent* item, Need need) {
+    const auto why = need == Need::finished  ? QStringLiteral("finished")
+                     : need == Need::quiet   ? QStringLiteral("quiet")
+                     : need == Need::request ? QStringLiteral("request")
+                                             : QStringLiteral("away");
+    if (looking(item)) {
+        logMark(item, "seen", QStringLiteral("looking: ") + why);
+        return QStringLiteral("looking");
+    }
+    if (item->unseen())
+        return QStringLiteral("waiting");
+    if (need != Need::request && unchanged_ && unchanged_(item)) {
+        logMark(item, "seen", QStringLiteral("unchanged: ") + why);
+        return QStringLiteral("unchanged");
+    }
+    item->setUnseen(true);
+    logMark(item, "unseen", why);
+    return QStringLiteral("marked");
+}
+void Workspace::noteLooking(const QString& how) {
+    auto* item = focusedAgent();
+    if (item == nullptr || !item->unseen() || !looking(item))
+        return;
+    item->setUnseen(false);
+    logMark(item, "seen", how);
+}
 void Workspace::noteStatus(Agent* item) {
     const auto now = item->statusKind();
+    if (transient_kind(now))
+        return;
     const auto previous = last_kind_.value(item);
     last_kind_.insert(item, now);
     if (previous == now)
         return;
-    const bool finished = previous == QStringLiteral("working") &&
-                          (now == QStringLiteral("finished") || now == QStringLiteral("idle"));
+    // A turn waiting on a request is still the turn.
+    const bool in_turn =
+        previous == QLatin1String("working") || previous == QLatin1String("waiting");
+    const bool finished =
+        in_turn && (now == QLatin1String("finished") || now == QLatin1String("idle"));
     // Quiet output is not proof a turn ended. A finished turn the service
     // observed is, even after an agent on another machine had gone quiet:
     // only an observer reports "finished" for an output-estimated agent.
     const bool observed =
         item->statusSource() != Agent::StatusSource::output
             ? finished
-            : now == QStringLiteral("finished") &&
-                  (previous == QStringLiteral("working") || previous == QStringLiteral("idle"));
-    if (observed)
+            : now == QLatin1String("finished") && (in_turn || previous == QLatin1String("idle"));
+    if (observed) {
+        emit needsYou(item, markNeedsYou(item, Need::finished));
         emit turnFinished(item);
-    if ((finished || observed) && item != focusedAgent())
-        item->setUnseen(true);
+    } else if (finished) {
+        markNeedsYou(item, Need::quiet);
+    }
 }
 // Claude Code's hooks report its whole turn. Codex's notify program reports
 // only finished turns, so between them its status is estimated from output,
@@ -3158,9 +3515,9 @@ Workspace::Category* Workspace::category(const QString& id) {
 // Window state a restart keeps -------------------------------------------------
 
 namespace {
-// A turn found finished after a restart counts as one that ended unwatched
-// only when the window saved it at work this recently (an install's restart);
-// after a longer absence the agent is simply idle.
+// A turn found finished after a restart is marked unseen however long the
+// window was gone; it is also guessed for (finishedWhileAway) only when the
+// window saved it at work this recently (an install's restart).
 constexpr qint64 kFinishedWhileAwayMs = qint64{10} * 60 * 1000;
 bool settledKind(const QString& kind) {
     return kind == QLatin1String("working") || kind == QLatin1String("idle") ||
@@ -3204,22 +3561,26 @@ void Workspace::restoreMarks(const QJsonObject& marks) {
             continue;
         const auto needed =
             static_cast<qint64>(mark.value(QStringLiteral("neededAtMs")).toDouble());
-        const bool unseen = mark.value(QStringLiteral("unseen")).toBool() &&
-                            item != focusedAgent() && !item->unseen();
+        // The stage agent's mark comes back too: the window may not be in
+        // front yet. noteLooking() clears it once the person looks.
+        const bool unseen = mark.value(QStringLiteral("unseen")).toBool() && !item->unseen();
         // An already-unseen agent keeps its newer timestamp: a second restore
         // or a status that marked it must not turn Tab's ordering backward.
         if (unseen || item->neededAtMs() == 0)
             item->restoreUnseen(unseen || item->unseen(), item->neededAtMs() == 0
                                                               ? std::min(needed, now)
                                                               : item->neededAtMs());
-        if (recent && mark.value(QStringLiteral("working")).toBool())
-            watchFinishWhileAway(item);
+        if (unseen)
+            logMark(item, "unseen", QStringLiteral("restored"));
+        if (mark.value(QStringLiteral("working")).toBool())
+            watchFinishWhileAway(item, recent);
     }
+    noteLooking(QStringLiteral("restored"));
 }
 
-void Workspace::watchFinishWhileAway(Agent* item) {
+void Workspace::watchFinishWhileAway(Agent* item, bool recent) {
     auto connection = std::make_shared<QMetaObject::Connection>();
-    const auto check = [this, item, connection] {
+    const auto check = [this, item, connection, recent] {
         const auto kind = item->statusKind();
         if (!settledKind(kind))
             return;
@@ -3231,9 +3592,8 @@ void Workspace::watchFinishWhileAway(Agent* item) {
             (kind == QLatin1String("idle") && item->statusSource() != Agent::StatusSource::output);
         if (kind != QLatin1String("finished") && kind != QLatin1String("idle"))
             return;
-        if (item != focusedAgent())
-            item->setUnseen(true);
-        if (observed)
+        markNeedsYou(item, Need::away);
+        if (observed && recent)
             emit finishedWhileAway(item);
     };
     *connection = connect(item, &Agent::statusChanged, this, check);

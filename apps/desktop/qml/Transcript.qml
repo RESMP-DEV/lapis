@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQml.Models
 import QtQuick.Dialogs
-import QtQuick.Effects
 
 // The selected agent's conversation as a readable thread: the person's
 // prompts as bubbles, the agent's replies as prose, and its work as quiet
@@ -40,6 +39,9 @@ FocusScope {
     property var submit: null
     property var interrupt: null
     property var tabAway: null
+    // pressReturn() sends the agent one Return, as the key would: the
+    // second try for a prompt its input box still holds.
+    property var pressReturn: null
     // lapis's predicted next prompt (Tab), shown in the empty bar.
     property string suggestion: ""
     property bool suggestionConfident: false
@@ -49,66 +51,168 @@ FocusScope {
     property bool canSend: true
     // What Command-click on a file path opens it with (an editors() id).
     property string editor: "auto"
-    // The agent's terminal rows as text (screenLines()), which stream into
-    // the running turn; null where there is no terminal.
+    // The agent's terminal rows as text (screenLines()), null where there
+    // is no terminal. The thread never shows them: it reads them only to
+    // see Claude Code compacting, a command going quiet, and whether a sent
+    // prompt left the agent's input box.
     property var screen: null
-    // The live tail: the terminal's rows above its input box, read a few
-    // times a second while a turn runs and the view is shown.
+    // A link clicked in the thread goes here first; true means it was handled.
+    property var openLink: null
+    // Height kept above the composer for the host's own strip (accessory).
+    property real composerInset: 0
+    readonly property alias accessory: accessorySlot
+    // The terminal's rows above its input box, read a few times a second
+    // while a command or turn runs, to see when the screen goes quiet.
     property var liveRows: []
-    property bool liveOpen: false
+    // The running turn's work shows in the live work box, fed by the
+    // transcript's own records as they land; the model knows it is running
+    // from here.
+    Binding {
+        target: root.model
+        property: "live"
+        value: root.working
+        when: root.model !== null
+    }
+    readonly property var liveSteps: model ? model.liveSteps : null
+    readonly property bool liveShown: liveSteps !== null && liveSteps.active
     // A slash command the bar sent that the CLI has not recorded yet. Some
-    // run for minutes with no turn (/compact), so it shows as running, with
-    // the same live tail, until its record lands or the screen goes quiet.
+    // run for minutes with no turn (/compact), so it shows as running until
+    // its record lands or the screen goes quiet.
     property string pendingCommand: ""
     property double pendingSince: 0
     property int quietTicks: 0
-    readonly property bool busy: working || pendingCommand.length > 0
+    // A prompt sent to an idle agent: the turn shows as starting at once,
+    // until the agent works (or the prompt is found not sent).
+    property double sentAt: 0
+    // The agent's status says working, yet its file shows the last turn
+    // ended (final reply, turn-end record) and nothing sent waits to be
+    // recorded: a status estimated from terminal output (agy, Codex) can
+    // lag the record by many seconds. Then the thread shows no running
+    // turn, unless the CLI is compacting.
+    readonly property bool turnEnded: model !== null && !model.turnOpen
+                                      && model.pendingEntries.length === 0
+    readonly property bool busy: (working && (!turnEnded || screenCompacting
+                                              || model.compactingSince > 0))
+                                 || pendingCommand.length > 0 || sentAt > 0
+    // Compacting the conversation (a /compact, or Claude Code's own when the
+    // context fills): a quiet state of its own, never the screen, which
+    // still shows the turns before it.
+    property bool screenCompacting: false
+    readonly property bool compacting: busy && (screenCompacting
+                                                || (model !== null && model.compactingSince > 0))
     // The bar sent a slash command; it may open a dialog in the terminal.
     signal commandSent(string text)
     // A dialog already fills the terminal, so nothing was sent.
     signal dialogFound()
+    // The bar sent a slash command to a CLI whose dialogs the view cannot
+    // see; the window shows that agent's terminal.
+    signal terminalNeeded()
     Timer {
         interval: 150
         repeat: true
-        running: root.busy && root.visible && !!root.screen && root.model !== null
+        running: (root.busy || root.working) && root.visible && !!root.screen && root.model !== null
         triggeredOnStart: true
         onTriggered: {
-            const rows = root.model.liveLines(root.screen())
+            const screen = root.screen()
+            root.screenCompacting = root.model.compactingShown(screen)
+            const rows = root.model.liveLines(screen)
             if (rows.join("\n") !== root.liveRows.join("\n")) {
                 root.liveRows = rows
                 root.quietTicks = 0
-            } else if (!root.working && root.pendingCommand.length > 0 && ++root.quietTicks >= 20) {
+            } else if (!root.working && !root.screenCompacting && root.pendingCommand.length > 0
+                       && ++root.quietTicks >= 20) {
                 root.pendingCommand = "" // three quiet seconds: it finished unrecorded
             }
         }
-        onRunningChanged: if (!running) { root.liveRows = []; root.liveOpen = false }
+        onRunningChanged: if (!running) { root.liveRows = []; root.screenCompacting = false }
     }
     Connections {
         target: root.pendingCommand.length > 0 ? root.model : null
         function onRowsInserted() { root.pendingCommand = "" }
         function onModelReset() { root.pendingCommand = "" }
     }
-    onWorkingChanged: if (working) pendingCommand = ""
-    // The clock the running turn's elapsed time follows.
+    onWorkingChanged: if (working) { pendingCommand = ""; sentAt = 0 }
+    // The turn a sent prompt started has ended in the file.
+    onTurnEndedChanged: if (turnEnded) sentAt = 0
+    // The prompt last sent, checked once it should have been taken: an
+    // input box still holding it gets one more Return (only then, so a
+    // Return never lands in anything else); still there, its bubble says
+    // so. The note goes quietly once the box no longer holds it.
+    property string checkingText: ""
+    property bool retried: false
+    property string unsentText: ""
+    function checkSent() {
+        const holds = root.checkingText.length > 0 && root.screen && root.model && !root.waiting
+                      && !root.model.dialogShowing(root.screen())
+                      && root.model.composerHolds(root.screen(), root.checkingText)
+        if (!holds) {
+            root.checkingText = ""
+            return
+        }
+        if (!root.retried && root.pressReturn) {
+            root.retried = true
+            root.pressReturn()
+            sendCheck.restart()
+            return
+        }
+        root.unsentText = root.checkingText
+        root.checkingText = ""
+        root.sentAt = 0
+        unsentCheck.restart()
+    }
+    property int sendCheckMs: 1500 // shorter in the scripted checks
+    Timer { id: sendCheck; interval: root.sendCheckMs; onTriggered: root.checkSent() }
+    // An agent that never reports working leaves the starting state.
+    Timer { id: sentTimeout; interval: 20000; onTriggered: root.sentAt = 0 }
+    Timer {
+        id: unsentCheck
+        interval: 60000
+        onTriggered: {
+            if (root.unsentText.length > 0 && root.screen && root.model
+                    && root.model.composerHolds(root.screen(), root.unsentText))
+                restart()
+            else
+                root.unsentText = ""
+        }
+    }
+    Connections {
+        target: root.model
+        function onPendingChanged() {
+            if (root.unsentText.length > 0
+                    && root.model.pendingPrompts.indexOf(root.unsentText.replace(/\s+/g, " ").trim()) < 0)
+                root.unsentText = ""
+        }
+    }
+    // Subagents and background tasks still running (model.running), and
+    // whether they keep the agent's work going after its turn ended.
+    readonly property var runningWork: model ? model.running : []
+    readonly property bool waitingOnWork: !busy && runningWork.length > 0
+    // The clock the running turn's elapsed time follows; it also keeps the
+    // running tasks current (their files, their silence).
     property double now: Date.now()
     property double turnSince: 0
     Timer {
         interval: 1000
         repeat: true
-        running: root.busy && root.visible
+        running: (root.busy || root.runningWork.length > 0) && root.visible
         triggeredOnStart: true
         onTriggered: {
+            if (root.model)
+                root.model.tick()
             root.now = Date.now()
-            root.turnSince = root.working ? (root.model ? root.model.runningSince() : 0) : root.pendingSince
+            root.turnSince = root.working ? (root.model ? root.model.runningSince() : 0)
+                           : root.pendingCommand.length > 0 ? root.pendingSince : root.sentAt
         }
     }
-    // The agent's folder, for its project's own slash commands, and whether
-    // its CLI takes the slash commands lapis knows (Claude Code's).
+    // The agent's folder, for its project's own slash commands, its CLI
+    // (a harness id), and whether lapis knows that CLI's slash commands
+    // (Claude Code's, Codex's and Antigravity's).
     property string folder: ""
+    property string harness: ""
     property bool slashCommands: false
 
     // Slash commands: typing "/" and a few letters lists the three best
-    // matches above the bar. The list is read once per agent folder.
+    // matches above the bar. The list is read once per CLI and agent folder.
     property var commandList: []
     property string commandFolder: "\u0000"
     property int slashIndex: 0
@@ -117,14 +221,29 @@ FocusScope {
         const text = input.text
         return slashCommands && text.startsWith("/") && !/\s/.test(text) ? text.slice(1).toLowerCase() : "\u0000"
     }
+    function loadSlashCommands() {
+        const key = harness + "\u0001" + folder
+        if (commandFolder !== key && model) {
+            commandList = model.slashCommands(harness, folder)
+            commandFolder = key
+        }
+    }
     onSlashQueryChanged: {
         slashIndex = 0
         if (slashQuery === "\u0000")
             slashDismissed = false
-        else if (commandFolder !== folder && model) {
-            commandList = model.slashCommands(folder)
-            commandFolder = folder
-        }
+        else
+            loadSlashCommands()
+    }
+    // Whether a command sent to a CLI whose screen the view cannot read
+    // shows its answer only in the terminal: one its list marks so, or one
+    // lapis does not know.
+    function answersInTerminal(name) {
+        if (!slashCommands)
+            return true
+        loadSlashCommands()
+        const known = commandList.find(c => c.name === name)
+        return !known || known.terminal !== false
     }
     readonly property var slashMatches: slashQuery === "\u0000" || slashDismissed ? [] : rankSlash(slashQuery)
     function slashScore(name, description, q) {
@@ -259,6 +378,129 @@ FocusScope {
              : s < 86400 ? Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m"
              : Math.floor(s / 86400) + "d " + Math.floor((s % 86400) / 3600) + "h"
     }
+    // The quiet line under a prompt: queued, or read mid-turn (steered).
+    function promptMark(entry) {
+        if (!entry)
+            return ""
+        if (entry.queued)
+            return qsTr("Queued · the agent reads it at its next step")
+        if (!entry.steered)
+            return ""
+        return entry.waited < 0 ? qsTr("Steered")
+             : entry.waited === 0 ? qsTr("Steered · read at the next step")
+             : entry.waited === 1 ? qsTr("Steered · read after 1 more step")
+             : qsTr("Steered · read after %1 more steps").arg(entry.waited)
+    }
+    // A step as one line: its verb and object ("Read greet.cpp", "Ran
+    // ctest"), a file by its name only; the path shows once it is opened.
+    function stepTarget(entry) {
+        if (!entry)
+            return ""
+        if (entry.kind === "reply")
+            return entry.body.trim().split("\n")[0]
+        if (entry.kind !== "tool")
+            return ""
+        const first = entry.body.split("\n")[0]
+        const file = ["Read", "Edited", "Wrote", "Deleted", "Viewed image"].indexOf(entry.title) >= 0
+        return file && first.indexOf("/") >= 0 ? first.slice(first.lastIndexOf("/") + 1) : first
+    }
+    // A thought's first sentence, as plain words (its markdown marks gone),
+    // for the one dim line it folds to; empty when it has no text.
+    function thoughtLine(text) {
+        const plain = (text || "").replace(/[*_`#>]+/g, "").trim()
+        const line = plain.split("\n")[0].trim()
+        const sentence = /^(.+?[.!?])(\s|$)/.exec(line)
+        return sentence ? sentence[1] : line
+    }
+    // A thought's text styled as markdown, a step smaller than replies.
+    readonly property var thoughtStyle: ({ sans: sansFamily, mono: monoFamily, size: stepSize,
+                                           codeSize: codeSize - 1, codeColor: codeColor,
+                                           linkColor: accentColor, inlineCodeColor: inlineCodeColor,
+                                           inlineCodeTextColor: mutedTextColor,
+                                           borderColor: borderColor, quoteColor: mutedTextColor })
+    // Subagents and background tasks (a step's `task`): what follows the
+    // step's target on its line, " · "-joined: its type and model (in the
+    // running strip), how long it ran or has run, its steps or how it ended.
+    function taskParts(task, withKind) {
+        if (!task)
+            return []
+        const parts = []
+        if (withKind && task.type === "subagent") {
+            const kind = [task.agentType, task.model ? modelLabel(task.model) : ""]
+                         .filter(s => s && s.length > 0).join(" / ")
+            if (kind.length > 0)
+                parts.push(kind)
+        }
+        const ms = task.running ? now - task.since : task.duration
+        if (ms >= 1000)
+            parts.push(durationLabel(ms))
+        if (task.type === "subagent" && task.steps >= 0)
+            parts.push(task.steps === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(task.steps))
+        if (!task.running) {
+            if (task.stale)
+                parts.push(qsTr("no end recorded"))
+            else if (task.status === "failed" && task.exit < 0)
+                parts.push(qsTr("failed"))
+            else if (task.status === "stopped" || task.status === "killed")
+                parts.push(qsTr("stopped"))
+            if (task.exit > 0)
+                parts.push(qsTr("exit %1").arg(task.exit))
+        }
+        return parts
+    }
+    function taskLine(task, withKind) {
+        const parts = taskParts(task, withKind)
+        return parts.length > 0 ? " · " + parts.join(" · ") : ""
+    }
+    // "2 subagents and 1 background task" (monitors count as background).
+    function workCount(list) {
+        let agents = 0, other = 0
+        for (let i = 0; i < list.length; ++i)
+            list[i].type === "subagent" ? ++agents : ++other
+        const said = []
+        if (agents > 0)
+            said.push(agents === 1 ? qsTr("1 subagent") : qsTr("%1 subagents").arg(agents))
+        if (other > 0)
+            said.push(other === 1 ? qsTr("1 background task") : qsTr("%1 background tasks").arg(other))
+        return said.join(qsTr(" and "))
+    }
+    // How an opened task stands: "Running · 3m 12s · 14 steps", "Finished
+    // after 4m 10s · 23 steps · 54k tokens", "Exited with code 1 after 12s".
+    function taskState(task) {
+        if (!task)
+            return ""
+        const parts = []
+        const ms = task.running ? now - task.since : task.duration
+        const took = ms >= 1000 ? durationLabel(ms) : ""
+        if (task.running)
+            parts.push(took.length > 0 ? qsTr("Running for %1").arg(took) : qsTr("Running"))
+        else if (task.stale)
+            parts.push(qsTr("No end recorded"))
+        else if (task.exit >= 0)
+            parts.push(took.length > 0 ? qsTr("Exited with code %1 after %2").arg(task.exit).arg(took)
+                                       : qsTr("Exited with code %1").arg(task.exit))
+        else if (task.status === "failed")
+            parts.push(took.length > 0 ? qsTr("Failed after %1").arg(took) : qsTr("Failed"))
+        else if (task.status === "stopped" || task.status === "killed")
+            parts.push(took.length > 0 ? qsTr("Stopped after %1").arg(took) : qsTr("Stopped"))
+        else
+            parts.push(took.length > 0 ? qsTr("Finished after %1").arg(took) : qsTr("Finished"))
+        if (task.type === "subagent") {
+            if (task.steps >= 0)
+                parts.push(task.steps === 1 ? qsTr("1 step") : qsTr("%1 steps").arg(task.steps))
+            if (task.tokens > 0)
+                parts.push(qsTr("%1 tokens").arg(tokensLabel(task.tokens)))
+            if (task.agentType.length > 0)
+                parts.push(task.agentType)
+            if (task.model.length > 0)
+                parts.push(modelLabel(task.model))
+        } else if (task.checks > 0) {
+            parts.push(task.type === "monitor"
+                       ? (task.checks === 1 ? qsTr("1 event") : qsTr("%1 events").arg(task.checks))
+                       : (task.checks === 1 ? qsTr("checked once") : qsTr("checked %1 times").arg(task.checks)))
+        }
+        return parts.join(" · ")
+    }
     function tokensLabel(n) {
         return n >= 1000000 ? (n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1) + "M"
              : n >= 1000 ? Math.round(n / 1000) + "k" : String(n)
@@ -292,8 +534,10 @@ FocusScope {
         { name: "black", label: qsTr("Black"), dark: true, background: "#000000", raised: "#161616",
           code: "#0b0b0b", border: "#262626", text: "#e6e6e6", muted: "#8a8a8a", accent: "#7aa2f7",
           added: "#4fb57a", removed: "#d0605e", fault: "#ef6b73" },
+        // Light themes end in "-light" (Config tells the kinds apart by it).
+        // Muted text and links keep 4.5:1 on the page and the bubbles.
         { name: "claude-light", label: qsTr("Claude light"), dark: false, background: "#faf9f5", raised: "#efede4",
-          code: "#f1efe7", border: "#e2dfd4", text: "#29261b", muted: "#76736a", accent: "#c96442",
+          code: "#f1efe7", border: "#e2dfd4", text: "#29261b", muted: "#66635a", accent: "#ad4f2c",
           added: "#2e7d32", removed: "#b3412f", fault: "#b3261e" },
         { name: "codex-light", label: qsTr("Codex light"), dark: false, background: "#ffffff", raised: "#f2f2f2",
           code: "#f7f7f7", border: "#e5e5e5", text: "#0d0d0d", muted: "#6e6e6e", accent: "#0169cc",
@@ -352,10 +596,19 @@ FocusScope {
     readonly property int actionHeight: Math.round(codeSize * 1.3) + 8
     // Changes whenever prose has to be laid out again.
     readonly property string styleKey: [sansFamily, monoFamily, fontSize, codeSize, codeColor, accentColor,
-                                        borderColor, raisedColor].join("|")
+                                        borderColor, raisedColor, mutedTextColor, inlineCodeColor,
+                                        inlineCodeTextColor].join("|")
     readonly property var proseStyle: ({ sans: sansFamily, mono: monoFamily, size: fontSize, codeSize: codeSize,
                                          codeColor: codeColor, linkColor: accentColor,
+                                         inlineCodeColor: inlineCodeColor, inlineCodeTextColor: inlineCodeTextColor,
                                          borderColor: borderColor, quoteColor: mutedTextColor })
+    // Code inside a sentence stays quiet, as it is read often: a faint step
+    // from the page toward the raised surface (never the darker code well)
+    // and text one step dimmer than the body's.
+    readonly property color inlineCodeColor: Qt.tint(backgroundColor,
+                                                     Qt.rgba(raisedColor.r, raisedColor.g, raisedColor.b, 0.45))
+    readonly property color inlineCodeTextColor: Qt.tint(textColor,
+                                                         Qt.rgba(mutedTextColor.r, mutedTextColor.g, mutedTextColor.b, 0.35))
     // Code takes Tokyo Night's colors, its Day variant on a light code card.
     readonly property bool lightCode: codeColor.r * 0.299 + codeColor.g * 0.587 + codeColor.b * 0.114 > 0.5
     readonly property color codeTextColor: lightCode ? "#3760bf" : "#c0caf5"
@@ -384,14 +637,52 @@ FocusScope {
         color: root.backgroundColor
     }
 
-    // Another conversation opens at its newest message.
+    // Another conversation opens where it was left: at its newest message,
+    // or where it was scrolled to; one whose history comes in later stays on
+    // the rows it shows. While the rows are replaced the list makes none
+    // (no screen below its top, no cache), so after the replacement only
+    // the screen it opens on is made; the cache fills in after a few frames.
     Connections {
         target: root.model
-        function onPathChanged() {
-            root.following = true
-            Qt.callLater(list.positionViewAtEnd)
+        function onLeaving() {
+            const top = list.indexAt(list.width / 2, list.contentY + 1)
+            const item = top >= 0 ? list.itemAtIndex(top) : null
+            root.model.keepView(top, item ? list.contentY - item.y : 0,
+                                root.following || item === null)
+            root.following = false // placeView decides; the reset's count change must not
+            list.cacheBuffer = 0
+            list.anchors.bottom = undefined
+            list.height = 0
         }
+        function onPathChanged() {
+            sendCheck.stop()
+            root.checkingText = ""
+            root.retried = false
+            root.placeView()
+        }
+        function onReloaded() { root.placeView() }
     }
+    function placeView() {
+        const view = model.view()
+        following = view.following
+        // Placed while it has no height, then given its height back: the
+        // rows the screen shows are made, and none it does not.
+        const place = () => {
+            if (following) {
+                list.positionViewAtEnd()
+            } else {
+                list.positionViewAtIndex(view.row, ListView.Beginning)
+                list.contentY += view.offset
+            }
+        }
+        place()
+        list.anchors.bottom = composerArea.top
+        place()
+        listCache.restart()
+        if (following)
+            Qt.callLater(list.positionViewAtEnd) // once rows have their heights
+    }
+    Timer { id: listCache; interval: 250; onTriggered: list.cacheBuffer = 2000 }
 
     ListView {
         id: list
@@ -428,6 +719,7 @@ FocusScope {
             DelegateChoice { roleValue: "notice"; delegate: Entry { block: noticeBlock } }
             DelegateChoice { roleValue: "divider"; delegate: Entry { block: dividerBlock } }
             DelegateChoice { roleValue: "work"; delegate: Entry { block: workBlock } }
+            DelegateChoice { roleValue: "live"; delegate: Entry { block: liveBlock } }
             DelegateChoice { delegate: Entry { block: otherBlock } }
         }
     }
@@ -455,19 +747,27 @@ FocusScope {
         required property bool queued
         required property double at
         required property double duration
+        required property bool steered
+        required property int waited
+        required property int item
+        required property var task
         property Component block
 
         readonly property int gapAbove: index === 0 ? 0
                                       : afterStep ? 2
                                       : inWork ? Math.round(root.fontSize * 0.4)
-                                      : kind === "prompt" ? root.fontSize * 2
-                                      : kind === "work" ? Math.round(root.fontSize * 0.9)
+                                      : kind === "prompt" ? (steered ? root.fontSize : root.fontSize * 2)
+                                      : kind === "work" || kind === "live" ? Math.round(root.fontSize * 0.9)
                                       : kind === "turn" ? 10 : root.fontSize
         // Opened work sits indented under its "Worked for" row, on a rule.
         readonly property int indent: inWork ? Math.round(root.fontSize * 0.9) : 0
         readonly property int column: Math.min(root.columnWidth, row.width - 56)
         width: ListView.view ? ListView.view.width : 0
         height: loader.height + gapAbove
+        // A row the list let go of (index -1), or a live box with no running
+        // turn behind it, never draws: Qt can leave a released row where it
+        // was, over the rows that took its place.
+        visible: index >= 0 && (kind !== "live" || root.liveShown)
         // A reused row starts closed, whatever the last item opened.
         ListView.onReused: if (loader.item && loader.item.open !== undefined) loader.item.open = false
         Rectangle {
@@ -532,7 +832,11 @@ FocusScope {
                 event.accepted = true
             }
         }
-        onLinkActivated: link => Qt.openUrlExternally(link)
+        // The host may take a link first (the factory view's agent links).
+        onLinkActivated: link => {
+            if (!(root.openLink && root.openLink(link)))
+                Qt.openUrlExternally(link)
+        }
         // A link underlines while the pointer is on it.
         onHoveredLinkChanged: if (textFormat === TextEdit.RichText && root.model)
                                   root.model.hoverLink(textDocument, hoveredLink)
@@ -746,9 +1050,27 @@ FocusScope {
         Timer { id: doneTimer; interval: 1200; onTriggered: action.done = false }
     }
 
+    // What a shown file does beyond a click (the window's MediaActions:
+    // Finder, clipboard, save, drag out); null where there is none, as in a
+    // capture, and the menu then offers only Open.
+    property var mediaActions: null
+    // A light page (light mode's themes), for pictures drawn for the other.
+    readonly property bool lightPage: backgroundColor.hslLightness > 0.5
+    function openMedia(media) {
+        if (!media)
+            return
+        if (!mediaActions || !mediaActions.open(media.path))
+            Qt.openUrlExternally(media.url)
+    }
+    function isPicture(media) {
+        return media !== null && media !== undefined
+               && (media.kind === "image" || media.kind === "svg" || media.kind === "animation")
+    }
+
     // Files a message names, shown in place: images, SVG and GIFs drawn at
     // their size (up to the column), audio and video played in place, other
-    // files as a card that opens them. Click an image to open it full size.
+    // files as a card that opens them. Click an image to open it full size;
+    // drag any of them out to another app, or right-click for the rest.
     component MediaList: Column {
         id: mediaList
         property var items: []
@@ -757,21 +1079,211 @@ FocusScope {
         visible: items.length > 0
         Repeater {
             model: mediaList.items
-            delegate: Loader {
+            delegate: Item {
+                id: mediaCell
+                objectName: "mediaItem"
                 required property var modelData
                 readonly property var media: modelData
                 anchors.right: mediaList.alignRight ? parent.right : undefined
-                sourceComponent: modelData.kind === "image" || modelData.kind === "svg" ? imageMedia
-                               : modelData.kind === "animation" ? animationMedia
-                               : modelData.kind === "audio" || modelData.kind === "video" ? playbackMedia
-                               : fileMedia
-                property real room: mediaList.width
+                width: shown.item ? shown.item.width : 0
+                height: shown.item ? shown.item.height : 0
+                Loader {
+                    id: shown
+                    readonly property var media: mediaCell.media
+                    property real room: mediaList.width
+                    sourceComponent: mediaCell.modelData.kind === "image" || mediaCell.modelData.kind === "svg" ? imageMedia
+                                   : mediaCell.modelData.kind === "animation" ? animationMedia
+                                   : mediaCell.modelData.kind === "audio" || mediaCell.modelData.kind === "video" ? playbackMedia
+                                   : fileMedia
+                }
+                MediaGrip {
+                    anchors.fill: parent
+                    media: mediaCell.media
+                    // A player takes its own clicks (play, seek); its fallback
+                    // card opens the file as the others do.
+                    plays: shown.item !== null && shown.item.item !== undefined && shown.item.item !== null
+                           && typeof shown.item.item.toggle === "function"
+                    seeking: plays && shown.item.item.seeking === true
+                }
             }
         }
+    }
+    // Over a shown file: a click opens it (not over a player), a drag takes
+    // the file out of the window, and a right-click or Control-click opens
+    // its menu. A drag never also counts as the click.
+    component MediaGrip: Item {
+        id: grip
+        property var media: null
+        property bool plays: false
+        // A player's line being dragged to seek, which is not a file drag.
+        property bool seeking: false
+        readonly property string path: media ? media.path : ""
+        // A press moved past the drag distance starts the file drag. The
+        // handler only watches (it never takes the press), so the player's
+        // own buttons still work and a press that stays put is a click.
+        PointHandler {
+            id: gripPoint
+            acceptedButtons: Qt.LeftButton
+            property bool started: false
+            onActiveChanged: if (!active) started = false
+            onPointChanged: {
+                if (!active || started || !root.mediaActions || grip.path.length === 0 || grip.seeking)
+                    return
+                const moved = Math.hypot(point.position.x - point.pressPosition.x,
+                                         point.position.y - point.pressPosition.y)
+                if (moved < Application.styleHints.startDragDistance)
+                    return
+                started = true
+                // Runs until the drop; macOS then sends the release the drop
+                // consumed, which ends this press.
+                root.mediaActions.drag(grip.path, root.isPicture(grip.media), grip)
+            }
+        }
+        HoverHandler {
+            enabled: !grip.plays
+            cursorShape: Qt.PointingHandCursor
+        }
+        TapHandler {
+            enabled: !grip.plays
+            acceptedButtons: Qt.LeftButton
+            acceptedModifiers: Qt.NoModifier
+            onTapped: root.openMedia(grip.media)
+        }
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: function(point) { root.showMediaMenu(grip.media, grip, point.position) }
+        }
+        TapHandler {
+            acceptedButtons: Qt.LeftButton
+            acceptedModifiers: Qt.ControlModifier
+            onTapped: function(point) { root.showMediaMenu(grip.media, grip, point.position) }
+        }
+    }
+    // One menu for whichever file was right-clicked, in the bar menus' style.
+    component MediaMenuItem: MenuItem {
+        id: mediaItem
+        indicator: null
+        arrow: Chevron {
+            visible: mediaItem.subMenu !== null
+            x: mediaItem.width - width - 10
+            anchors.verticalCenter: parent.verticalCenter
+            color: root.mutedTextColor
+        }
+        contentItem: Text {
+            leftPadding: 6
+            text: mediaItem.text
+            color: mediaItem.enabled ? root.textColor : root.mutedTextColor
+            font.family: root.sansFamily
+            font.pixelSize: root.codeSize
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Rectangle {
+            radius: 6
+            color: mediaItem.highlighted ? root.tint(root.textColor, 0.1) : "transparent"
+        }
+    }
+    component MediaMenu: Menu {
+        id: mediaMenu
+        property var media: null
+        readonly property string path: media ? media.path : ""
+        readonly property bool picture: root.isPicture(media)
+        readonly property bool acts: root.mediaActions !== null && path.length > 0
+        function show(media, item, at) {
+            mediaMenu.media = media
+            mediaMenu.popup(item, at.x, at.y)
+        }
+        width: Math.max(180, Math.round(root.codeSize * 15))
+        background: Rectangle {
+            radius: 10
+            color: root.raisedColor
+            border.color: root.borderColor
+        }
+        // The item that opens Open With.
+        delegate: MediaMenuItem {}
+        MediaMenuItem {
+            objectName: "mediaOpen"
+            text: qsTr("Open")
+            onTriggered: root.openMedia(mediaMenu.media)
+        }
+        Menu {
+            id: openWith
+            title: qsTr("Open With")
+            // Only for pictures, with the apps Command-click opens paths in.
+            enabled: mediaMenu.picture && root.model !== null
+            width: Math.max(160, Math.round(root.codeSize * 12))
+            background: Rectangle {
+                radius: 10
+                color: root.raisedColor
+                border.color: root.borderColor
+            }
+            delegate: MediaMenuItem {}
+            Instantiator {
+                model: openWith.enabled && mediaMenu.opened ? root.model.editors() : []
+                delegate: MediaMenuItem {
+                    required property var modelData
+                    text: modelData.label
+                    onTriggered: root.model.openPath(mediaMenu.path, modelData.id)
+                }
+                onObjectAdded: (index, object) => openWith.insertItem(index, object)
+                onObjectRemoved: (index, object) => openWith.removeItem(object)
+            }
+        }
+        MediaMenuItem {
+            objectName: "mediaReveal"
+            text: qsTr("Show in Finder")
+            enabled: mediaMenu.acts
+            onTriggered: root.mediaActions.reveal(mediaMenu.path)
+        }
+        MenuSeparator {
+            contentItem: Rectangle { implicitHeight: 1; color: root.borderColor }
+        }
+        MediaMenuItem {
+            objectName: "mediaCopy"
+            text: mediaMenu.picture ? qsTr("Copy Image") : qsTr("Copy File")
+            enabled: mediaMenu.acts
+            onTriggered: mediaMenu.picture ? root.mediaActions.copyImage(mediaMenu.path)
+                                           : root.mediaActions.copyFile(mediaMenu.path)
+        }
+        MediaMenuItem {
+            objectName: "mediaCopyPath"
+            text: qsTr("Copy Path")
+            enabled: mediaMenu.acts
+            onTriggered: root.mediaActions.copyPath(mediaMenu.path)
+        }
+        MediaMenuItem {
+            objectName: "mediaSaveAs"
+            text: qsTr("Save As…")
+            enabled: mediaMenu.acts
+            onTriggered: {
+                mediaSave.source = mediaMenu.path
+                mediaSave.selectedFile = root.mediaActions.saveSuggestion(mediaMenu.path)
+                mediaSave.open()
+            }
+        }
+    }
+    // Made on the first right-click, so the thread never builds (or lays out
+    // again on a theme or font change) a menu nobody opened.
+    property var mediaMenu: null
+    Component {
+        id: mediaMenuComponent
+        MediaMenu { objectName: "mediaMenu" }
+    }
+    function showMediaMenu(media, item, at) {
+        if (!mediaMenu)
+            mediaMenu = mediaMenuComponent.createObject(root)
+        mediaMenu.show(media, item, at)
+    }
+    FileDialog {
+        id: mediaSave
+        property string source: ""
+        title: qsTr("Save a copy")
+        fileMode: FileDialog.SaveFile
+        onAccepted: if (root.mediaActions) root.mediaActions.saveCopy(source, selectedFile)
     }
     Component {
         id: imageMedia
         Image {
+            id: picture
             readonly property var media: parent ? parent.media : null
             readonly property bool vector: media !== null && media.kind === "svg"
             // Its own size from the file's header, before it is decoded.
@@ -787,13 +1299,27 @@ FocusScope {
             // 200 dpi charts are; small ones and SVGs show at their own size.
             width: Math.min(parent ? parent.room : 0, !vector && ownWidth >= 800 ? ownWidth / 2 : ownWidth)
             height: ownWidth > 0 ? width * ownHeight / ownWidth : 0
-            MouseArea {
+            // A see-through picture drawn for the other kind of page (white
+            // strokes made for a dark thread, now on a light one, or the
+            // reverse) sits on a card of that kind, so its lines stay
+            // visible; one that suits the page sits on it bare.
+            readonly property string ink: media && media.alpha && root.mediaActions
+                                          ? root.mediaActions.inkTone(media.path) : ""
+            readonly property bool carded: (ink === "light" && root.lightPage) || (ink === "dark" && !root.lightPage)
+            Rectangle {
+                objectName: "inkCard"
+                z: -1
+                visible: picture.carded
                 anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
+                anchors.margins: -6
+                radius: root.radius
+                color: root.lightPage ? "#26272b" : "#f3f2ee"
             }
+            // A frame round an opaque picture; a see-through one (a diagram
+            // of strokes) sits on the thread's own background, unframed.
             Rectangle {
                 anchors.fill: parent
+                visible: !(parent.media && parent.media.alpha)
                 color: "transparent"
                 border.color: root.borderColor
                 radius: 4
@@ -809,11 +1335,6 @@ FocusScope {
             fillMode: Image.PreserveAspectFit
             width: Math.min(parent ? parent.room : 0, implicitWidth)
             height: implicitWidth > 0 ? width * implicitHeight / implicitWidth : 0
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
-            }
         }
     }
     // The player lives in its own file, so the thread still loads where Qt
@@ -842,7 +1363,8 @@ FocusScope {
             width: Math.min(parent ? parent.room : 0, fileRow.implicitWidth + 28)
             height: fileRow.implicitHeight + 18
             radius: root.radius - 2
-            color: fileMouse.containsMouse ? root.tint(root.textColor, 0.1) : root.raisedColor
+            color: fileHover.hovered ? root.tint(root.textColor, 0.1) : root.raisedColor
+            HoverHandler { id: fileHover }
             Row {
                 id: fileRow
                 anchors.verticalCenter: parent.verticalCenter
@@ -873,13 +1395,6 @@ FocusScope {
                         font.pixelSize: root.codeSize - 1
                     }
                 }
-            }
-            MouseArea {
-                id: fileMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (parent.media) Qt.openUrlExternally(parent.media.url)
             }
         }
     }
@@ -978,11 +1493,12 @@ FocusScope {
                     text: prompt.entry ? prompt.entry.body : ""
                 }
             }
+            // Waiting in the CLI's queue, or read by the agent mid-turn.
             Text {
                 anchors.right: parent.right
                 anchors.rightMargin: 6
-                visible: prompt.entry !== null && prompt.entry.queued
-                text: qsTr("Queued · the agent reads it at its next step")
+                visible: text.length > 0
+                text: root.promptMark(prompt.entry)
                 color: root.mutedTextColor
                 font.family: root.sansFamily
                 font.pixelSize: root.codeSize - 1
@@ -991,7 +1507,9 @@ FocusScope {
             MediaList {
                 anchors.right: parent.right
                 width: parent.width * 0.6
-                items: prompt.entry && root.model ? root.model.media(prompt.entry.body) : []
+                // Paths written in the prompt, then the images pasted into it.
+                items: prompt.entry && root.model
+                       ? root.model.media(prompt.entry.body + "\n" + prompt.entry.detail) : []
             }
             // The row's room is kept so hovering never moves the thread; its
             // buttons are made only while the pointer is over the message.
@@ -1009,7 +1527,9 @@ FocusScope {
                                 onTriggered: { root.copy(prompt.entry.body); flash() }
                             }
                             Action {
+                                // Only Claude Code conversations fork from a prompt.
                                 visible: prompt.entry && prompt.entry.record.length > 0
+                                         && root.model !== null && root.model.forkable
                                 label: qsTr("Edit")
                                 onTriggered: root.editRequested(prompt.entry.record, prompt.entry.body)
                             }
@@ -1032,13 +1552,15 @@ FocusScope {
                 delegate: Loader {
                     required property var modelData
                     width: reply.width
-                    sourceComponent: modelData.code ? codePiece : prosePiece
+                    sourceComponent: modelData.media ? mediaPiece : modelData.code ? codePiece : prosePiece
                     property var piece: modelData
                 }
             }
+            // Media the reply names in a sentence; a path standing alone
+            // already shows in its place above.
             MediaList {
                 width: parent.width
-                items: reply.entry && root.model ? root.model.media(reply.entry.body) : []
+                items: reply.entry && root.model ? root.model.replyMedia(reply.entry.body) : []
             }
             Item {
                 width: parent.width
@@ -1079,6 +1601,15 @@ FocusScope {
         }
     }
 
+    // A path standing alone in a reply, shown as its picture (or player or
+    // card) where the reply names it.
+    Component {
+        id: mediaPiece
+        MediaList {
+            items: parent && parent.piece && parent.piece.media ? [parent.piece.media] : []
+        }
+    }
+
     Component {
         id: codePiece
         Code {
@@ -1094,14 +1625,19 @@ FocusScope {
         id: stepBlock
         Column {
             id: step
+            objectName: "step"
             readonly property var entry: parent ? parent.entry : null
             readonly property bool thinking: entry && entry.kind === "thinking"
+            // A thought folds to its first sentence, dimmed, in place of "Thought".
+            readonly property string thought: thinking ? root.thoughtLine(entry.body) : ""
             readonly property bool edit: entry && entry.diff.length > 0
             readonly property bool command: entry && entry.title === "Ran"
-            readonly property bool running: entry && !thinking && !entry.answered
+            // A subagent or background task this step started.
+            readonly property var task: entry && entry.task ? entry.task : null
+            readonly property bool running: entry && !thinking && (task ? task.running : !entry.answered)
             readonly property bool expandable: entry && (thinking ? entry.body.length > 0
-                                               : entry.result.length > 0 || entry.detail.length > 0
-                                                 || command || entry.body.indexOf("\n") >= 0)
+                                               : task !== null || entry.result.length > 0 || entry.detail.length > 0
+                                                 || edit || command || entry.body.indexOf("\n") >= 0)
             property bool open: false
             spacing: 6
 
@@ -1128,8 +1664,11 @@ FocusScope {
                     }
                     Text {
                         id: verb
+                        visible: text.length > 0
                         anchors.verticalCenter: parent.verticalCenter
-                        text: step.entry ? step.entry.title : ""
+                        // "Subagent · <description>", "Started in background · <command>"
+                        text: !step.entry || step.thought.length > 0 ? ""
+                              : step.entry.title + (step.task ? " ·" : "")
                         color: step.entry && step.entry.failed ? root.faultColor
                              : hover.containsMouse ? root.textColor : root.mutedTextColor
                         font.family: root.sansFamily
@@ -1140,12 +1679,29 @@ FocusScope {
                         visible: text.length > 0
                         anchors.verticalCenter: parent.verticalCenter
                         width: Math.min(implicitWidth, parent.width - verb.width - counts.width - took.width
-                                                       - chevron.width - 36)
-                        text: step.entry && !step.thinking ? step.entry.body.split("\n")[0] : ""
+                                                       - taskInfo.width - chevron.width - 42)
+                        text: step.thinking ? step.thought
+                              : step.entry ? step.entry.body.split("\n")[0] : ""
                         elide: Text.ElideRight
-                        color: step.entry && step.entry.failed ? root.tint(root.faultColor, 0.85) : root.tint(root.textColor, 0.82)
-                        font.family: root.monoFamily
-                        font.pixelSize: root.codeSize
+                        color: step.thinking ? (hover.containsMouse ? root.textColor : root.tint(root.mutedTextColor, 0.9))
+                             : step.entry && step.entry.failed ? root.tint(root.faultColor, 0.85) : root.tint(root.textColor, 0.82)
+                        // A thought, a subagent's description and what a monitor
+                        // watches read as prose.
+                        readonly property bool prose: step.thinking
+                                                      || (!!step.task && step.task.type !== "background")
+                        font.family: prose ? root.sansFamily : root.monoFamily
+                        font.pixelSize: prose ? root.stepSize : root.codeSize
+                    }
+                    // A task's run: "· 4m 10s · 23 steps".
+                    Text {
+                        id: taskInfo
+                        visible: step.task !== null
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: visible ? root.taskLine(step.task, false).slice(1) : ""
+                        color: root.tint(root.mutedTextColor, 0.75)
+                        font.family: root.sansFamily
+                        font.pixelSize: root.stepSize - 2
+                        font.features: { "tnum": 1 }
                     }
                     Row {
                         id: counts
@@ -1158,8 +1714,10 @@ FocusScope {
                     // How long the step took, once it took a second or more.
                     Text {
                         id: took
-                        visible: step.entry !== null && !step.thinking && step.entry.duration >= 1000
-                        width: visible ? implicitWidth : 0
+                        // Hidden it has no text, so no width: a Row skips it,
+                        // and the target's width can count it either way.
+                        visible: step.entry !== null && (!step.thinking || step.thought.length > 0)
+                                 && !step.task && step.entry.duration >= 1000
                         anchors.verticalCenter: parent.verticalCenter
                         text: visible ? root.durationLabel(step.entry.duration) : ""
                         color: root.tint(root.mutedTextColor, 0.75)
@@ -1176,191 +1734,929 @@ FocusScope {
                 }
             }
 
-            // A file change shows its diff without asking, as a short card;
-            // other steps make no card at all.
+            // What opens on click is made on click: a collapsed step is one
+            // line, an edit included (its diff shows only once opened).
             Loader {
                 width: parent.width
-                active: step.edit
+                active: step.open
                 visible: active
                 sourceComponent: Component {
-                    Rectangle {
-                        height: diffColumn.height + 12
-                        radius: root.radius
-                        color: root.codeColor
-                        clip: true
-                        Column {
-                            id: diffColumn
-                            y: 6
-                            width: parent.width
-                            Repeater {
-                                model: step.entry ? step.entry.diff.slice(0, step.open ? step.entry.diff.length : 8) : []
-                                Rectangle {
-                                    required property var modelData
-                                    width: diffColumn.width
-                                    height: diffLine.implicitHeight + 2
-                                    color: modelData.sign === "+" ? root.tint(root.addedColor, 0.16)
-                                         : modelData.sign === "-" ? root.tint(root.removedColor, 0.22)
-                                         : "transparent"
-                                    Text {
-                                        id: diffLine
-                                        x: 12
-                                        width: parent.width - 24
-                                        text: modelData.text.length > 0 ? modelData.text : " "
-                                        textFormat: Text.PlainText
-                                        elide: Text.ElideRight
-                                        color: root.tint(root.textColor, 0.9)
-                                        font.family: root.monoFamily
-                                        font.pixelSize: root.codeSize
-                                        lineHeight: 1.2
-                                    }
+                    StepDetail { entry: step.entry }
+                }
+            }
+        }
+    }
+
+    // What an opened step shows: its description, its command, its diff,
+    // its output, or its thinking; an interim reply or note in full. It sits
+    // a little in from its title row on a thin rule, a small gap under that
+    // row and a larger one before the next step, so it reads as that step's.
+    component StepDetail: Item {
+        id: stepDetail
+        property var entry: null
+        // Opened inside a subagent's own steps: its subagents stay lines.
+        property bool nested: false
+        readonly property int gapAbove: 2
+        readonly property int gapBelow: Math.round(root.stepSize * 0.8)
+        implicitHeight: detail.height + gapAbove + gapBelow
+        height: implicitHeight
+        Rectangle {
+            objectName: "detailRule"
+            x: 3
+            y: stepDetail.gapAbove
+            width: 1
+            height: detail.height
+            color: root.borderColor
+        }
+        Column {
+        id: detail
+        x: Math.round(root.stepSize * 0.85)
+        y: stepDetail.gapAbove
+        width: stepDetail.width - x
+        readonly property var entry: stepDetail.entry
+        readonly property bool nested: stepDetail.nested
+        readonly property bool thinking: entry !== null && entry.kind === "thinking"
+        readonly property bool tool: entry !== null && entry.kind === "tool"
+        readonly property bool edit: tool && entry.diff.length > 0
+        readonly property bool command: tool && entry.title === "Ran"
+        // A subagent or background task shows its run instead (TaskDetail).
+        readonly property bool task: tool && !nested && !!entry.task
+        spacing: 6
+        Loader {
+            width: parent.width
+            active: detail.task
+            visible: active
+            sourceComponent: Component {
+                TaskDetail { entry: detail.entry }
+            }
+        }
+        Selectable {
+            visible: detail.tool && !detail.task && detail.entry.detail.length > 0
+            width: parent.width
+            text: detail.tool ? detail.entry.detail : ""
+            color: root.mutedTextColor
+            font.pixelSize: root.stepSize - 1
+        }
+        Code {
+            visible: detail.tool && !detail.edit && !detail.task
+                     && (detail.command || detail.entry.body.indexOf("\n") >= 0)
+            width: parent.width
+            text: detail.tool ? detail.entry.body : ""
+            // A command reads as shell, without a label.
+            language: detail.command ? "bash" : ""
+            caption: ""
+            highlighted: detail.command
+            textColor: detail.command ? root.codeTextColor : root.textColor
+        }
+        // An edit's diff, whole, with its path over it.
+        Loader {
+            width: parent.width
+            active: detail.edit
+            visible: active
+            sourceComponent: Component {
+                Rectangle {
+                    objectName: "diffCard"
+                    height: diffColumn.height + 12
+                    radius: root.radius
+                    color: root.codeColor
+                    clip: true
+                    Column {
+                        id: diffColumn
+                        y: 6
+                        width: parent.width
+                        Text {
+                            x: 12
+                            width: parent.width - 24
+                            bottomPadding: 4
+                            text: detail.entry ? detail.entry.body.split("\n")[0] : ""
+                            textFormat: Text.PlainText
+                            elide: Text.ElideMiddle
+                            color: root.mutedTextColor
+                            font.family: root.sansFamily
+                            font.pixelSize: root.codeSize - 1
+                        }
+                        Repeater {
+                            model: detail.entry ? detail.entry.diff : []
+                            Rectangle {
+                                required property var modelData
+                                width: diffColumn.width
+                                height: diffLine.implicitHeight + 2
+                                color: modelData.sign === "+" ? root.tint(root.addedColor, 0.16)
+                                     : modelData.sign === "-" ? root.tint(root.removedColor, 0.22)
+                                     : "transparent"
+                                Text {
+                                    id: diffLine
+                                    x: 12
+                                    width: parent.width - 24
+                                    text: modelData.text.length > 0 ? modelData.text : " "
+                                    textFormat: Text.PlainText
+                                    elide: Text.ElideRight
+                                    color: root.tint(root.textColor, 0.9)
+                                    font.family: root.monoFamily
+                                    font.pixelSize: root.codeSize
+                                    lineHeight: 1.2
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+        Code {
+            visible: detail.tool && !detail.task && detail.entry.result.length > 0
+            width: parent.width
+            text: detail.tool ? detail.entry.result : ""
+            textColor: detail.tool && detail.entry.failed ? root.faultColor : root.tint(root.textColor, 0.75)
+        }
+        Selectable {
+            visible: detail.entry !== null && !detail.tool && !detail.thinking
+            width: parent.width
+            text: !detail.entry ? "" : detail.entry.kind === "notice" || detail.entry.kind === "divider"
+                                       ? detail.entry.title : detail.entry.body
+            color: root.tint(root.textColor, 0.9)
+            font.pixelSize: root.stepSize
+        }
+        // A thought in full, dim, its markdown laid out as replies are, a
+        // step smaller.
+        Selectable {
+            id: thoughtText
+            objectName: "thoughtText"
+            readonly property string source: detail.thinking ? detail.entry.body : ""
+            function restyle() {
+                if (root.model && source.length > 0)
+                    root.model.style(textDocument, source, root.thoughtStyle)
+            }
+            visible: source.length > 0
+            width: parent.width
+            textFormat: TextEdit.RichText
+            color: root.mutedTextColor
+            onSourceChanged: restyle()
+            Component.onCompleted: restyle()
+            Connections {
+                target: root
+                function onStyleKeyChanged() { thoughtText.restyle() }
+            }
+        }
+        }
+    }
 
-            // What opens on click is made on click: a collapsed step is one line.
-            Loader {
-                width: parent.width
-                active: step.open
-                visible: active
-                sourceComponent: Component {
-                    Column {
-                        spacing: 6
-                        Selectable {
-                            visible: step.entry && step.entry.detail.length > 0
-                            width: parent.width
-                            text: step.entry ? step.entry.detail : ""
-                            color: root.mutedTextColor
-                            font.pixelSize: root.stepSize - 1
-                        }
-                        Code {
-                            visible: step.entry && !step.thinking && !step.edit
-                                     && (step.command || step.entry.body.indexOf("\n") >= 0)
-                            width: parent.width
-                            text: step.entry ? step.entry.body : ""
-                            // A command reads as shell, without a label.
-                            language: step.command ? "bash" : ""
-                            caption: ""
-                            highlighted: step.command
-                            textColor: step.command ? root.codeTextColor : root.textColor
-                        }
-                        Code {
-                            visible: step.entry && step.entry.result.length > 0
-                            width: parent.width
-                            text: step.entry ? step.entry.result : ""
-                            textColor: step.entry && step.entry.failed ? root.faultColor : root.tint(root.textColor, 0.75)
-                        }
-                        Selectable {
-                            visible: step.thinking
-                            width: parent.width
-                            text: step.entry ? step.entry.body : ""
-                            color: root.mutedTextColor
-                            font.pixelSize: root.stepSize
-                        }
-                    }
-                }
+    // A step as one line in a box (a subagent's own steps, the running
+    // strip): its verb and target, a task's run after them, a dot while it
+    // runs. Clicking it asks to open it.
+    component StepLine: Item {
+        id: stepLine
+        property var entry: null
+        property bool opened: false
+        property bool withKind: false // a subagent's type and model too
+        signal clicked()
+        readonly property var task: entry && entry.task ? entry.task : null
+        readonly property string thought: entry && entry.kind === "thinking" ? root.thoughtLine(entry.body) : ""
+        readonly property bool prose: entry !== null && (entry.kind === "reply" || thought.length > 0
+                                                         || (task !== null && task.type !== "background"))
+        height: root.liveLineHeight
+        Rectangle {
+            anchors.fill: parent
+            anchors.leftMargin: 4
+            anchors.rightMargin: 4
+            radius: 4
+            color: stepLine.opened ? root.tint(root.textColor, 0.07) : "transparent"
+        }
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: stepLine.clicked()
+        }
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            x: 12
+            width: parent.width - 24
+            spacing: 6
+            Rectangle {
+                visible: !!stepLine.entry && stepLine.entry.kind === "tool"
+                         && (stepLine.task ? stepLine.task.running : !stepLine.entry.answered)
+                width: 6; height: 6; radius: 3
+                anchors.verticalCenter: parent.verticalCenter
+                color: root.activityColor
+            }
+            Text {
+                id: stepLineVerb
+                visible: text.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                text: !stepLine.entry || stepLine.entry.kind === "reply" || stepLine.thought.length > 0 ? ""
+                      : stepLine.entry.title + (stepLine.task ? " ·" : "")
+                color: stepLine.entry && stepLine.entry.failed ? root.faultColor : root.mutedTextColor
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize - 1
+            }
+            Text {
+                visible: text.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(implicitWidth, parent.width - stepLineVerb.width - stepLineInfo.width - 24)
+                text: stepLine.thought.length > 0 ? stepLine.thought : root.stepTarget(stepLine.entry)
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                color: stepLine.thought.length > 0 ? root.tint(root.mutedTextColor, 0.85)
+                     : root.tint(root.textColor, stepLine.prose ? 0.78 : 0.82)
+                font.family: stepLine.prose ? root.sansFamily : root.monoFamily
+                font.pixelSize: stepLine.prose ? root.stepSize - 1 : root.codeSize - 1
+            }
+            Text {
+                id: stepLineInfo
+                visible: text.length > 0
+                anchors.verticalCenter: parent.verticalCenter
+                text: !stepLine.entry ? ""
+                      : stepLine.task ? root.taskLine(stepLine.task, stepLine.withKind).slice(1)
+                      : [stepLine.entry.added > 0 ? "+" + stepLine.entry.added : "",
+                         stepLine.entry.removed > 0 ? "−" + stepLine.entry.removed : "",
+                         stepLine.entry.kind === "tool" && stepLine.entry.duration >= 1000
+                         ? root.durationLabel(stepLine.entry.duration) : ""]
+                        .filter(s => s.length > 0).join(" ")
+                color: root.tint(root.mutedTextColor, 0.75)
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize - 2
+                font.features: { "tnum": 1 }
             }
         }
     }
 
-    // The end of a running turn: "Working for 1m 12s", then the agent's
-    // screen as it streams (thinking, tool output, the reply being written),
-    // dim and slightly soft so it reads as work in progress. Click to read
-    // all of it sharp; it goes when the turn ends and the saved items stand.
-    Component {
-        id: liveFooter
-        Item {
-            id: live
-            readonly property int column: Math.min(root.columnWidth, width - 56)
-            readonly property double since: root.turnSince
-            readonly property var shown: root.liveOpen ? root.liveRows : root.liveRows.slice(-8)
-            width: ListView.view ? ListView.view.width : 0
-            height: (root.busy ? liveHeader.height + liveTail.height + 22 : 0) + 40
-            Item {
-                id: liveHeader
-                visible: root.busy
-                x: (live.width - live.column) / 2
-                y: 12
-                width: live.column
-                height: root.stepSize + 10
-                MouseArea {
-                    id: liveHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    enabled: root.liveRows.length > 0
-                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: root.liveOpen = !root.liveOpen
+    // The wheel over a box of lines scrolls it, past either end the thread.
+    component BoxWheel: WheelHandler {
+        property var view: null
+        target: null
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        onWheel: function(event) {
+            const step = event.pixelDelta.y !== 0 ? event.pixelDelta.y
+                                                  : event.angleDelta.y / 120 * root.liveLineHeight * 2
+            const top = view.originY
+            const bottom = Math.max(top, view.originY + view.contentHeight - view.height)
+            const next = Math.max(top, Math.min(bottom, view.contentY - step))
+            if (next === view.contentY) {
+                event.accepted = false
+                return
+            }
+            view.contentY = next
+            if (view.follow !== undefined)
+                view.follow = next >= bottom - 2
+        }
+    }
+
+    // What an opened subagent or background task shows: how it stands, what
+    // it was asked or runs, then a subagent's own steps as one-line rows in
+    // a box like the live work box (each opens under it; its own subagents
+    // stay lines) and its final report, or a background command's last
+    // lines of output. Read from its files when opened, and again every two
+    // seconds while it runs.
+    component TaskDetail: Column {
+        id: taskDetail
+        property var entry: null
+        readonly property var task: entry && entry.task ? entry.task : null
+        readonly property bool subagent: task !== null && task.type === "subagent"
+        property var loaded: ({})
+        readonly property var steps: loaded.steps ? loaded.steps : []
+        property int openStep: -1
+        function load() {
+            loaded = root.model && entry && entry.item >= 0 ? root.model.taskDetail(entry.item) : ({})
+        }
+        onEntryChanged: load()
+        Component.onCompleted: load()
+        Timer {
+            interval: 2000
+            repeat: true
+            running: taskDetail.task !== null && taskDetail.task.running && taskDetail.visible
+            onTriggered: taskDetail.load()
+            onRunningChanged:
+                if (!running && taskDetail.task !== null && !taskDetail.task.running)
+                    taskDetail.load()
+        }
+        spacing: 6
+        Text {
+            width: parent.width
+            text: root.taskState(taskDetail.task)
+            wrapMode: Text.Wrap
+            color: root.mutedTextColor
+            font.family: root.sansFamily
+            font.pixelSize: root.stepSize - 1
+            font.features: { "tnum": 1 }
+        }
+        // What it was asked (a subagent's prompt) or is for.
+        Selectable {
+            visible: text.length > 0
+            width: parent.width
+            text: !taskDetail.entry ? ""
+                  : taskDetail.task && taskDetail.task.type === "monitor" ? taskDetail.entry.body
+                  : taskDetail.entry.detail
+            color: root.mutedTextColor
+            font.pixelSize: root.stepSize - 1
+        }
+        Code {
+            visible: !taskDetail.subagent && text.length > 0
+            width: parent.width
+            text: !taskDetail.entry || taskDetail.subagent ? ""
+                  : taskDetail.task.type === "monitor" ? taskDetail.entry.detail : taskDetail.entry.body
+            language: "bash"
+            caption: ""
+            highlighted: true
+            textColor: root.codeTextColor
+        }
+        Rectangle {
+            objectName: "subagentSteps"
+            visible: taskDetail.subagent && taskDetail.steps.length > 0
+            width: parent.width
+            height: Math.min(taskDetail.steps.length, root.liveBoxLines + 2) * root.liveLineHeight + 12
+            radius: root.radius
+            color: root.tint(root.raisedColor, 0.35)
+            border.color: root.borderColor
+            clip: true
+            ListView {
+                id: subList
+                objectName: "subagentList"
+                property bool follow: true
+                anchors.fill: parent
+                anchors.topMargin: 6
+                anchors.bottomMargin: 6
+                model: taskDetail.steps
+                interactive: false
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
+                // A running subagent's newest step stays in view; a finished
+                // one opens at its start.
+                function toEnd() { if (follow && taskDetail.task && taskDetail.task.running) positionViewAtEnd() }
+                onCountChanged: Qt.callLater(toEnd)
+                delegate: StepLine {
+                    required property var modelData
+                    required property int index
+                    width: subList.width
+                    entry: modelData
+                    opened: taskDetail.openStep === index
+                    onClicked: taskDetail.openStep = opened ? -1 : index
                 }
-                Row {
+            }
+            BoxWheel { view: subList }
+        }
+        Loader {
+            width: parent.width
+            active: taskDetail.openStep >= 0 && taskDetail.openStep < taskDetail.steps.length
+            visible: active
+            property var subEntry: active ? taskDetail.steps[taskDetail.openStep] : null
+            // By id, so StepDetail and TaskDetail do not hold each other.
+            sourceComponent: nestedStepDetail
+        }
+        Text {
+            visible: taskDetail.subagent && taskDetail.loaded.found !== true
+            width: parent.width
+            text: qsTr("Its own steps are not saved where lapis can read them")
+            wrapMode: Text.Wrap
+            color: root.tint(root.mutedTextColor, 0.7)
+            font.family: root.sansFamily
+            font.pixelSize: root.stepSize - 2
+        }
+        // Its final report, as its parent received it.
+        Text {
+            visible: report.visible
+            topPadding: 4
+            text: qsTr("Report")
+            color: root.tint(root.mutedTextColor, 0.75)
+            font.family: root.sansFamily
+            font.pixelSize: root.stepSize - 2
+        }
+        Selectable {
+            id: report
+            objectName: "subagentReport"
+            visible: taskDetail.subagent && text.length > 0
+            width: parent.width
+            text: taskDetail.loaded.report ? taskDetail.loaded.report : ""
+            color: root.tint(root.textColor, 0.9)
+            font.pixelSize: root.stepSize
+        }
+        Item { width: 1; height: 4 } // a breath before the next step
+        Code {
+            objectName: "taskOutput"
+            visible: !taskDetail.subagent && text.length > 0
+            width: parent.width
+            text: taskDetail.loaded.output ? taskDetail.loaded.output : ""
+            textColor: root.tint(root.textColor, 0.75)
+        }
+    }
+
+    // A subagent's own step opened under its box.
+    Component {
+        id: nestedStepDetail
+        StepDetail {
+            entry: parent ? parent.subEntry : null
+            nested: true
+        }
+    }
+
+    // Subagents and background tasks still running, one quiet line each
+    // ("Subagent · review the parser · general-purpose · 3m 12s · 14
+    // steps", "Background · npm test · 1m 05s"), at most four lines tall and
+    // scrolling past that. More than fit collapse to one line ("3 subagents
+    // and 2 background tasks running") that opens the list. A line opens
+    // its task under the strip; finished ones leave it.
+    property int stripOpenItem: -1
+    property var stripDetail: null
+    function refreshStripDetail() {
+        let still = false
+        for (let i = 0; i < runningWork.length; ++i)
+            still = still || runningWork[i].item === stripOpenItem
+        if (!still)
+            stripOpenItem = -1
+        stripDetail = stripOpenItem >= 0 && model ? model.itemEntry(stripOpenItem) : null
+    }
+    onRunningWorkChanged: refreshStripDetail()
+    onStripOpenItemChanged: refreshStripDetail()
+    component RunningStrip: Column {
+        id: strip
+        readonly property var tasks: root.runningWork
+        property bool expanded: false
+        readonly property bool many: tasks.length > root.liveBoxLines
+        visible: tasks.length > 0
+        spacing: 6
+        Item {
+            objectName: "runningSummary"
+            visible: strip.many
+            width: parent.width
+            height: root.liveLineHeight
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: strip.expanded = !strip.expanded
+            }
+            Row {
+                anchors.verticalCenter: parent.verticalCenter
+                x: 12
+                spacing: 8
+                Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 8
-                    Rectangle {
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 6; height: 6; radius: 3
-                        color: root.activityColor
-                        SequentialAnimation on opacity {
-                            running: root.busy
-                            loops: Animation.Infinite
-                            NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutSine }
-                            NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
+                    width: 6; height: 6; radius: 3
+                    color: root.activityColor
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("%1 running").arg(root.workCount(strip.tasks))
+                    color: root.mutedTextColor
+                    font.family: root.sansFamily
+                    font.pixelSize: root.stepSize - 1
+                }
+                Chevron {
+                    anchors.verticalCenter: parent.verticalCenter
+                    turned: strip.expanded
+                }
+            }
+        }
+        Rectangle {
+            objectName: "runningStrip"
+            visible: !strip.many || strip.expanded
+            width: parent.width
+            height: Math.min(strip.tasks.length, root.liveBoxLines) * root.liveLineHeight + 8
+            radius: root.radius
+            color: "transparent"
+            border.color: root.borderColor
+            clip: true
+            ListView {
+                id: stripList
+                anchors.fill: parent
+                anchors.topMargin: 4
+                anchors.bottomMargin: 4
+                model: strip.tasks
+                interactive: false
+                boundsBehavior: Flickable.StopAtBounds
+                clip: true
+                delegate: StepLine {
+                    required property var modelData
+                    width: stripList.width
+                    withKind: true
+                    entry: ({ kind: "tool", title: modelData.type === "subagent" ? qsTr("Subagent") : qsTr("Background"),
+                              body: modelData.description, task: modelData, answered: true, failed: false,
+                              added: 0, removed: 0, duration: 0 })
+                    opened: root.stripOpenItem === modelData.item
+                    onClicked: root.stripOpenItem = opened ? -1 : modelData.item
+                }
+            }
+            BoxWheel { view: stripList }
+        }
+        Loader {
+            width: parent.width
+            active: root.stripDetail !== null
+            visible: active
+            sourceComponent: Component {
+                StepDetail { entry: root.stripDetail }
+            }
+        }
+    }
+
+    // The running state's line: "Working · 2m 10s · 14 steps", "Compacting
+    // conversation for 1m 3s", or "Running /review for 40s", with a slow
+    // pulse. `steps` is -1 where no steps are known.
+    component BusyLine: Item {
+        id: busyLine
+        property int steps: -1
+        readonly property double since: root.compacting && root.model && root.model.compactingSince > 0
+                                        ? root.model.compactingSince
+                                        : root.waitingOnWork && root.model ? root.model.waitingSince
+                                        : root.turnSince
+        readonly property string elapsed: since > 0 && root.now - since >= 1000
+                                          ? root.durationLabel(root.now - since) : ""
+        height: root.stepSize + 10
+        Row {
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 8
+            Rectangle {
+                anchors.verticalCenter: parent.verticalCenter
+                width: 6; height: 6; radius: 3
+                color: root.activityColor
+                SequentialAnimation on opacity {
+                    running: (root.busy || root.waitingOnWork) && busyLine.visible
+                    loops: Animation.Infinite
+                    NumberAnimation { to: 0.3; duration: 700; easing.type: Easing.InOutSine }
+                    NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutSine }
+                }
+            }
+            Text {
+                objectName: "busyText"
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.compacting
+                      ? (busyLine.elapsed.length > 0 ? qsTr("Compacting conversation for %1").arg(busyLine.elapsed)
+                                                     : qsTr("Compacting conversation"))
+                      : !root.working && root.pendingCommand.length > 0
+                      ? (busyLine.elapsed.length > 0 ? qsTr("Running %1 for %2").arg(root.pendingCommand).arg(busyLine.elapsed)
+                                                     : qsTr("Running %1").arg(root.pendingCommand))
+                      // The agent's turn ended, but work it started runs on.
+                      : root.waitingOnWork
+                      ? [qsTr("Waiting on %1").arg(root.workCount(root.runningWork)), busyLine.elapsed]
+                        .filter(s => s.length > 0).join(" · ")
+                      : [qsTr("Working"),
+                         busyLine.elapsed,
+                         busyLine.steps < 0 ? "" : busyLine.steps === 1 ? qsTr("1 step")
+                                                 : qsTr("%1 steps").arg(busyLine.steps)]
+                        .filter(s => s.length > 0).join(" · ")
+                color: root.mutedTextColor
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize
+                font.features: { "tnum": 1 }
+            }
+        }
+    }
+
+    // The step opened under the live work box: its item (stable while the
+    // turn runs) and its roles, refreshed as the step's record changes.
+    property int liveOpenItem: -1
+    property var liveDetail: null
+    function refreshLiveDetail() {
+        const row = liveOpenItem >= 0 && liveSteps ? liveSteps.rowOf(liveOpenItem) : -1
+        if (row < 0) {
+            liveOpenItem = -1
+            liveDetail = null
+        } else {
+            liveDetail = liveSteps.entry(row)
+        }
+    }
+    onLiveOpenItemChanged: refreshLiveDetail()
+    onLiveShownChanged: if (!liveShown) liveOpenItem = -1
+    Connections {
+        target: root.liveSteps
+        function onDataChanged() { if (root.liveOpenItem >= 0) root.refreshLiveDetail() }
+        function onModelReset() { if (root.liveOpenItem >= 0) root.refreshLiveDetail() }
+    }
+    // Lines the live work box shows at once; it never grows past them.
+    readonly property int liveBoxLines: 4
+    readonly property int liveLineHeight: Math.round(stepSize * 1.65)
+
+    // The running turn, while the agent works: its state line, then one
+    // compact box of its steps as the CLI records them ("Read greet.cpp",
+    // "Edited greet_test.cpp +12 −3", "Ran ctest 14s", the model's interim
+    // words), the newest at the bottom, earlier ones rolling up and out.
+    // The box scrolls back through the turn without growing; clicking a
+    // step opens it under the box, and clicking it again closes it. It is
+    // the transcript's own record, never the terminal's screen.
+    Component {
+        id: liveBlock
+        Column {
+            id: live
+            readonly property var entry: parent ? parent.entry : null
+            spacing: 6
+            // Counted from the box itself, so the line and the box agree.
+            BusyLine {
+                width: parent.width
+                steps: liveList.count
+            }
+            Rectangle {
+                id: box
+                objectName: "liveBox"
+                visible: !root.compacting
+                width: parent.width
+                height: root.liveBoxLines * root.liveLineHeight + 12
+                radius: root.radius
+                color: root.tint(root.raisedColor, 0.35)
+                border.color: root.borderColor
+                clip: true
+                ListView {
+                    id: liveList
+                    objectName: "liveList"
+                    property bool follow: true
+                    anchors.fill: parent
+                    anchors.topMargin: 6
+                    anchors.bottomMargin: 6
+                    model: root.liveSteps
+                    interactive: false
+                    boundsBehavior: Flickable.StopAtBounds
+                    clip: true
+                    function toEnd() { if (follow) positionViewAtEnd() }
+                    onCountChanged: Qt.callLater(toEnd)
+                    onContentHeightChanged: Qt.callLater(toEnd)
+                    Component.onCompleted: Qt.callLater(toEnd)
+                    // Claude Code writes a step as it is called and its
+                    // result when done, so after a finished step the model
+                    // is thinking; other CLIs write steps once done.
+                    footer: Text {
+                        readonly property bool shown: root.model !== null && root.model.format === "claude"
+                                                      && (liveList.count === 0 || root.liveLastAnswered)
+                                                      && !root.liveLastThought
+                        width: liveList.width
+                        height: shown || liveList.count === 0 ? root.liveLineHeight : 0
+                        leftPadding: 12
+                        verticalAlignment: Text.AlignVCenter
+                        text: shown ? qsTr("Thinking…") : liveList.count === 0 ? qsTr("Waiting for the first step…") : ""
+                        color: root.tint(root.mutedTextColor, 0.7)
+                        font.family: root.sansFamily
+                        font.pixelSize: root.stepSize - 1
+                    }
+                    delegate: Item {
+                        id: line
+                        required property int index
+                        required property string kind
+                        required property string title
+                        required property string body
+                        required property string detail
+                        required property string result
+                        required property var diff
+                        required property int added
+                        required property int removed
+                        required property bool failed
+                        required property bool answered
+                        required property double duration
+                        required property int item
+                        required property var task
+                        readonly property bool opened: root.liveOpenItem === item
+                        // A thought shows its own words, dimmed: the newest,
+                        // while it is the box's last line, flows over up to
+                        // all lines but one (its latest lines in view); an
+                        // older one is its first sentence.
+                        readonly property bool thinking: kind === "thinking"
+                        readonly property bool flowing: thinking && body.length > 0
+                                                        && index === liveList.count - 1
+                        readonly property bool openable: kind === "thinking" ? body.length > 0
+                                                         : kind !== "tool" || !!task || result.length > 0
+                                                         || detail.length > 0 || diff.length > 0
+                                                         || title === "Ran" || body.indexOf("\n") >= 0
+                                                         || body.indexOf("/") >= 0
+                        width: liveList.width
+                        height: flowing ? Math.min(Math.max(1, flow.lineCount), root.liveBoxLines - 1)
+                                          * root.liveLineHeight
+                                        : root.liveLineHeight
+                        clip: flowing
+                        Text {
+                            id: flow
+                            objectName: "thoughtFlow"
+                            visible: line.flowing
+                            x: 12
+                            width: parent.width - 24
+                            // Its newest lines at the bottom, earlier ones cut
+                            // at the top.
+                            y: parent.height - height
+                            text: line.flowing ? line.body.replace(/[*_`#>]+/g, "") : ""
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            lineHeightMode: Text.FixedHeight
+                            lineHeight: root.liveLineHeight
+                            verticalAlignment: Text.AlignVCenter
+                            color: root.tint(root.mutedTextColor, 0.85)
+                            font.family: root.sansFamily
+                            font.pixelSize: root.stepSize - 1
+                        }
+                        Rectangle {
+                            anchors.fill: parent
+                            anchors.leftMargin: 4
+                            anchors.rightMargin: 4
+                            radius: 4
+                            color: line.opened ? root.tint(root.textColor, 0.07) : "transparent"
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            enabled: line.openable
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: root.liveOpenItem = line.opened ? -1 : line.item
+                        }
+                        Row {
+                            visible: !line.flowing
+                            anchors.verticalCenter: parent.verticalCenter
+                            x: 12
+                            width: parent.width - 24
+                            spacing: 6
+                            Rectangle {
+                                visible: line.kind === "tool" && (line.task ? line.task.running : !line.answered)
+                                width: 6; height: 6; radius: 3
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: root.activityColor
+                            }
+                            Text {
+                                id: lineVerb
+                                visible: text.length > 0
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: line.kind === "reply" || (line.thinking && line.body.length > 0) ? ""
+                                      : line.title + (line.task ? " ·" : "")
+                                color: line.failed ? root.faultColor : root.mutedTextColor
+                                font.family: root.sansFamily
+                                font.pixelSize: root.stepSize - 1
+                            }
+                            Text {
+                                id: lineTarget
+                                visible: text.length > 0
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Math.min(implicitWidth, parent.width - lineVerb.width - lineCounts.width
+                                                - lineTook.width - lineChevron.width - 46)
+                                text: line.thinking ? root.thoughtLine(line.body) : root.stepTarget(line)
+                                elide: Text.ElideRight
+                                textFormat: Text.PlainText
+                                color: line.thinking ? root.tint(root.mutedTextColor, 0.85)
+                                     : line.kind === "reply" ? root.tint(root.textColor, 0.78)
+                                     : root.tint(root.textColor, 0.82)
+                                readonly property bool prose: line.kind === "reply" || line.thinking
+                                                              || (!!line.task && line.task.type !== "background")
+                                font.family: prose ? root.sansFamily : root.monoFamily
+                                font.pixelSize: prose ? root.stepSize - 1 : root.codeSize - 1
+                            }
+                            Row {
+                                id: lineCounts
+                                visible: line.added > 0 || line.removed > 0
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4
+                                Text { text: "+" + line.added; visible: line.added > 0; color: root.addedColor; font.pixelSize: root.codeSize - 1; font.family: root.monoFamily }
+                                Text { text: "−" + line.removed; visible: line.removed > 0; color: root.removedColor; font.pixelSize: root.codeSize - 1; font.family: root.monoFamily }
+                            }
+                            // How long it took; a task's run as its line says it.
+                            Text {
+                                id: lineTook
+                                visible: text.length > 0
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: line.task ? root.taskLine(line.task, false).slice(1)
+                                      : (line.kind === "tool" || (line.thinking && line.body.length > 0))
+                                        && line.duration >= 1000 ? root.durationLabel(line.duration) : ""
+                                color: root.tint(root.mutedTextColor, 0.75)
+                                font.family: root.sansFamily
+                                font.pixelSize: root.stepSize - 2
+                                font.features: { "tnum": 1 }
+                            }
+                            Chevron {
+                                id: lineChevron
+                                visible: line.opened
+                                anchors.verticalCenter: parent.verticalCenter
+                                turned: true
+                            }
                         }
                     }
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        readonly property string elapsed: live.since > 0 && root.now - live.since >= 1000
-                                                          ? root.durationLabel(root.now - live.since) : ""
-                        text: !root.working && root.pendingCommand.length > 0
-                              ? (elapsed.length > 0 ? qsTr("Running %1 for %2").arg(root.pendingCommand).arg(elapsed)
-                                                    : qsTr("Running %1").arg(root.pendingCommand))
-                              : elapsed.length > 0 ? qsTr("Working for %1").arg(elapsed) : qsTr("Working")
-                        color: liveHover.containsMouse ? root.textColor : root.mutedTextColor
-                        font.family: root.sansFamily
-                        font.pixelSize: root.stepSize
-                        font.features: { "tnum": 1 }
-                    }
-                    Chevron {
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: root.liveRows.length > 0
-                        turned: root.liveOpen
-                        color: liveHover.containsMouse ? root.textColor : root.mutedTextColor
+                }
+                // The wheel or trackpad scrolls back through the turn inside
+                // the box; at either end it scrolls the thread instead.
+                WheelHandler {
+                    target: null
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: function(event) {
+                        const step = event.pixelDelta.y !== 0 ? event.pixelDelta.y
+                                                              : event.angleDelta.y / 120 * root.liveLineHeight * 2
+                        const top = liveList.originY
+                        const bottom = Math.max(top, liveList.originY + liveList.contentHeight - liveList.height)
+                        const next = Math.max(top, Math.min(bottom, liveList.contentY - step))
+                        if (next === liveList.contentY) {
+                            event.accepted = false
+                            return
+                        }
+                        liveList.contentY = next
+                        liveList.follow = next >= bottom - 2
                     }
                 }
             }
-            Item {
-                id: liveTail
-                visible: root.busy && root.liveRows.length > 0
-                x: liveHeader.x + Math.round(root.fontSize * 0.9)
-                anchors.top: liveHeader.bottom
-                anchors.topMargin: 6
-                width: live.column - Math.round(root.fontSize * 0.9)
-                height: visible ? tailText.implicitHeight : 0
-                clip: true
-                Rectangle {
-                    x: -Math.round(root.fontSize * 0.9) + 3
-                    width: 1
-                    height: parent.height
-                    color: root.borderColor
+            // The step opened from the box, as an opened "Worked for" step.
+            Loader {
+                width: parent.width
+                active: root.liveDetail !== null && !root.compacting
+                visible: active
+                sourceComponent: Component {
+                    StepDetail { entry: root.liveDetail }
                 }
-                Text {
-                    id: tailText
+            }
+            RunningStrip {
+                width: parent.width
+            }
+        }
+    }
+    // The newest step in the box is done (or is not a tool call).
+    property bool liveLastAnswered: false
+    // ...and is a thought with words, already flowing in the box.
+    property bool liveLastThought: false
+    function checkLiveLast() {
+        const last = liveSteps && liveSteps.count > 0 ? liveSteps.entry(liveSteps.count - 1) : null
+        liveLastAnswered = last !== null && (last.kind !== "tool" || last.answered)
+        liveLastThought = last !== null && last.kind === "thinking" && last.body.length > 0
+    }
+    Connections {
+        target: root.liveSteps
+        function onRowsInserted() { root.checkLiveLast() }
+        function onDataChanged() { root.checkLiveLast() }
+        function onModelReset() { root.checkLiveLast() }
+    }
+
+    // A prompt the bar sent that the CLI has not recorded yet, drawn as its
+    // row will draw it: "Queued" when sent while the agent worked, and a
+    // note when it was found still in the agent's input box.
+    component PendingPrompt: Column {
+        required property var modelData
+        required property int index
+        readonly property bool unsent: root.unsentText.length > 0
+                                       && root.unsentText.replace(/\s+/g, " ").trim() === modelData.key
+        objectName: "pendingPrompt"
+        width: parent ? parent.width : 0
+        spacing: 4
+        // Where its row will be: a prompt's gap above it (less the footer's
+        // own top margin), and its buttons' room under it (less the
+        // footer's spacing), so the row takes its place without a jump.
+        topPadding: !modelData.queued && index === 0 ? Math.max(0, root.fontSize * 2 - 12) : 0
+        bottomPadding: modelData.queued ? 0 : root.actionHeight + 6
+        Rectangle {
+            anchors.right: parent.right
+            width: Math.min(pendingMeasure.implicitWidth + 36, parent.width * 0.8)
+            height: pendingText.implicitHeight + 22
+            radius: Math.round(root.fontSize * 1.1)
+            color: root.raisedColor
+            opacity: modelData.queued ? 0.6 : 1
+            Text {
+                id: pendingMeasure
+                visible: false
+                text: modelData.text
+                font: pendingText.font
+                textFormat: Text.PlainText
+            }
+            Text {
+                id: pendingText
+                x: 18; y: 11
+                width: parent.width - 36
+                text: modelData.text
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                color: root.textColor
+                font.family: root.sansFamily
+                font.pixelSize: root.fontSize
+            }
+        }
+        Text {
+            anchors.right: parent.right
+            anchors.rightMargin: 6
+            visible: text.length > 0
+            text: parent.unsent ? qsTr("Not sent yet · press Return in the terminal")
+                : modelData.queued ? qsTr("Queued · the agent reads it at its next step") : ""
+            color: parent.unsent ? root.faultColor : root.mutedTextColor
+            font.family: root.sansFamily
+            font.pixelSize: root.codeSize - 1
+        }
+    }
+
+    // The thread's end: a prompt just sent to an idle agent until the CLI
+    // records it; while the agent works with no running turn recorded yet
+    // (a prompt just sent, a slash command, a compaction), only the state
+    // line; then the prompts sent mid-turn that the CLI has not recorded
+    // yet, queued, in order.
+    Component {
+        id: liveFooter
+        Item {
+            id: footer
+            readonly property int column: Math.min(root.columnWidth, width - 56)
+            width: ListView.view ? ListView.view.width : 0
+            height: footerColumn.height + 40
+            Column {
+                id: footerColumn
+                x: (footer.width - footer.column) / 2
+                y: 12
+                width: footer.column
+                spacing: 10
+                // A prompt just sent to an idle agent, as its row will show
+                // it, until the CLI records it.
+                Repeater {
+                    model: root.model ? root.model.pendingEntries.filter(p => !p.queued) : []
+                    delegate: PendingPrompt {}
+                }
+                // With no live box: the agent busy, or idle while its
+                // subagents and background tasks run ("Waiting on ...").
+                BusyLine {
+                    visible: (root.busy || root.waitingOnWork) && !root.liveShown
                     width: parent.width
-                    text: live.shown.join("\n")
-                    textFormat: Text.PlainText
-                    wrapMode: Text.NoWrap
-                    elide: Text.ElideRight
-                    color: root.tint(root.mutedTextColor, root.liveOpen ? 1 : 0.8)
-                    font.family: root.monoFamily
-                    font.pixelSize: root.codeSize - 1
-                    lineHeight: 1.15
-                    // Soft while folded: it streams, it is not the answer yet.
-                    layer.enabled: !root.liveOpen
-                    layer.effect: MultiEffect {
-                        blurEnabled: true
-                        blur: 0.35
-                        blurMax: 6
-                    }
+                }
+                RunningStrip {
+                    visible: !root.liveShown && root.runningWork.length > 0
+                    width: parent.width
+                }
+                Repeater {
+                    model: root.model ? root.model.pendingEntries.filter(p => p.queued) : []
+                    delegate: PendingPrompt {}
                 }
             }
         }
@@ -1568,8 +2864,32 @@ FocusScope {
             return
         }
         const command = root.slashCommands && /^\/[^\s\/]+/.test(text.trim()) ? text.trim().split(/\s/)[0] : ""
+        // A CLI whose screen the view cannot read (any but Claude Code) may
+        // answer a slash command with a picker, panel or output the thread
+        // would hide, so its terminal shows instead; a command its list
+        // knows runs as a turn (/compact, a skill) stays in the thread.
+        const uncovers = root.model && !root.model.screenKnown && /^\/[^\s\/]+/.test(text.trim())
+                         && root.answersInTerminal(text.trim().split(/\s/)[0].slice(1))
+        // A turn the file shows ended is not working, whatever the status.
+        const working = root.working && !root.turnEnded
         if (root.submit(text)) {
-            if (command.length > 0) {
+            // The prompt shows at once, at the thread's end, until the CLI
+            // records it (queued when the agent was working), and is then
+            // checked for having been taken.
+            if (command.length === 0 && root.model) {
+                root.model.noteSent(text, working)
+                if (!working) {
+                    root.sentAt = Date.now()
+                    sentTimeout.restart()
+                }
+                root.checkingText = text
+                root.retried = false
+                root.unsentText = ""
+                sendCheck.restart()
+            }
+            if (uncovers)
+                root.terminalNeeded()
+            if (command.length > 0 && !uncovers) {
                 root.pendingCommand = command
                 root.pendingSince = Date.now()
                 root.quietTicks = 0
@@ -1596,7 +2916,17 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: composerBox.height + Math.round(root.fontSize * 0.8) + hints.height + 6
+        height: root.composerInset + composerBox.height + Math.round(root.fontSize * 0.8) + hints.height + 6
+
+        // Room the host keeps above the composer (the factory view's gate
+        // strip); what it puts in `accessory` is laid over it.
+        Item {
+            id: accessorySlot
+            objectName: "visualComposerAccessory"
+            x: composerBox.x
+            width: composerBox.width
+            height: Math.max(0, root.composerInset - 6)
+        }
 
         // The slash commands that best match what is typed, three at most.
         Rectangle {
@@ -1661,7 +2991,7 @@ FocusScope {
             id: composerBox
             width: Math.min(root.columnWidth, parent.width - 56)
             x: (parent.width - width) / 2
-            y: 0
+            y: root.composerInset
             height: chips.height + inputScroll.height + toolbar.height + 30
             radius: Math.round(root.fontSize * 0.9)
             color: root.raisedColor

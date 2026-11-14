@@ -1,9 +1,11 @@
 #include "agent_checkpoint.hpp"
 #include "alerts.hpp"
 #include "config.hpp"
+#include "conversation_owner.hpp"
 #include "launch_spec.hpp"
 #include "session_descriptor.hpp"
 #include "terminals.hpp"
+#include "transcript.hpp"
 #include "transport/local_protocol.hpp"
 #include "workspace.hpp"
 #include "workspace_control.hpp"
@@ -26,6 +28,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScopeGuard>
+#include <QSysInfo>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUuid>
@@ -155,6 +158,177 @@ void categoriesAndIdentity() {
         workspace.categories().front().toMap().value(QStringLiteral("attentionCount")).toInt() == 1,
         "category aggregates requests");
     require(!workspace.addCategory(QString(81, QLatin1Char('a'))), "bounded names");
+}
+QByteArray readRegistry(const QString& path);
+void writeRegistry(const QString& path, const QJsonObject& root);
+QString focusedId(const Workspace& workspace) {
+    return workspace.focusedAgent() ? workspace.focusedAgent()->agentId() : QString{};
+}
+// Command-Shift-] and [ walk the sidebar: every category's agents in turn,
+// across category edges, wrapping at the ends and passing empty categories.
+void nextAgentWalksTheSidebar() {
+    Workspace workspace(WorkspaceMode::fixture);
+    // General: shell renderer agent; Build: (empty); Review: service checks;
+    // Later: notes.
+    require(workspace.addCategory(QStringLiteral("Build")), "add an empty category");
+    const auto build = workspace.activeCategoryId();
+    require(workspace.addCategory(QStringLiteral("Review")), "add a second category");
+    const auto review = workspace.activeCategoryId();
+    require(workspace.addCategory(QStringLiteral("Later")), "add a third category");
+    const auto later = workspace.activeCategoryId();
+    require(
+        workspace.placeAgents({QStringLiteral("service"), QStringLiteral("checks")}, review, 0) &&
+            workspace.moveAgent(QStringLiteral("notes"), later),
+        "spread the agents over the categories");
+    require(workspace.selectAgent(QStringLiteral("agent")), "start at General's last agent");
+    QStringList visited;
+    QStringList categories;
+    for (int step = 0; step < 6; ++step) {
+        workspace.nextAgentAcrossCategories(1);
+        visited.append(focusedId(workspace));
+        categories.append(workspace.activeCategoryId());
+    }
+    require(visited == QStringList{QStringLiteral("service"), QStringLiteral("checks"),
+                                   QStringLiteral("notes"), QStringLiteral("shell"),
+                                   QStringLiteral("renderer"), QStringLiteral("agent")},
+            "forward crosses categories in sidebar order, skips the empty one and wraps");
+    require(categories == QStringList{review, review, later, QStringLiteral("general"),
+                                      QStringLiteral("general"), QStringLiteral("general")},
+            "the active category follows the walk");
+    workspace.nextAgentAcrossCategories(-1);
+    require(focusedId(workspace) == QStringLiteral("renderer"), "back within a category");
+    require(workspace.selectAgent(QStringLiteral("shell")), "start at the first agent");
+    workspace.nextAgentAcrossCategories(-1);
+    require(focusedId(workspace) == QStringLiteral("notes") &&
+                workspace.activeCategoryId() == later,
+            "back from the first agent wraps to the last category's last agent");
+    workspace.nextAgentAcrossCategories(-1);
+    require(focusedId(workspace) == QStringLiteral("checks") &&
+                workspace.activeCategoryId() == review,
+            "back crosses into the previous category's last agent");
+    // From an empty category the walk starts beside it.
+    require(workspace.selectCategory(build) && workspace.focusedAgent() == nullptr,
+            "an empty category shows no agent");
+    workspace.nextAgentAcrossCategories(1);
+    require(focusedId(workspace) == QStringLiteral("service"),
+            "forward from an empty category takes the next category's first agent");
+    require(workspace.selectCategory(build), "back to the empty category");
+    workspace.nextAgentAcrossCategories(-1);
+    require(focusedId(workspace) == QStringLiteral("agent") &&
+                workspace.activeCategoryId() == QStringLiteral("general"),
+            "back from an empty category takes the previous category's last agent");
+    // Each category keeps the agent the walk left it on.
+    require(workspace.selectCategory(review) && focusedId(workspace) == QStringLiteral("service"),
+            "a category remembers where the walk left it");
+    // The in-category walk is unchanged.
+    require(workspace.selectAgent(QStringLiteral("checks")), "select Review's last agent");
+    workspace.nextAgent(1);
+    require(focusedId(workspace) == QStringLiteral("service"),
+            "nextAgent still wraps inside the category");
+}
+// Each category has a colour: by position, or chosen and saved by name.
+void categoryColorsPersist() {
+    {
+        Workspace workspace(WorkspaceMode::fixture);
+        for (const auto* name : {"A", "B", "C", "D", "E", "F", "G", "H"})
+            require(workspace.addCategory(QString::fromLatin1(name)), "add categories");
+        QStringList colors;
+        for (const auto& value : workspace.categories())
+            colors.append(value.toMap().value(QStringLiteral("color")).toString());
+        require(colors.size() == 9, "nine categories");
+        require(colors.mid(0, 8) == QStringList{QStringLiteral("blue"), QStringLiteral("green"),
+                                                QStringLiteral("purple"), QStringLiteral("yellow"),
+                                                QStringLiteral("cyan"), QStringLiteral("pink"),
+                                                QStringLiteral("red"), QStringLiteral("grey")},
+                "colours come by position");
+        require(colors.at(8) == QStringLiteral("blue"), "the order cycles");
+        const auto first = workspace.categories().front().toMap();
+        require(first.value(QStringLiteral("agents")).toList().size() == 6 &&
+                    first.value(QStringLiteral("agentCount")).toInt() == 6,
+                "each category lists its agents in order");
+        require(!workspace.setCategoryColor(QStringLiteral("general"), QStringLiteral("mauve")),
+                "only palette names are chosen");
+    }
+    QTemporaryDir directory;
+    require(directory.isValid(), "colour registry directory");
+    WorkspaceOptions options;
+    options.storagePath = QDir(directory.path()).filePath(QStringLiteral("workspace.json"));
+    QString second;
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.addCategory(QStringLiteral("Research")), "add a category");
+        second = workspace.activeCategoryId();
+        require(workspace.setCategoryColor(second, QStringLiteral("pink")), "choose a colour");
+        require(workspace.categories().at(1).toMap().value(QStringLiteral("color")).toString() ==
+                    QStringLiteral("pink"),
+                "the chosen colour shows");
+    }
+    const auto saved = [&] {
+        return QJsonDocument::fromJson(readRegistry(options.storagePath))
+            .object()
+            .value(QStringLiteral("categories"))
+            .toArray();
+    };
+    require(!saved().at(0).toObject().contains(QStringLiteral("color")),
+            "a category without a chosen colour writes none");
+    require(saved().at(1).toObject().value(QStringLiteral("color")).toString() ==
+                QStringLiteral("pink"),
+            "the chosen colour is saved by name");
+    {
+        Workspace restored(WorkspaceMode::live, options);
+        require(restored.workspaceError().isEmpty(), "a registry with colours loads");
+        const auto groups = restored.categories();
+        require(groups.at(1).toMap().value(QStringLiteral("color")).toString() ==
+                        QStringLiteral("pink") &&
+                    groups.at(1).toMap().value(QStringLiteral("colorChoice")).toString() ==
+                        QStringLiteral("pink"),
+                "the chosen colour survives a restart");
+        require(restored.setCategoryColor(second, {}), "clear the choice");
+        require(restored.categories().at(1).toMap().value(QStringLiteral("color")).toString() ==
+                    QStringLiteral("green"),
+                "a cleared choice returns to the position's colour");
+    }
+    // A name this build does not know (a later build's, say) is kept as read
+    // and shown as the position's colour; a registry without colours (an
+    // earlier build's) loads unchanged.
+    auto root = QJsonDocument::fromJson(readRegistry(options.storagePath)).object();
+    auto groups = root.value(QStringLiteral("categories")).toArray();
+    auto group = groups.at(1).toObject();
+    group.insert(QStringLiteral("color"), QStringLiteral("orange"));
+    groups.replace(1, group);
+    auto first = groups.at(0).toObject();
+    first.insert(QStringLiteral("color"), 7);
+    groups.replace(0, first);
+    root.insert(QStringLiteral("categories"), groups);
+    writeRegistry(options.storagePath, root);
+    {
+        Workspace restored(WorkspaceMode::live, options);
+        require(restored.workspaceError().isEmpty(), "an unknown colour never fails the registry");
+        const auto shown = restored.categories();
+        require(shown.at(0).toMap().value(QStringLiteral("color")).toString() ==
+                        QStringLiteral("blue") &&
+                    shown.at(1).toMap().value(QStringLiteral("color")).toString() ==
+                        QStringLiteral("green"),
+                "unknown and malformed colours fall back to the position's colour");
+        require(restored.renameCategory(second, QStringLiteral("Renamed")), "save again");
+    }
+    require(saved().at(1).toObject().value(QStringLiteral("color")).toString() ==
+                    QStringLiteral("orange") &&
+                !saved().at(0).toObject().contains(QStringLiteral("color")),
+            "an unknown name is written back as read; a malformed one is dropped");
+    group = saved().at(1).toObject();
+    group.remove(QStringLiteral("color"));
+    groups = saved();
+    groups.replace(1, group);
+    root.insert(QStringLiteral("categories"), groups);
+    writeRegistry(options.storagePath, root);
+    {
+        Workspace restored(WorkspaceMode::live, options);
+        require(restored.workspaceError().isEmpty() && restored.categories().size() == 2 &&
+                    restored.categories().at(1).toMap().value(QStringLiteral("color")).toString() ==
+                        QStringLiteral("green"),
+                "a registry without colours loads with colours by position");
+    }
 }
 void categoryCountsChangeOnlyWhenNeeded() {
     Workspace workspace(WorkspaceMode::fixture);
@@ -507,7 +681,9 @@ void truthfulStatus() {
     request.pending.request.reason = "Choose a value";
     attention.requests.push_back(request);
     item.applyAttention(attention);
-    require(item.statusKind() == QStringLiteral("waiting"), "pending request has its own state");
+    require(item.statusKind() == QStringLiteral("waiting") &&
+                item.statusLabel() == QStringLiteral("Needs your answer"),
+            "pending request has its own state and words");
     item.invalidateAttention();
     require(item.attentionCount() == 1, "stale requests remain visible for reconciliation");
     lapis::session::wire::AttentionSnapshot fresh;
@@ -571,7 +747,7 @@ void submittedAttentionKeepsItsDisplayToken() {
     request.pending.revision = 10;
     request.pending.submitted = true;
     request.pending.status = lapis::session::attention::RequestStatus::responding;
-    attention.requests.front() = request;
+    attention.requests.front() = std::move(request);
     item.applyAttention(attention);
     const auto after = item.attentionRequests().first().toMap();
     require(arrivals == 1 &&
@@ -682,7 +858,6 @@ void unseenFollowsTurnsAndSelection() {
     require(workspace.selectAgent(QStringLiteral("renderer")), "select renderer");
     int pings = 0;
     QObject::connect(&workspace, &Workspace::turnFinished, [&pings] { ++pings; });
-    const int waiting_before = workspace.attentionAgents();
     lapis::session::wire::AttentionSnapshot state;
     state.available = state.connected = state.ready = true;
     const auto turn = [&](const char* id) {
@@ -696,14 +871,8 @@ void unseenFollowsTurnsAndSelection() {
     auto* agent = turn("agent");
     require(agent->unseen(), "an unselected agent's finished turn is marked");
     require(!turn("renderer")->unseen(), "the selected agent is already in view");
-    const auto count = [&](const char* id) {
-        for (const auto& value : workspace.categories())
-            if (value.toMap().value(QStringLiteral("id")).toString() == QLatin1String(id))
-                return value.toMap().value(QStringLiteral("unseenCount")).toInt();
-        return -1;
-    };
-    require(count("general") == 1, "categories count unseen agents");
-    require(workspace.attentionAgents() > waiting_before, "the Dock badge counts unseen agents");
+    require(!workspace.categories().front().toMap().contains(QStringLiteral("unseenCount")),
+            "categories carry no unseen count: the window draws none");
     require(workspace.selectAgent(QStringLiteral("agent")) && !agent->unseen(),
             "selecting an agent clears its mark");
     require(workspace.selectAgent(QStringLiteral("renderer")), "select renderer again");
@@ -716,13 +885,346 @@ void unseenFollowsTurnsAndSelection() {
     checks->applyAttention(state);
     require(checks->unseen(), "a new request marks its agent");
     require(pings == pings_before + 1, "a new request pings once, as a finished turn does");
-    require(count("general") == 1, "one unseen agent after the earlier one was selected");
     // Selecting the waiting agent clears it as seen.
     require(workspace.selectAgent(QStringLiteral("checks")) && workspace.focusedAgent() == checks,
             "the waiting agent is selected");
-    require(!checks->unseen(), "selecting an agent is looking at it");
-    require(workspace.attentionAgents() == waiting_before,
-            "a request already looked at no longer counts, though it is still pending");
+    require(!checks->unseen() && checks->attentionPending(),
+            "selecting an agent is looking at it, though its request is still pending");
+}
+
+// The attention mark's state machine (Workspace::noteStatus): one mark per
+// finished turn or request unless the person is looking then; looking by any
+// path clears it for good; republished, reconnected and restored states never
+// mark a turn already seen. `window` stands for the window being active with
+// someone at the Mac.
+struct MarkProbe {
+    explicit MarkProbe(Workspace& workspace) : workspace_(workspace) {
+        workspace.setLooking([this](const lapis::desktop::Agent* item) {
+            return window && item == workspace_.focusedAgent();
+        });
+        workspace.setMarkLog([this](const QJsonObject& line) { log.push_back(line); });
+        QObject::connect(&workspace, &Workspace::needsYou, &context_,
+                         [this](lapis::desktop::Agent* item, const QString& outcome) {
+                             outcomes.push_back(item->agentId() + ':' + outcome);
+                         });
+    }
+    ~MarkProbe() {
+        workspace_.setLooking({});
+        workspace_.setMarkLog({});
+    }
+    MarkProbe(const MarkProbe&) = delete;
+    MarkProbe& operator=(const MarkProbe&) = delete;
+    // A service restart: the connection drops, and its requests come back
+    // under a new source epoch.
+    void reconnect(const char* id) {
+        workspace_.agent(QString::fromLatin1(id))->invalidateAttention();
+        ++snapshot.source_epoch;
+        for (auto& item : snapshot.requests)
+            item.pending.source_epoch = snapshot.source_epoch;
+        state(id, snapshot.activity);
+    }
+    void state(const char* id, lapis::session::attention::Activity activity) {
+        snapshot.activity = activity;
+        workspace_.agent(QString::fromLatin1(id))->applyAttention(snapshot);
+    }
+    void finish(const char* id) {
+        state(id, lapis::session::attention::Activity::working);
+        state(id, lapis::session::attention::Activity::turn_completed);
+    }
+    [[nodiscard]] int marked(const char* id) const {
+        return static_cast<int>(std::count(outcomes.begin(), outcomes.end(),
+                                           QString::fromLatin1(id) + QStringLiteral(":marked")));
+    }
+    [[nodiscard]] bool unseen(const char* id) const {
+        return workspace_.agent(QString::fromLatin1(id))->unseen();
+    }
+    Workspace& workspace_;
+    QObject context_;
+    bool window{true};
+    QStringList outcomes;
+    std::vector<QJsonObject> log;
+    lapis::session::wire::AttentionSnapshot snapshot{[] {
+        lapis::session::wire::AttentionSnapshot value;
+        value.available = value.connected = value.ready = true;
+        value.source_epoch = 1;
+        return value;
+    }()};
+};
+
+void attentionMarksFollowLooking() {
+    using lapis::session::attention::Activity;
+    Workspace workspace(WorkspaceMode::fixture);
+    MarkProbe probe(workspace);
+    require(workspace.selectAgent(QStringLiteral("renderer")), "renderer on the stage");
+
+    // Off the stage: marked once; republished and repeated states add nothing.
+    probe.finish("agent");
+    require(probe.unseen("agent") && probe.marked("agent") == 1, "a turn off the stage marks once");
+    probe.state("agent", Activity::turn_completed);
+    probe.state("agent", Activity::idle);
+    require(probe.marked("agent") == 1, "a republished or idle status is no new turn");
+
+    // On the stage with the window in front: seen as it happens, no chime.
+    probe.finish("renderer");
+    require(!probe.unseen("renderer") &&
+                probe.outcomes.back() == QStringLiteral("renderer:looking"),
+            "the agent being looked at is seen at once");
+
+    // On the stage with the window behind another app: nobody looked.
+    probe.window = false;
+    probe.finish("renderer");
+    require(probe.unseen("renderer") && probe.marked("renderer") == 1,
+            "the stage agent is marked while the window is not in front");
+    // Moving by hand while away (the phone) is not looking either.
+    require(workspace.selectAgent(QStringLiteral("agent")) && probe.unseen("agent"),
+            "a selection nobody sees clears nothing");
+    // Back at the window: the agent on the stage is seen, the other is not.
+    probe.window = true;
+    workspace.noteLooking(QStringLiteral("window"));
+    require(!probe.unseen("agent") && probe.unseen("renderer"),
+            "returning to the window sees the stage agent only");
+    // A sidebar click is selectAgent; it clears the mark for good.
+    require(workspace.selectAgent(QStringLiteral("renderer")) && !probe.unseen("renderer"),
+            "showing the agent clears its mark");
+    require(workspace.selectAgent(QStringLiteral("shell")), "leave it");
+    probe.state("renderer", Activity::turn_completed);
+    require(!probe.unseen("renderer"), "a republished finished turn does not come back");
+
+    // A reconnect: unknown in between is not settled; the same turn stays seen,
+    // and a turn that ended while unreachable counts once.
+    auto* renderer = workspace.agent(QStringLiteral("renderer"));
+    renderer->invalidateAttention();
+    probe.state("renderer", Activity::turn_completed);
+    require(!probe.unseen("renderer") && probe.marked("renderer") == 1,
+            "a reconnect republishing a seen turn marks nothing");
+    probe.state("renderer", Activity::working);
+    renderer->invalidateAttention();
+    probe.state("renderer", Activity::turn_completed);
+    require(probe.unseen("renderer") && probe.marked("renderer") == 2,
+            "a turn that ended while unreachable marks once");
+    renderer->invalidateAttention();
+    probe.state("renderer", Activity::turn_completed);
+    require(probe.marked("renderer") == 2, "and only once");
+
+    // The cross-category walk shows an agent in another category: seen.
+    const auto other = workspace.createCategory(QStringLiteral("Other"));
+    require(!other.isEmpty() && workspace.moveAgent(QStringLiteral("notes"), other), "notes moved");
+    require(workspace.selectAgent(QStringLiteral("checks")), "checks on the stage");
+    probe.finish("notes");
+    require(probe.unseen("notes"), "an agent in another category is not being looked at");
+    workspace.nextAgentAcrossCategories(1);
+    require(workspace.focusedAgent() == workspace.agent(QStringLiteral("notes")) &&
+                workspace.activeCategoryId() == other && !probe.unseen("notes"),
+            "the walk across categories is looking too");
+
+    // Requests: once per request; one already marked and back after a
+    // reconnect or with a new revision marks nothing; one arriving while the
+    // person looks is seen.
+    require(workspace.selectAgent(QStringLiteral("shell")), "shell on the stage");
+    lapis::session::wire::AttentionItem asked;
+    asked.pending.request.id = std::int64_t{7};
+    asked.pending.request.reason = "approval";
+    asked.pending.source_epoch = asked.pending.revision = 1;
+    probe.snapshot.requests = {asked};
+    probe.state("checks", Activity::working);
+    require(probe.unseen("checks") && probe.marked("checks") == 1, "a request marks once");
+    require(workspace.selectAgent(QStringLiteral("checks")) && !probe.unseen("checks"),
+            "looking at it clears the mark though the request is still open");
+    require(workspace.selectAgent(QStringLiteral("shell")), "leave it");
+    auto* checks = workspace.agent(QStringLiteral("checks"));
+    checks->invalidateAttention();
+    probe.snapshot.source_epoch = 2;
+    probe.snapshot.requests.front().pending.source_epoch = 2;
+    probe.snapshot.requests.front().pending.revision = 2;
+    probe.state("checks", Activity::working);
+    require(!probe.unseen("checks") && probe.outcomes.back() == QStringLiteral("checks:repeat"),
+            "a request back after a reconnect is the one already seen");
+    probe.snapshot.requests.clear();
+    probe.state("checks", Activity::working);
+    asked.pending.request.id = std::int64_t{8};
+    probe.snapshot.requests = {asked};
+    require(workspace.selectAgent(QStringLiteral("checks")), "checks on the stage");
+    probe.state("checks", Activity::working);
+    require(!probe.unseen("checks") && probe.outcomes.back() == QStringLiteral("checks:looking"),
+            "a request that arrives while the person looks is seen");
+    probe.snapshot.requests.clear();
+    probe.snapshot.source_epoch = 1;
+
+    // Nothing new on the screen since the person looked: no mark.
+    workspace.setUnchanged([](const lapis::desktop::Agent*) { return true; });
+    require(workspace.selectAgent(QStringLiteral("shell")), "shell on the stage");
+    probe.finish("checks");
+    require(!probe.unseen("checks") && probe.outcomes.back() == QStringLiteral("checks:unchanged"),
+            "a turn ending on a screen already seen marks nothing");
+    workspace.setUnchanged({});
+
+    // The log names agents by id only, with why each mark came and went.
+    const auto logged = [&](const char* event, const char* why) {
+        return std::any_of(probe.log.begin(), probe.log.end(), [&](const QJsonObject& line) {
+            return line.value(QStringLiteral("event")).toString() == QLatin1String(event) &&
+                   line.value(QStringLiteral("why")).toString() == QLatin1String(why) &&
+                   line.value(QStringLiteral("kind")).toString() == QStringLiteral("mark") &&
+                   !line.value(QStringLiteral("id")).toString().isEmpty() &&
+                   !line.contains(QStringLiteral("agent")) &&
+                   !line.contains(QStringLiteral("title"));
+        });
+    };
+    require(logged("unseen", "finished") && logged("unseen", "request") &&
+                logged("seen", "focus") && logged("seen", "window") &&
+                logged("seen", "looking: finished"),
+            "each mark set and cleared is logged with why, by id only");
+}
+
+// Tab follows the same mark: a turn the person looked at, its guess seen too,
+// waits no longer; an unseen turn or a guess not yet seen does.
+void tabSkipsTurnsAlreadySeen() {
+    using lapis::session::attention::Activity;
+    Workspace workspace(WorkspaceMode::fixture);
+    workspace.setTabAway({});
+    MarkProbe probe(workspace);
+    require(workspace.selectAgent(QStringLiteral("renderer")), "renderer on the stage");
+    probe.finish("agent");
+    require(workspace.nextPriorityAttention({}) &&
+                workspace.focusedAgent() == workspace.agent(QStringLiteral("agent")),
+            "an unseen turn is waiting");
+    require(workspace.selectAgent(QStringLiteral("renderer")), "back");
+    require(!workspace.nextPriorityAttention({{QStringLiteral("agent"), true}}),
+            "a turn looked at with its guess seen is not waiting");
+    require(workspace.nextPriorityAttention({{QStringLiteral("agent"), false}}),
+            "a guess not yet seen is");
+}
+
+// Marks survive a restart: a turn seen before stays seen, an unseen one stays
+// unseen (the stage agent's too, until the person looks), and a turn that
+// ended while no window ran is marked once, however long ago it was saved.
+void attentionMarksSurviveARestart() {
+    using lapis::session::attention::Activity;
+    QJsonObject marks;
+    {
+        Workspace before(WorkspaceMode::fixture);
+        MarkProbe probe(before);
+        require(before.selectAgent(QStringLiteral("renderer")), "renderer on the stage");
+        probe.finish("agent");   // unseen
+        probe.finish("checks");  // seen below
+        probe.finish("service"); // the stage agent's, while away
+        require(before.selectAgent(QStringLiteral("checks")), "look at checks");
+        probe.window = false;
+        require(before.selectAgent(QStringLiteral("service")), "service on the stage, away");
+        probe.state("notes", Activity::working); // at work when the window closed
+        marks = before.saveMarks();
+    }
+    // Saved an hour ago: an absence longer than an install's restart.
+    marks.insert(QStringLiteral("savedAtMs"),
+                 QDateTime::currentMSecsSinceEpoch() - qint64{60} * 60 * 1000);
+    Workspace after(WorkspaceMode::fixture);
+    MarkProbe probe(after);
+    probe.window = false; // the window is not in front yet
+    int away = 0;
+    QObject::connect(&after, &Workspace::finishedWhileAway, [&away] { ++away; });
+    require(after.selectAgent(QStringLiteral("service")), "service on the stage again");
+    after.restoreMarks(marks);
+    require(probe.unseen("agent") && !probe.unseen("checks") && probe.unseen("service"),
+            "seen stays seen, unseen stays unseen, the stage agent's included");
+    // The services report the turns they still hold: nothing new.
+    probe.state("agent", Activity::turn_completed);
+    probe.state("checks", Activity::turn_completed);
+    require(!probe.unseen("checks") && probe.outcomes.isEmpty(), "republished turns mark nothing");
+    // The agent that was at work finished while the window was closed.
+    probe.state("notes", Activity::turn_completed);
+    require(probe.unseen("notes") && away == 0,
+            "a turn that ended while no window ran is marked, without a late guess");
+    probe.state("notes", Activity::turn_completed);
+    require(std::count_if(probe.log.begin(), probe.log.end(),
+                          [](const QJsonObject& line) {
+                              return line.value(QStringLiteral("id")).toString() ==
+                                         QStringLiteral("notes") &&
+                                     line.value(QStringLiteral("event")).toString() ==
+                                         QStringLiteral("unseen");
+                          }) == 1,
+            "once");
+    probe.window = true;
+    after.noteLooking(QStringLiteral("window"));
+    require(!probe.unseen("service"), "the window in front sees the stage agent's restored mark");
+}
+
+// A replay shaped like the worst sequence in the owner's logs (counts and
+// order, no content): an agent finishing on the stage while lapis is behind
+// another app, the person returning, statuses republished and reconnected,
+// the cross-category walk and a sidebar click onto finished agents, the same
+// request delivered again after a reconnect, the agent waking itself after a
+// look, and an install's restart. Each turn or request marks at most once and
+// nothing seen is marked again.
+void attentionReplayMarksEachTurnOnce() {
+    using lapis::session::attention::Activity;
+    QJsonObject marks;
+    QStringList outcomes;
+    {
+        Workspace workspace(WorkspaceMode::fixture);
+        MarkProbe probe(workspace);
+        const auto other = workspace.createCategory(QStringLiteral("Research"));
+        require(workspace.moveAgent(QStringLiteral("service"), other) &&
+                    workspace.moveAgent(QStringLiteral("notes"), other),
+                "two agents in another category");
+        require(workspace.selectAgent(QStringLiteral("agent")), "agent on the stage");
+        // Behind another app: the stage agent and two others finish.
+        probe.window = false;
+        probe.finish("agent");
+        probe.finish("service");
+        probe.finish("checks");
+        // Back: the stage agent is seen.
+        probe.window = true;
+        workspace.noteLooking(QStringLiteral("window"));
+        // Status republished five times, a reconnect, republished again.
+        for (int i = 0; i < 5; ++i)
+            probe.state("service", Activity::turn_completed);
+        workspace.agent(QStringLiteral("service"))->invalidateAttention();
+        probe.state("service", Activity::turn_completed);
+        // The walk reaches the other category's agents; a click shows checks.
+        while (workspace.focusedAgent() != workspace.agent(QStringLiteral("service")))
+            workspace.nextAgentAcrossCategories(1);
+        require(workspace.selectAgent(QStringLiteral("checks")), "click checks");
+        // A request on notes, then the same request again after a reconnect.
+        lapis::session::wire::AttentionItem asked;
+        asked.pending.request.id = std::string("permission:1");
+        asked.pending.request.reason = "approval";
+        asked.pending.source_epoch = asked.pending.revision = 1;
+        probe.snapshot.requests = {asked};
+        probe.state("notes", Activity::working);
+        probe.reconnect("notes");
+        require(workspace.selectAgent(QStringLiteral("notes")), "look at notes");
+        probe.reconnect("notes");
+        probe.snapshot.requests.clear();
+        probe.snapshot.source_epoch = 1;
+        // Agent wakes itself after the look: a new turn, marked once.
+        require(workspace.selectAgent(QStringLiteral("checks")), "away from agent");
+        probe.finish("agent");
+        probe.state("agent", Activity::turn_completed);
+        probe.state("agent", Activity::working); // at work as the window restarts
+        marks = workspace.saveMarks();
+        outcomes = probe.outcomes;
+        require(probe.marked("agent") == 2 && probe.marked("service") == 1 &&
+                    probe.marked("checks") == 1 && probe.marked("notes") == 1,
+                "each turn and request marked once");
+        require(!probe.unseen("service") && !probe.unseen("checks") && !probe.unseen("notes"),
+                "everything looked at is seen");
+        require(std::count(outcomes.begin(), outcomes.end(), QStringLiteral("notes:repeat")) == 2,
+                "the request back after reconnects is a repeat");
+    }
+    Workspace after(WorkspaceMode::fixture);
+    MarkProbe probe(after);
+    const auto other = after.createCategory(QStringLiteral("Research"));
+    require(after.moveAgent(QStringLiteral("service"), other) &&
+                after.moveAgent(QStringLiteral("notes"), other),
+            "the same places after the restart");
+    require(after.selectAgent(QStringLiteral("checks")), "checks on the stage");
+    after.restoreMarks(marks);
+    for (const auto* id : {"service", "checks", "notes"})
+        probe.state(id, Activity::turn_completed);
+    require(!probe.unseen("service") && !probe.unseen("checks") && !probe.unseen("notes") &&
+                probe.outcomes.isEmpty(),
+            "after the restart nothing seen comes back");
+    probe.state("agent", Activity::turn_completed);
+    require(probe.unseen("agent"), "the turn that ended during the restart is marked");
 }
 
 // An agent asked for without a mode starts in the forms' default, or the
@@ -788,9 +1290,9 @@ void modelessAgentsGetTheDefaultMode() {
     require(launch_mode(asked("shell"), {}, {}).isEmpty(), "a CLI without modes gets none");
 }
 
-// Tab's next agent: a guess not yet seen or a turn finished unseen first, then
-// a guess already seen, so Tab cannot bounce between guesses while another
-// agent waits; an agent at work is not waiting even with a guess.
+// Tab's next agent: a guess not yet seen or a turn finished unseen. A turn
+// looked at whose guess was seen too waits no longer, so Tab cannot bounce
+// between guesses; an agent at work is not waiting even with a guess.
 void tabGoesToTheReadyThenTheOldest() {
     Workspace workspace(WorkspaceMode::fixture);
     workspace.setTabAway({});
@@ -814,15 +1316,16 @@ void tabGoesToTheReadyThenTheOldest() {
     const QVariantMap seen{{newer->agentId(), true}};
     require(workspace.nextPriorityAttention(seen) && workspace.focusedAgent() == older,
             "then the one whose turn finished unseen");
-    require(workspace.nextPriorityAttention(seen) && workspace.focusedAgent() == newer,
-            "a guess already seen and not used keeps its agent in the rotation, last");
+    require(!workspace.nextPriorityAttention(seen),
+            "a turn looked at with its guess seen is out of the rotation");
     auto* third = finish("renderer");
     require(workspace.nextPriorityAttention(seen) && workspace.focusedAgent() == third,
-            "an unseen turn goes before a guess already seen");
+            "a new unseen turn is waiting");
     require(workspace.selectAgent(older->agentId()), "back to the older one");
+    const QVariantMap fresh{{newer->agentId(), false}};
     state.activity = lapis::session::attention::Activity::working;
     newer->applyAttention(state);
-    require(!workspace.nextPriorityAttention(seen),
+    require(!workspace.nextPriorityAttention(fresh),
             "nothing is waiting once the one with a guess is at work");
 }
 
@@ -2091,7 +2594,7 @@ void staleDescriptorReattachesTheRunningService() {
         auto bytes = descriptor.readAll();
         require(bytes.startsWith("LAPIS-S1\n") && bytes.size() > 25, "a saved descriptor");
         for (int at = 9; at < 25; ++at)
-            bytes[at] = static_cast<char>(bytes[at] ^ 0x5a);
+            bytes[at] = static_cast<char>(static_cast<unsigned char>(bytes[at]) ^ 0x5aU);
         require(descriptor.seek(0) && descriptor.write(bytes) == bytes.size(),
                 "write a stale descriptor");
     }
@@ -2513,6 +3016,8 @@ for n, line in enumerate(sys.stdin, 1):
 // pings once, no hook bytes reach the screen, the person's own notify program
 // from the selected profile's config still runs, the notify event's thread is saved as the
 // conversation, and a restart resumes it.
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void localCodexReportsTurnsThroughNotify() {
     using lapis::desktop::Agent;
     QTemporaryDir directory(QStringLiteral("/tmp/lapis-local-codex-XXXXXX"));
@@ -4337,8 +4842,9 @@ void windowTakesTheWorkspaceFromTheHost() {
     qputenv("PATH", path);
 }
 
-// A finished turn out of view chimes once, an open request included; looking,
-// a screen already seen or turning the sound off keeps it quiet.
+// Only the moment an agent becomes unseen chimes, an open request included;
+// looking, a mark already set, a screen already seen or turning the sound off
+// keeps it quiet. The workspace's mark decides (Workspace::needsYou).
 void alertsChimeWhileAnAgentWaits() {
     namespace wire = lapis::session::wire;
     QTemporaryDir directory;
@@ -4364,11 +4870,13 @@ void alertsChimeWhileAnAgentWaits() {
     lapis::desktop::Agent agent(QStringLiteral("agent"), root.path(), {}, QColor(), "");
     std::vector<lapis::desktop::Chime> played;
     bool looking = false;
-    lapis::desktop::Alerts alerts(
-        workspace, config_model,
-        [&played](lapis::desktop::Chime chime) { played.push_back(chime); },
-        [&looking](const lapis::desktop::Agent*) { return looking; });
+    lapis::desktop::Alerts alerts(workspace, config_model, [&played](lapis::desktop::Chime chime) {
+        played.push_back(chime);
+    });
     alerts.setQuietForTesting(40);
+    const auto ping = [&workspace, &agent](const char* outcome) {
+        emit workspace.needsYou(&agent, QString::fromLatin1(outcome));
+    };
     const auto request = [&agent](bool pending) {
         wire::AttentionSnapshot state;
         state.available = state.connected = state.ready = true;
@@ -4389,27 +4897,33 @@ void alertsChimeWhileAnAgentWaits() {
     };
     request(true);
     // Requests share the one finished-turn cue, and it does not repeat.
-    emit workspace.turnFinished(&agent);
+    ping("marked");
     waitFor([] { return false; }, 300);
     require(played == std::vector<lapis::desktop::Chime>{lapis::desktop::Chime::finished},
             "a request chimes once with the finished-turn cue");
+    for (const auto* again : {"waiting", "repeat"}) {
+        played.clear();
+        waitFor([] { return false; }, 60);
+        ping(again);
+        require(played.empty(), "an agent already unseen, or a request already marked, is quiet");
+    }
 
     played.clear();
-    looking = true;
     waitFor([] { return false; }, 60);
-    emit workspace.turnFinished(&agent);
+    ping("looking");
     require(played.empty(), "nothing plays for the agent being looked at");
-    looking = false;
     request(false);
 
     played.clear();
     waitFor([] { return false; }, 60);
-    emit workspace.turnFinished(&agent);
+    ping("marked");
     require(played == std::vector{lapis::desktop::Chime::finished}, "a finished turn chimes once");
 
     // A turn that ends on what the person already saw there says nothing new:
-    // no chime, whatever Claude Code's status line below its input box does.
-    // New output above the box chimes again. Every decision is logged.
+    // no mark and no chime, whatever Claude Code's status line below its input
+    // box does. New output above the box chimes again. Every decision is
+    // logged. The workspace asks SeenScreens (setUnchanged); `finish` stands
+    // in for that question here.
     {
         lapis::session::Terminal screen({40, 8});
         const auto show = [&screen, &agent](std::string_view text) {
@@ -4423,13 +4937,14 @@ void alertsChimeWhileAnAgentWaits() {
         alerts.setSeen(&seen);
         alerts.setLog([&lines](const QJsonObject& entry) { lines.push_back(entry); });
         seen.see(&agent);
+        const auto finish = [&] { ping(seen.unchanged(&agent) ? "unchanged" : "marked"); };
         // The null tolerance see() already documents: never on screen means
         // changed, so the chime path can never dereference a null item.
         require(!seen.unchanged(nullptr), "an item never on screen counts as changed");
         played.clear();
         waitFor([] { return false; }, 60);
         show("\x1b[5;1H5h 54%"); // the status line ticks
-        emit workspace.turnFinished(&agent);
+        finish();
         require(
             played.empty() && !lines.empty() &&
                 lines.back().value(QStringLiteral("kind")).toString() == QStringLiteral("chime") &&
@@ -4439,25 +4954,27 @@ void alertsChimeWhileAnAgentWaits() {
                     QStringLiteral("quiet: nothing new since you looked"),
             "a turn ending on a screen already seen stays quiet, logged in the shared shape");
         show("\x1b[1;1Hnew: build failed");
-        emit workspace.turnFinished(&agent);
-        require(played == std::vector{lapis::desktop::Chime::finished} &&
-                    lines.back().value(QStringLiteral("decision")).toString() ==
-                        QStringLiteral("chimed") &&
-                    lines.back().value(QStringLiteral("agent")).toString() ==
-                        QStringLiteral("agent"),
-                "new output chimes, and the decision names the agent");
-        // The quiet path for the agent being looked at reaches the log too.
+        finish();
+        require(
+            played == std::vector{lapis::desktop::Chime::finished} &&
+                lines.back().value(QStringLiteral("decision")).toString() ==
+                    QStringLiteral("chimed") &&
+                lines.back().value(QStringLiteral("mark")).toString() == QStringLiteral("marked") &&
+                lines.back().value(QStringLiteral("agent")).toString() == QStringLiteral("agent"),
+            "new output chimes, and the decision names the agent and its mark");
+        // The quiet path for the agent being looked at reaches the log too,
+        // and what is on its screen then counts as seen.
         waitFor([] { return false; }, 60);
-        looking = true;
+        show("\x1b[2;1Hwatched as it ended");
         played.clear();
-        emit workspace.turnFinished(&agent);
+        ping("looking");
         require(played.empty() &&
                     lines.back().value(QStringLiteral("event")).toString() ==
                         QStringLiteral("finished") &&
                     lines.back().value(QStringLiteral("decision")).toString() ==
-                        QStringLiteral("quiet: you are looking at it"),
-                "a turn for the agent being looked at stays quiet, and says so");
-        looking = false;
+                        QStringLiteral("quiet: you are looking at it") &&
+                    seen.unchanged(&agent),
+                "a turn for the agent being looked at stays quiet, says so, and is seen");
         // A lone rule is a divider in the agent's output, not Claude Code's
         // box: nothing is truncated, so output below it still counts as new.
         show("\x1b[2J\x1b[Hnote\r\n" + line + "\r\nstill watching\r\n");
@@ -4465,7 +4982,7 @@ void alertsChimeWhileAnAgentWaits() {
         show("\x1b[3;1Hchanged below the lone rule");
         played.clear();
         waitFor([] { return false; }, 60);
-        emit workspace.turnFinished(&agent);
+        finish();
         require(played == std::vector{lapis::desktop::Chime::finished},
                 "a lone rule truncates nothing: output below it still chimes");
         // Claude Code's box may open with corner glyphs and heavier strokes;
@@ -4477,7 +4994,7 @@ void alertsChimeWhileAnAgentWaits() {
         show("\x1b[5;1H5h 54%");
         played.clear();
         waitFor([] { return false; }, 60);
-        emit workspace.turnFinished(&agent);
+        finish();
         require(played.empty() && lines.back().value(QStringLiteral("decision")).toString() ==
                                       QStringLiteral("quiet: nothing new since you looked"),
                 "a box drawn with corners truncates, and a status line below it is not new");
@@ -4507,7 +5024,7 @@ void alertsChimeWhileAnAgentWaits() {
     alerts.setLog([&quiet_lines](const QJsonObject& entry) { quiet_lines.push_back(entry); });
     request(true);
     waitFor([] { return false; }, 60);
-    emit workspace.turnFinished(&agent);
+    ping("marked");
     waitFor([] { return false; }, 300);
     require(played.empty() && !quiet_lines.empty() &&
                 quiet_lines.back().value(QStringLiteral("kind")).toString() ==
@@ -6153,6 +6670,619 @@ void closeEndsTheAgent(const char* script, int minimum_ms) {
     require(clock.elapsed() >= minimum_ms, "escalation waited for the hangup first");
     require(workspace.workspaceError().isEmpty(), "no error on a normal close");
 }
+
+class ScopedHome {
+  public:
+    explicit ScopedHome(const QByteArray& value) : previous_(qgetenv("HOME")) {
+        qputenv("HOME", value);
+    }
+    ~ScopedHome() { qputenv("HOME", previous_); }
+    ScopedHome(const ScopedHome&) = delete;
+    ScopedHome& operator=(const ScopedHome&) = delete;
+
+  private:
+    QByteArray previous_;
+};
+
+void writeLines(const QString& path, const QList<QByteArray>& lines) {
+    require(QDir().mkpath(QFileInfo(path).absolutePath()), "create a conversation folder");
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "create a conversation file");
+    for (const auto& line : lines)
+        require(file.write(line + '\n') == line.size() + 1, "write a conversation line");
+}
+
+// The visual view's file for a local Codex or Antigravity agent: the
+// conversation lapis knows by id, else, before anything names it, the one
+// the CLI started in the agent's folder since the agent's service started,
+// never one older or another agent's, and never a subagent's or an exec run.
+void visualConversationFiles() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "visual conversation directory");
+    const QString root = QFileInfo(directory.path()).canonicalFilePath();
+    const ScopedCodexHome codex_home{QDir(root).filePath(QStringLiteral("codex")).toUtf8()};
+    const ScopedHome home{QDir(root).filePath(QStringLiteral("home")).toUtf8()};
+    const auto work = QDir(root).filePath(QStringLiteral("work"));
+    require(QDir().mkpath(work), "agent folder");
+    const auto endpoint = [&root](const QString& id) {
+        return QDir(root).filePath(id + QStringLiteral(".sock"));
+    };
+    // The agents' services "started" now: their endpoints are made now.
+    // Agent ids are UUIDs; each role names one.
+    QHash<QString, QString> ids;
+    QJsonArray agents;
+    for (const auto* role : {"codex-named", "codex-fresh", "agy-fresh", "agy-named", "grok"}) {
+        const auto id = uuid();
+        ids.insert(QString::fromLatin1(role), id);
+        QFile made(endpoint(id));
+        require(made.open(QIODevice::WriteOnly), "make an endpoint");
+        agents.append(
+            QJsonObject{{"id", id},
+                        {"title", QString::fromLatin1(role)},
+                        {"category", "general"},
+                        {"endpoint", endpoint(id)},
+                        {"program", "/usr/bin/true"},
+                        {"harness", QString::fromLatin1(role).section(QLatin1Char('-'), 0, 0)},
+                        {"directory", work}});
+    }
+    const auto named_thread = uuid();
+    writeObservedResume(endpoint(ids.value(QStringLiteral("codex-named"))),
+                        {QStringLiteral("codex"), named_thread});
+    const auto named_agy = uuid();
+    lapis::session::write_resume_record(
+        endpoint(ids.value(QStringLiteral("agy-named"))),
+        {QStringLiteral("agy"), named_agy, lapis::session::ResumeSource::terminal});
+
+    const auto now = QDateTime::currentDateTimeUtc();
+    const auto stamp = [](const QDateTime& at) { return at.toString(Qt::ISODateWithMs).toUtf8(); };
+    const auto sessions = QDir(root).filePath(QStringLiteral("codex/sessions"));
+    const auto today = QDir(sessions).filePath(
+        QDateTime::currentDateTime().date().toString(QStringLiteral("yyyy/MM/dd")));
+    const auto rollout = [&](const QString& folder, const QString& thread, const QDateTime& at,
+                             const char* source) {
+        const auto path = QDir(folder).filePath(QStringLiteral("rollout-2026-11-10T10-00-00-") +
+                                                thread + QStringLiteral(".jsonl"));
+        writeLines(path, {R"({"type":"session_meta","payload":{"id":")" + thread.toUtf8() +
+                          R"(","timestamp":")" + stamp(at) + R"(","cwd":")" + work.toUtf8() +
+                          R"(","source":")" + source + R"("}})"});
+        return path;
+    };
+    WorkspaceOptions options;
+    options.storagePath = QDir(root).filePath(QStringLiteral("ws.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", agents}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "visual agents restored");
+    const auto file = [&workspace, &ids](const char* role) {
+        return workspace.conversationFile(ids.value(QString::fromLatin1(role)));
+    };
+    require(file("codex-fresh").isEmpty() && file("agy-fresh").isEmpty(),
+            "nothing before either CLI saved a conversation");
+
+    // Codex: the named thread, wherever its day folder is.
+    const auto named_path =
+        rollout(QDir(sessions).filePath(QStringLiteral("2026/11/09")), named_thread, now, "cli");
+    require(file("codex-named") == named_path, "Codex: the thread notify named");
+    // Before the first turn ends: the TUI thread started in the folder since
+    // the service, not an older one, an exec run, or the named thread.
+    (void)rollout(today, uuid(), now.addSecs(-3600), "cli");
+    (void)rollout(today, uuid(), now.addSecs(2), "exec");
+    require(file("codex-fresh").isEmpty(), "Codex: older and exec threads never count");
+    const auto fresh_path = rollout(today, uuid(), now.addSecs(1), "cli");
+    require(file("codex-fresh") == fresh_path, "Codex: the thread this agent started");
+
+    // Antigravity: the named conversation, else the folder's latest one.
+    const auto agy_home = QDir(root).filePath(QStringLiteral("home/.gemini/antigravity-cli"));
+    const auto transcript = [&](const QString& conversation, const QDateTime& at) {
+        const auto path = QDir(agy_home).filePath(
+            QStringLiteral("brain/%1/.system_generated/logs/transcript_full.jsonl")
+                .arg(conversation));
+        writeLines(path, {R"({"step_index":0,"type":"USER_INPUT","created_at":")" +
+                          at.toString(Qt::ISODate).toUtf8() + R"(","content":"x"})"});
+        return path;
+    };
+    const auto cache = QDir(agy_home).filePath(QStringLiteral("cache/last_conversations.json"));
+    const auto latest = [&](const QString& conversation) {
+        writeLines(
+            cache,
+            {QJsonDocument(QJsonObject{{work, conversation}}).toJson(QJsonDocument::Compact)});
+    };
+    const auto named_agy_path = transcript(named_agy, now);
+    require(file("agy-named") == named_agy_path, "agy: the conversation its hook named");
+    const auto old = uuid();
+    (void)transcript(old, now.addSecs(-3600));
+    latest(old);
+    require(file("agy-fresh").isEmpty(), "agy: a conversation from before the agent never counts");
+    latest(named_agy);
+    require(file("agy-fresh").isEmpty(), "agy: another agent's conversation never counts");
+    const auto fresh_agy = uuid();
+    const auto fresh_agy_path = transcript(fresh_agy, now.addSecs(1));
+    latest(fresh_agy);
+    require(file("agy-fresh") == fresh_agy_path, "agy: the conversation this agent started");
+
+    require(file("grok").isEmpty(), "a CLI the view cannot read has no file");
+    require(workspace.forkConversation(ids.value(QStringLiteral("codex-named")), uuid(), true)
+                .isEmpty(),
+            "only Claude Code conversations fork");
+}
+
+// Stand-ins for agents' session services: each runs a "CLI" child that
+// holds open the file its control file names, as agy holds its presence
+// lock and conversation, and the service's lock names its pid as the real
+// one's does. Writing another path to the control file is a /clear.
+class FakeServices {
+  public:
+    explicit FakeServices(const QString& root) : root_(root) {
+        writeExecutable(root_.filePath(QStringLiteral("cli.sh")),
+                        "#!/bin/sh\nwhile :; do exec 3<\"$(cat \"$1\")\"; sleep 0.1; done\n");
+        writeExecutable(root_.filePath(QStringLiteral("service.sh")),
+                        "#!/bin/sh\n\"$(dirname \"$0\")/cli.sh\" \"$1\"\n");
+    }
+    ~FakeServices() {
+        for (const auto& id : processes_.keys())
+            stop(id);
+    }
+    FakeServices(const FakeServices&) = delete;
+    FakeServices& operator=(const FakeServices&) = delete;
+
+    // Positional contract; callers and tests pin the order.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+    void start(const QString& id, const QString& endpoint) {
+        hold(id, QStringLiteral("/dev/null"));
+        auto process = std::make_unique<QProcess>();
+        // Its own group, so stop() ends the "CLI" with it.
+        process->setChildProcessModifier([] { ::setpgid(0, 0); });
+        process->start(root_.filePath(QStringLiteral("service.sh")), {control(id)});
+        require(process->waitForStarted(5000), "a stand-in service starts");
+        QFile lock(endpoint + QStringLiteral(".lock"));
+        require(lock.open(QIODevice::WriteOnly | QIODevice::Truncate), "write its lock");
+        lock.write(QByteArray::number(process->processId()) + "\nlapis_session_service\n" +
+                   QSysInfo::machineHostName().toUtf8() + '\n');
+        processes_.insert(id, std::shared_ptr<QProcess>(std::move(process)));
+    }
+    // Positional contract; callers and tests pin the order.
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+    void hold(const QString& id, const QString& path) {
+        QSaveFile file(control(id));
+        require(file.open(QIODevice::WriteOnly) && file.write(QFile::encodeName(path)) > 0 &&
+                    file.commit(),
+                "name the file the stand-in CLI holds");
+    }
+    void stop(const QString& id) {
+        const auto process = processes_.take(id);
+        if (!process)
+            return;
+        const qint64 pid = process->processId();
+        if (pid > 0)
+            ::kill(-static_cast<pid_t>(pid), SIGKILL);
+        process->waitForFinished(5000);
+    }
+
+  private:
+    [[nodiscard]] QString control(const QString& id) const {
+        return root_.filePath(id + QStringLiteral(".holds"));
+    }
+    QDir root_;
+    QHash<QString, std::shared_ptr<QProcess>> processes_;
+};
+
+// Two agy agents in one folder each show only the conversation their own agy
+// is writing, whichever started first or wrote last, though agy's cache names
+// one conversation per folder. The choice is pinned in the registry: it holds
+// through a window restart, an outside agy run in the folder, and the
+// processes ending, follows the agent's own /clear, and is what a restore
+// resumes.
+void agyAgentsKeepTheirOwnConversations() {
+    using lapis::desktop::conversation_owner::held_conversation;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-pins-XXXXXX"));
+    require(directory.isValid(), "pin directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const ScopedHome home{root.filePath(QStringLiteral("home")).toUtf8()};
+    const ScopedCodexHome codex_home{root.filePath(QStringLiteral("codex")).toUtf8()};
+    const auto work = root.filePath(QStringLiteral("work"));
+    require(QDir().mkpath(work), "agent folder");
+    const QDir agy(root.filePath(QStringLiteral("home/.gemini/antigravity-cli")));
+    require(QDir().mkpath(agy.filePath(QStringLiteral("presence"))), "agy presence folder");
+    const auto now = QDateTime::currentDateTimeUtc();
+    const auto transcript = [&agy](const QString& conversation) {
+        return agy.filePath(QStringLiteral("brain/%1/.system_generated/logs/transcript_full.jsonl")
+                                .arg(conversation));
+    };
+    // A conversation agy began at `at` (made-up steps), and its presence lock.
+    const auto begin = [&](const QString& conversation, int seconds) {
+        writeLines(transcript(conversation),
+                   {R"({"step_index":0,"type":"USER_INPUT","created_at":")" +
+                    now.addSecs(seconds).toString(Qt::ISODate).toUtf8() +
+                    R"(","content":"made up"})"});
+        const auto lock = agy.filePath(QStringLiteral("presence/%1.lock").arg(conversation));
+        QFile made(lock);
+        require(made.open(QIODevice::WriteOnly), "make a presence lock");
+        return lock;
+    };
+    const auto last = [&](const QString& conversation) {
+        writeLines(
+            agy.filePath(QStringLiteral("cache/last_conversations.json")),
+            {QJsonDocument(QJsonObject{{work, conversation}}).toJson(QJsonDocument::Compact)});
+    };
+    writeExecutable(root.filePath(QStringLiteral("agy")), "#!/bin/sh\nexit 0\n");
+
+    // A starts, then B, in the same folder.
+    FakeServices services(root.path());
+    const auto first = uuid();
+    const auto second = uuid();
+    const auto endpoint = [&root](const QString& id) {
+        return root.filePath(id + QStringLiteral(".sock"));
+    };
+    QJsonArray agents;
+    for (const auto& id : {first, second}) {
+        QFile made(endpoint(id));
+        require(made.open(QIODevice::WriteOnly), "make an endpoint");
+        services.start(id, endpoint(id));
+        auto record = agentRecord(work, id, "general");
+        record.insert(QStringLiteral("endpoint"), endpoint(id));
+        record.insert(QStringLiteral("program"), root.filePath(QStringLiteral("agy")));
+        record.insert(QStringLiteral("harness"), QStringLiteral("agy"));
+        agents.append(record);
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(options.storagePath,
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", agents}});
+    const auto a = uuid();
+    const auto b = uuid();
+    services.hold(first, begin(a, 1));
+    services.hold(second, begin(b, 2));
+    last(b); // agy's cache now names B's conversation for the folder
+    require(waitFor(
+                [&] {
+                    return held_conversation(QStringLiteral("agy"), endpoint(first), {}) == a &&
+                           held_conversation(QStringLiteral("agy"), endpoint(second), {}) == b;
+                },
+                5000),
+            "each agent's process holds its own conversation");
+    const auto pinned = [&options](const QString& id) {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject().value(QStringLiteral("conversation")).toString();
+        return QString();
+    };
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.workspaceError().isEmpty(), "agy agents restored");
+        require(workspace.conversationFile(second) == transcript(b), "B shows its conversation");
+        require(workspace.conversationFile(first) == transcript(a),
+                "A shows its own though agy's cache names B's");
+        require(workspace.agentConversation(first) == a && workspace.agentConversation(second) == b,
+                "each agent's conversation is the one its process holds");
+    }
+    require(pinned(first) == a && pinned(second) == b, "the registry keeps both pins");
+    {
+        // The window restarts; then agy runs outside lapis in the folder.
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.conversationFile(first) == transcript(a) &&
+                    workspace.conversationFile(second) == transcript(b),
+                "a restarted window shows each agent its own conversation");
+        const auto outside = uuid();
+        (void)begin(outside, 3);
+        last(outside);
+        require(workspace.conversationFile(first) == transcript(a) &&
+                    workspace.conversationFile(second) == transcript(b),
+                "an outside agy run in the folder takes neither");
+        // /clear in A: its agy now writes a new conversation.
+        const auto cleared = uuid();
+        services.hold(first, begin(cleared, 4));
+        last(cleared);
+        require(
+            waitFor([&] { return workspace.conversationFile(first) == transcript(cleared); }, 5000),
+            "A follows its own new conversation");
+        require(workspace.conversationFile(second) == transcript(b), "B keeps its own");
+        require(pinned(first) == cleared, "the new conversation is pinned");
+    }
+    // With both processes gone only the pins say which is whose.
+    services.stop(first);
+    services.stop(second);
+    const auto cleared = pinned(first);
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.conversationFile(first) == transcript(cleared) &&
+                    workspace.conversationFile(second) == transcript(b),
+                "the pins hold once the processes end");
+    }
+    // A full restore resumes each pinned conversation.
+    for (const auto& id : {first, second}) {
+        QFile::remove(endpoint(id));
+        QFile::remove(endpoint(id) + QStringLiteral(".lock"));
+    }
+    options.restoreAgents = true;
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "agy agents restart");
+    const auto arguments = [&options](const QString& id) {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject().value(QStringLiteral("arguments")).toArray();
+        return QJsonArray();
+    };
+    require(arguments(first) == QJsonArray{QStringLiteral("--conversation"), cleared} &&
+                arguments(second) == QJsonArray{QStringLiteral("--conversation"), b},
+            "a restore resumes each agent's pinned conversation");
+    for (const auto& id : {first, second})
+        require(workspace.closeAgent(id, true), "close a restored agent");
+    require(waitFor([&workspace] { return workspace.agents().isEmpty(); }, 10000),
+            "restored agents close");
+}
+
+// Two Codex agents in one folder before either's first turn ends: a thread
+// either could have begun is shown for neither, until the agent's own
+// process is seen holding it.
+void codexAgentsNeverTakeEachOthersThread() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-pins-XXXXXX"));
+    require(directory.isValid(), "Codex pin directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const ScopedHome home{root.filePath(QStringLiteral("home")).toUtf8()};
+    const ScopedCodexHome codex_home{root.filePath(QStringLiteral("codex")).toUtf8()};
+    const auto work = root.filePath(QStringLiteral("work"));
+    require(QDir().mkpath(work), "Codex agent folder");
+    const auto today =
+        root.filePath(QStringLiteral("codex/sessions/") +
+                      QDateTime::currentDateTime().date().toString(QStringLiteral("yyyy/MM/dd")));
+    const auto now = QDateTime::currentDateTimeUtc();
+    const auto rollout = [&](const QString& thread, int seconds) {
+        const auto path = QDir(today).filePath(QStringLiteral("rollout-2026-11-10T10-00-00-") +
+                                               thread + QStringLiteral(".jsonl"));
+        writeLines(path, {R"({"type":"session_meta","payload":{"id":")" + thread.toUtf8() +
+                          R"(","timestamp":")" +
+                          now.addSecs(seconds).toString(Qt::ISODateWithMs).toUtf8() +
+                          R"(","cwd":")" + work.toUtf8() + R"(","source":"cli"}})"});
+        return path;
+    };
+    FakeServices services(root.path());
+    const auto first = uuid();
+    const auto second = uuid();
+    QJsonArray agents;
+    for (const auto& id : {first, second}) {
+        const auto endpoint = root.filePath(id + QStringLiteral(".sock"));
+        QFile made(endpoint);
+        require(made.open(QIODevice::WriteOnly), "make a Codex endpoint");
+        services.start(id, endpoint);
+        auto record = agentRecord(work, id, "general");
+        record.insert(QStringLiteral("endpoint"), endpoint);
+        record.insert(QStringLiteral("harness"), QStringLiteral("codex"));
+        agents.append(record);
+    }
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(options.storagePath,
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", agents}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "Codex agents restored");
+    // The second agent's thread starts first; either agent could own it.
+    const auto theirs = rollout(uuid(), 1);
+    require(workspace.conversationFile(first).isEmpty() &&
+                workspace.conversationFile(second).isEmpty(),
+            "a thread either agent could have begun is neither's");
+    services.hold(second, theirs);
+    require(waitFor([&] { return workspace.conversationFile(second) == theirs; }, 5000),
+            "the thread its own process writes is the second agent's");
+    require(workspace.conversationFile(first).isEmpty(), "and never the first agent's");
+    const auto mine = rollout(uuid(), 2);
+    require(workspace.conversationFile(first) == mine,
+            "with the other's thread known, the first agent's is its own");
+}
+
+// A local Claude Code agent's saved transcript: looked for first in the
+// project folder Claude Code names after the agent's directory (each
+// character other than an ASCII letter or digit made '-'), else in any
+// project folder; the path found is kept while the file exists; and one
+// not saved yet is searched for everywhere at most every 30 seconds, while
+// the named folder is still looked in at once.
+void claudeTranscriptsAreFoundAndKept() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "Claude transcript directory");
+    const QString root = QFileInfo(directory.path()).canonicalFilePath();
+    const ScopedClaudeHome claude_home{QDir(root).filePath(QStringLiteral("claude")).toUtf8()};
+    const ScopedHome home{QDir(root).filePath(QStringLiteral("home")).toUtf8()};
+    const auto work = QDir(root).filePath(QStringLiteral("my_project.v2"));
+    require(QDir().mkpath(work), "agent folder");
+    QString folder = work;
+    for (auto& c : folder)
+        if (!(c.isLetterOrNumber() && c.unicode() < 128))
+            c = QLatin1Char('-');
+    require(folder.endsWith(QStringLiteral("-my-project-v2")), "the folder name maps every mark");
+    const auto projects = QDir(root).filePath(QStringLiteral("claude/projects"));
+    const auto saved = [&projects](const QString& project, const QString& conversation) {
+        const auto path = QDir(projects).filePath(project + QLatin1Char('/') + conversation +
+                                                  QStringLiteral(".jsonl"));
+        writeLines(path, {R"({"type":"user","uuid":"u1","message":{"content":"hi"}})"});
+        return path;
+    };
+    QHash<QString, QString> ids, conversations;
+    QJsonArray agents;
+    for (const auto* role : {"named", "elsewhere", "unsaved"}) {
+        const auto id = uuid();
+        const auto conversation = uuid();
+        ids.insert(QString::fromLatin1(role), id);
+        conversations.insert(QString::fromLatin1(role), conversation);
+        auto record = agentRecord(root, id, "general");
+        record.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+        record.insert(QStringLiteral("directory"), work);
+        record.insert(QStringLiteral("conversation"), conversation);
+        agents.append(record);
+    }
+    // The same conversation in both folders: the named one wins.
+    const auto named = saved(folder, conversations.value(QStringLiteral("named")));
+    (void)saved(QStringLiteral("-other-project"), conversations.value(QStringLiteral("named")));
+    const auto elsewhere =
+        saved(QStringLiteral("-moved-project"), conversations.value(QStringLiteral("elsewhere")));
+    WorkspaceOptions options;
+    options.storagePath = QDir(root).filePath(QStringLiteral("ws.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", agents}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "Claude agents restored");
+    const auto file = [&workspace, &ids](const char* role) {
+        return workspace.conversationFile(ids.value(QString::fromLatin1(role)));
+    };
+    require(file("named") == named, "the folder named after the agent's directory first");
+    require(file("elsewhere") == elsewhere, "else any project folder");
+    // Kept while it exists: a copy in the named folder made later is not
+    // looked for, and the kept path is checked to exist.
+    const auto moved = saved(folder, conversations.value(QStringLiteral("elsewhere")));
+    require(file("elsewhere") == elsewhere, "the path found is kept");
+    require(QFile::remove(elsewhere), "remove the kept transcript");
+    require(file("elsewhere") == moved, "a kept path whose file is gone is looked for again");
+
+    // Not saved yet: empty, and the search of every folder is not repeated
+    // within 30 seconds; the named folder is.
+    require(file("unsaved").isEmpty(), "nothing before Claude Code saved the conversation");
+    const auto other =
+        saved(QStringLiteral("-another-project"), conversations.value(QStringLiteral("unsaved")));
+    require(file("unsaved").isEmpty(),
+            "every project folder is searched again only after 30 seconds");
+    const auto own = saved(folder, conversations.value(QStringLiteral("unsaved")));
+    require(file("unsaved") == own && own != other,
+            "the named folder is looked in each time it is asked");
+}
+
+// The visual view's read-ahead (setVisualKeep, warmThreads): the budget
+// reaches the thread model, the threads of this Mac's agents whose
+// conversations lapis already knows are read most recently written first
+// while the budget has room, and an agent whose conversation is not known
+// yet is not placed by it (its pin waits for the pin timer).
+void visualThreadsAreReadAhead() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "read-ahead directory");
+    const QString root = QFileInfo(directory.path()).canonicalFilePath();
+    const ScopedClaudeHome claude_home{QDir(root).filePath(QStringLiteral("claude")).toUtf8()};
+    const ScopedCodexHome codex_home{QDir(root).filePath(QStringLiteral("codex")).toUtf8()};
+    const ScopedHome home{QDir(root).filePath(QStringLiteral("home")).toUtf8()};
+    const auto work = QDir(root).filePath(QStringLiteral("work"));
+    require(QDir().mkpath(work), "agent folder");
+    QString folder = work;
+    for (auto& c : folder)
+        if (!(c.isLetterOrNumber() && c.unicode() < 128))
+            c = QLatin1Char('-');
+    const auto projects = QDir(root).filePath(QStringLiteral("claude/projects"));
+    const auto endpoint = [&root](const QString& id) {
+        return QDir(root).filePath(id + QStringLiteral(".sock"));
+    };
+    QHash<QString, QString> ids, paths;
+    QJsonArray agents;
+    const auto now = QDateTime::currentDateTime();
+    // Claude Code agents: "newer" written last, "older" before it, and
+    // "unsaved" with no transcript yet.
+    for (const auto* role : {"older", "newer", "unsaved"}) {
+        const auto id = uuid();
+        const auto conversation = uuid();
+        ids.insert(QString::fromLatin1(role), id);
+        auto record = agentRecord(root, id, "general");
+        record.insert(QStringLiteral("harness"), QStringLiteral("claude"));
+        record.insert(QStringLiteral("directory"), work);
+        record.insert(QStringLiteral("conversation"), conversation);
+        agents.append(record);
+        if (QLatin1String(role) == QLatin1String("unsaved"))
+            continue;
+        const auto path = QDir(projects).filePath(folder + QLatin1Char('/') + conversation +
+                                                  QStringLiteral(".jsonl"));
+        writeLines(path, {R"({"type":"user","uuid":"u1","message":{"content":"hi"}})",
+                          R"({"type":"assistant","uuid":"a1","message":{"content":[)"
+                          R"({"type":"text","text":"hello"}]}})"});
+        QFile touched(path);
+        require(touched.open(QIODevice::ReadWrite) &&
+                    touched.setFileTime(QLatin1String(role) == QLatin1String("newer")
+                                            ? now.addSecs(-10)
+                                            : now.addSecs(-3600),
+                                        QFileDevice::FileModificationTime),
+                "date a transcript");
+        paths.insert(QString::fromLatin1(role), path);
+    }
+    // A Codex agent whose thread nothing names yet: conversationFile would
+    // place it (the thread it started in its folder since its service
+    // started); reading ahead must not.
+    const auto codex = uuid();
+    {
+        QFile made(endpoint(codex));
+        require(made.open(QIODevice::WriteOnly), "make an endpoint");
+        auto record = agentRecord(root, codex, "general");
+        record.insert(QStringLiteral("harness"), QStringLiteral("codex"));
+        record.insert(QStringLiteral("directory"), work);
+        agents.append(record);
+    }
+    const auto thread = uuid();
+    const auto rollout =
+        QDir(QDir(root).filePath(QStringLiteral("codex/sessions")))
+            .filePath(QDateTime::currentDateTime().date().toString(QStringLiteral("yyyy/MM/dd")) +
+                      QStringLiteral("/rollout-2026-11-10T10-00-00-") + thread +
+                      QStringLiteral(".jsonl"));
+    writeLines(rollout,
+               {R"({"type":"session_meta","payload":{"id":")" + thread.toUtf8() +
+                R"(","timestamp":")" +
+                QDateTime::currentDateTimeUtc().addSecs(1).toString(Qt::ISODateWithMs).toUtf8() +
+                R"(","cwd":")" + work.toUtf8() + R"(","source":"cli"}})"});
+    WorkspaceOptions options;
+    options.storagePath = QDir(root).filePath(QStringLiteral("ws.json"));
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", agents}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "read-ahead agents restored");
+    auto* threads = qobject_cast<lapis::desktop::TranscriptModel*>(workspace.transcript());
+    require(threads != nullptr, "the workspace owns a thread model");
+    const auto settled = [threads] {
+        return waitFor([threads] { return !threads->readingAhead(); }, 10000);
+    };
+
+    // No memory budget: nothing is read ahead.
+    workspace.setVisualKeep(0, 32, false);
+    workspace.warmThreads();
+    require(settled() && threads->keptCount() == 0, "a zero budget reads nothing ahead");
+    // Room for one: the most recently written.
+    workspace.setVisualKeep(1024, 1, false);
+    workspace.warmThreads();
+    require(waitFor([&] { return threads->kept(paths.value(QStringLiteral("newer"))); }, 10000) &&
+                settled() && threads->keptCount() == 1 &&
+                !threads->kept(paths.value(QStringLiteral("older"))),
+            "the most recently written thread is read first");
+    // Room for all: the rest of the known ones, never the unplaced Codex
+    // thread.
+    workspace.setVisualKeep(1024, 32, false);
+    workspace.warmThreads();
+    require(waitFor([&] { return threads->kept(paths.value(QStringLiteral("older"))); }, 10000) &&
+                settled() && threads->keptCount() == 2 && !threads->kept(rollout),
+            "every known thread is read ahead, and an unplaced one is not");
+    require(workspace.conversationFile(codex) == rollout,
+            "the Codex thread is placed when the view asks for it");
+    // Scheduled once a run, a few seconds after it is asked for.
+    workspace.setVisualKeep(0, 32, false);
+    require(threads->keptCount() == 0, "a smaller budget lets the kept threads go");
+    workspace.setVisualKeep(1024, 32, true);
+    require(threads->keptCount() == 0, "the scheduled read-ahead waits");
+    require(waitFor([&] { return threads->keptCount() == 3; }, 10000) && settled() &&
+                threads->kept(rollout),
+            "then reads every thread known by then");
+}
 } // namespace
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
@@ -6172,11 +7302,16 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("updates-off") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("omp-overlay") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes") ||
-                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size")),
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("attention") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("sidebar") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("visual-files")),
                     "Usage: lapis_workspace_tests [--case "
                     "adapter-status|remote-options|remote-hooks|local-codex|retired-plans|reload|"
                     "updater|"
-                    "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|stage-size]");
+                    "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|attention|"
+                    "sidebar|"
+                    "stage-size|visual-files]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("adapter-status")) {
                 claudeAgentsUseServiceAdapter();
@@ -6208,12 +7343,30 @@ int main(int argc, char** argv) {
                 startupUpdatesShareOneInstaller();
             } else if (selected == QStringLiteral("updates-off")) {
                 pinnedCliIsNotUpdated();
+            } else if (selected == QStringLiteral("visual-files")) {
+                visualConversationFiles();
+                agyAgentsKeepTheirOwnConversations();
+                codexAgentsNeverTakeEachOthersThread();
+                claudeTranscriptsAreFoundAndKept();
+                visualThreadsAreReadAhead();
             } else if (selected == QStringLiteral("omp-overlay")) {
                 ompGetsItsResizeOverlay();
             } else if (selected == QStringLiteral("chimes")) {
                 alertsChimeWhileAnAgentWaits();
                 chimesPlayChosenFiles();
                 attentionLogStaysPrivateAndRotates();
+            } else if (selected == QStringLiteral("attention")) {
+                truthfulStatus();
+                categoryCountsChangeOnlyWhenNeeded();
+                tabGoesToTheReadyThenTheOldest();
+                unseenFollowsTurnsAndSelection();
+                attentionMarksFollowLooking();
+                tabSkipsTurnsAlreadySeen();
+                attentionMarksSurviveARestart();
+                attentionReplayMarksEachTurnOnce();
+            } else if (selected == QStringLiteral("sidebar")) {
+                nextAgentWalksTheSidebar();
+                categoryColorsPersist();
             } else {
                 reloadStartsAgentsAgain();
                 reloadFailuresRemainRetryable();
@@ -6227,8 +7380,15 @@ int main(int argc, char** argv) {
         explicitAgentIdentity();
         submittedAttentionKeepsItsDisplayToken();
         categoryCountsChangeOnlyWhenNeeded();
+        nextAgentWalksTheSidebar();
+        categoryColorsPersist();
         persistence();
         restoreAgentIdentity();
+        visualConversationFiles();
+        agyAgentsKeepTheirOwnConversations();
+        codexAgentsNeverTakeEachOthersThread();
+        claudeTranscriptsAreFoundAndKept();
+        visualThreadsAreReadAhead();
         truthfulStatus();
         placeholderMatchesTerminalDefaults();
         discardOutsideActiveCategorySelectsNeighbor();
@@ -6236,6 +7396,10 @@ int main(int argc, char** argv) {
         malformedAgentRegistry();
         unknownRegistryVersionsAreRejected();
         unseenFollowsTurnsAndSelection();
+        attentionMarksFollowLooking();
+        tabSkipsTurnsAlreadySeen();
+        attentionMarksSurviveARestart();
+        attentionReplayMarksEachTurnOnce();
         tabGoesToTheReadyThenTheOldest();
         tabAttributionFollowsTheNextHandMove();
         oneBadAgentDoesNotEmptyTheWorkspace();

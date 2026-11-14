@@ -483,12 +483,14 @@ void AppWindow::publishWarnings(const QList<QQmlError>& warnings) {
 }
 
 // What QML reads by name. Every name is always set, so QML never meets an
-// undefined service: workspace, app and config are always objects; the rest
+// undefined service: workspace, app, config and mediaActions are always
+// objects; the rest
 // are the caller's object or null, which QML checks before use.
 void AppWindow::exposeObjects(QQmlContext& context) {
     context.setContextProperty(QStringLiteral("workspace"), &workspace_);
     context.setContextProperty(QStringLiteral("app"), this);
     context.setContextProperty(QStringLiteral("config"), options_.config);
+    context.setContextProperty(QStringLiteral("mediaActions"), &media_actions_);
     const std::array<std::pair<const char*, QObject*>, 7> optional{{
         {"alerts", options_.alerts},
         {"tools", options_.tools},

@@ -2,8 +2,8 @@
 
 Settings live in `lapis.json`: `~/.lapis/lapis.json` for the app, the checkout's
 `lapis.json` for a development build. It applies as soon as it changes, whether
-Appearance, you or an agent edits it, and Command-R reloads it by hand. Besides
-key bindings and appearance it holds these:
+Settings (Command-comma), you or an agent edits it, and Command-R reloads it by
+hand. Besides key bindings and appearance it holds these:
 
 ```json
 {
@@ -64,7 +64,7 @@ The wheel still reaches a full-screen program either way. See
 
 ## Visual view
 
-Appearance writes the [visual view](workspace.md#visual-view)'s choices under
+Settings writes the [visual view](workspace.md#visual-view)'s choices under
 `visual`: `theme` (`terminal`, `tokyo-night`, `codex`, `claude`, `graphite`,
 `black`, `claude-light`, `codex-light`), `font` (`system`, `serif`, `avenir`,
 `helvetica`), `codeFont` (`system`, `terminal`, `menlo`), `size` in pixels
@@ -72,15 +72,46 @@ Appearance writes the [visual view](workspace.md#visual-view)'s choices under
 Code agent as a thread, and `editor`, what Command-click on a file path opens
 it in (`vscode`, `cursor`, `zed`, `textedit`, `system`, or `auto` for the first
 of those installed). An unknown name falls back to the first choice.
+`"factory": true` opens the [factory view](workspace.md#factory-view); it is
+written only while the view is on.
 
 ```json
 "visual": {"theme": "terminal", "font": "system", "codeFont": "system", "size": 0, "all": false, "editor": "auto"}
 ```
 
+Light mode lives there too. `appearance` is `dark`, `light` or `system`
+(follows macOS as it changes). It picks the thread's theme from `darkTheme`
+or `lightTheme` and the window's from `darkWindowTheme` or `lightWindowTheme`,
+each your last choice of that kind; terminals keep their own colors. A
+thread theme is light when its name ends in `-light`; of the window themes,
+`daylight` is light. Choosing a theme of the other kind switches the mode to
+that kind. `theme` and the top-level `theme` record what shows now. A file
+without `appearance` shows what it did before, as dark or light by its thread
+theme.
+
+```json
+"visual": {"appearance": "system", "darkTheme": "terminal", "lightTheme": "claude-light", "darkWindowTheme": "oled", "lightWindowTheme": "daylight"}
+```
+
+Two hand-written keys size the threads the visual view keeps read so switching
+agents is instant: `keepMB`, about how much memory they may take besides the
+shown one (default 1024, 0 keeps none), and `keepThreads`, how many (default
+32). The least recently shown goes first; the shown thread is always kept.
+Twenty conversations of 9 to 358 MB, all kept, measured 0.5 to 0.8 GB.
+
+```json
+"visual": {"keepMB": 1024, "keepThreads": 32}
+```
+
 ## Alerts
 
-An unseen completed turn or request plays one quiet cue when `alerts.finished`
-is enabled. Requests use the same cue, and the cue does not repeat. Appearance
+A completed turn or request you were not looking at plays one quiet cue when
+`alerts.finished` is enabled. Requests use the same cue, and the cue does not
+repeat: it plays once per turn or request, when the agent becomes unseen, and
+never again for a turn you have looked at. You are looking at an agent while it
+is on the stage, lapis is in front and you are at the Mac (some keyboard, mouse
+or trackpad input within two minutes); showing it by any path, bringing lapis
+to the front or coming back to the Mac with it on the stage counts. Settings
 has one switch and Play button for it. lapis posts no macOS notifications.
 Keys of retired alerts are ignored, and older files may keep
 them: `alerts.sound` and `alerts.repeat` (the repeating request chime),
@@ -96,9 +127,14 @@ unchanged does not chime.
 
 Every decision, a chime or its quiet reason, is logged, one JSON line each, to
 `runtime/attention.jsonl` in the lapis folder: the moment, the agent's
-conversation title, its CLI, the event (`finished`), a `kind` of chime, and the
-`decision` (chimed, or the quiet reason). The log is owner-only, and the title can be the
-conversation's first prompt, so the file is not for sharing. Before a line
+conversation title and id, its CLI, the event (`finished`), a `kind` of chime,
+what the turn did to the agent's `mark` (`marked`, `looking`, `waiting`,
+`unchanged` or `repeat`) and the `decision` (chimed, or the quiet reason). Each
+unseen mark set or cleared adds a line of `kind` `mark` with the agent's id
+only, its status, the event (`unseen` or `seen`) and `why` (`finished`,
+`request`, `quiet`, `away`, `restored`; `focus`, `window`, `present`, or
+`looking: …` for a turn seen as it ended). The log is owner-only, and the title
+can be the conversation's first prompt, so the file is not for sharing. Before a line
 would cross 2 MiB the log rotates to `attention.jsonl.1` (one predecessor, the
 older one removed) and the fresh file opens with a `rotated` marker line.
 
@@ -150,7 +186,8 @@ kinds:
   terminal by Command-C, a drag or a double-click.
 - `mouse`: presses, releases and double-clicks with the position in the window
   and what is under it (`target`: the named item and its named ancestors, the
-  `area` such as `stage`, `strip`, `side-terminal`, `categories` or `dialog`,
+  `area` such as `stage`, `sidebar` (an agent's row), `strip`, `side-terminal`,
+  `categories` or `dialog`,
   and the agent's session id where there is one). `wheel`: one record per scroll
   gesture per interval with summed deltas and whether it scrolled lapis's
   `history` or went to the `program`. `pointer`: the pointer's position and the
@@ -203,7 +240,8 @@ which agent needed you. Older files may keep `rank`; it is ignored and left as
 written.
 
 Only agents truly waiting on you qualify: a request, or a turn that finished
-with no background work in flight, unseen or with a guess, and not parked. Looking at a
+with no background work in flight, unseen or with a guess you have not seen, and
+not parked; a turn you looked at, its guess included, waits no longer. Looking at a
 finished turn for 2.5 seconds or more and moving on without a prompt parks the
 agent: Tab passes it over until it next begins to wait. A request
 is never parked. Choices and Tab moves are kept in `runtime/tab_away.jsonl`,
@@ -214,12 +252,40 @@ longer read or written.
 
 - `keepAwake` keeps the Mac from sleeping while it is plugged in, so the phone
   can reach it.
+- `sidebarVisible` (on unless set) shows the sidebar of categories and their
+  agents; Command-B switches it. `previewsVisible` (off unless set) shows the
+  strip of live previews under the stage; **Show agent previews** in Commands
+  switches it. A file that already sets either keeps its value, and lapis
+  writes both whenever it saves the file.
 - `usage` (and the older top-level `showUsage`), `accounts` and `limitResets`
   belonged to retired plan features (the usage meter, lapis-managed plans and
   limit resets); a file that still has them loads, and lapis leaves them as
   written. Each CLI uses the sign-in its machine already has.
 - `nextPrompt` turns on guessed next prompts; see [suggestions](suggestions.md).
-- Key bindings are listed in [keys](keys.md); Appearance shows and edits them.
+- Key bindings are listed in [keys](keys.md); Settings lists them under Keys.
+
+## Settings
+
+Command-comma (or **Settings** in Commands, which also answers to
+"Appearance") opens Settings: General, Appearance, Reading view, Terminal, New
+agents, Keys and Advanced, one at a time, with a search across all of them.
+Each change applies at once and is written here; a row that differs from the
+built-in value has **Reset**, and each section has a Reset for all of its rows.
+Besides the keys above, it writes these, and only the section it changed, so
+the rest of that section (machines, models, providers) stays as written:
+
+- `newAgent.harness`, `newAgent.folder` and `newAgent.mode` (an empty value
+  removes the key);
+- `harnessUpdates.<cli>` (turning updates back on removes the key);
+- `nextPrompt.auto`, `interactionLog.enabled` and `tabAway.overdueHours`
+  (0 to 168);
+- `sidebarVisible`, `previewsVisible` and `scrollToBottomOnTyping`.
+
+Key bindings, models per CLI, folders per machine, `harnessArguments`, the
+chime's sound files, the next-prompt model, providers and limits, the
+interaction log's sizes and Tab's work categories are only in this file:
+lists, paths and endpoints read better as JSON than as controls. Advanced
+opens it in its default app.
 
 ## Window state across restarts
 
@@ -227,8 +293,10 @@ The agents run in their session services, so a restart of the window (an
 install swaps the app and opens it again) leaves them running. What only the
 window knew is kept in `runtime/gui_state.json` in the lapis folder and comes
 back with it: the guessed next prompts at each agent's cursor (whether you saw
-them, a guess Tab typed in, a guess still being made), the unseen marks on
-cards and categories and when each agent began to need you (Tab's order),
+them, a guess Tab typed in, a guess still being made), which agents have a turn
+or request you have not looked at (for Tab and the chime; not drawn) and when
+each began to need you (Tab's order); a turn that ended while no window ran is
+marked once,
 what you last saw of each agent (so a turn ending on it
 stays quiet), the agents Command-Shift-T can reopen, and the new-agent form's
 last choices and the side terminal.

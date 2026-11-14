@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-13T21:57:54Z",
+  "agent": "Codex",
+  "base_revision": "1707bde42585954fec2497fa334caff3048f3583",
+  "source_revision": "c7f1d80405c37092a5696468a8dbf67e0ec23fd3",
+  "changed_source_manifest": {
+    "algorithm": "sha256(git diff --binary base_revision..source_revision -- ':(exclude)evidence/*')",
+    "digest": "63127e3af237cbf9391ffe1561fb475b285df0ff13c29146cd2487f011c8930b",
+    "changed_paths": 2
+  },
+  "validation": [
+    {
+      "command": "clang-format --dry-run --Werror apps/desktop/src/workspace.cpp apps/desktop/tests/factory_test.cpp",
+      "result": "passed"
+    },
+    {
+      "command": "cmake --build build/desktop --target lapis_factory_tests --parallel 8",
+      "result": "passed"
+    },
+    {
+      "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -R '^factory$'",
+      "result": "1/1 passed"
+    }
+  ],
+  "non_claims": [
+    "Focused Factory model coverage only; Factory UI, native GUI, sanitizers, packaging, and a live reconnect were not exercised.",
+    "Compilation used the build-only warning wrapper inherited from the PR #211 receipt because this integration branch still contains the three pre-existing transcript initializer diagnostics under the current compiler.",
+    "The integration branch remains separately conflicted with main in Main.qml and ui_preview_test.cpp; this repair does not claim main integration."
+  ]
+}

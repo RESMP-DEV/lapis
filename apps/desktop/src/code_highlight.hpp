@@ -3,13 +3,14 @@
 #include <QColor>
 #include <QString>
 #include <QSyntaxHighlighter>
+#include <cstdint>
 #include <vector>
 
 class QTextDocument;
 
 namespace lapis::desktop::code {
 // What a stretch of code is, which picks its color.
-enum class Role {
+enum class Role : std::uint8_t {
     plain,
     comment,
     keyword,
@@ -36,8 +37,9 @@ struct Span {
 
 // A fence's language as lapis reads it: a family of rules and its words.
 struct Language;
-// The language for a fence name ("cpp", "py", "bash", ...); an unknown or
-// empty name gets generic rules: strings, numbers, # and // comments.
+// The language for a fence name ("cpp", "py", "bash", ...). An empty or
+// unknown name ("text", "log", "output", ...) is plain: no colors at all,
+// and the language is never guessed from the code.
 [[nodiscard]] const Language& language(const QString& name);
 
 // The colored stretches of one line. `state` carries what a line leaves

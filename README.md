@@ -4,9 +4,8 @@
 
 lapis is a Mac app for running many coding agents at once. Each agent (Claude
 Code, Codex, Grok, OpenCode, OMP, Kimi or Antigravity) gets its own live
-terminal. You group agents into categories, watch every agent's latest lines in
-a strip under the one you are working with, and jump straight to whichever needs
-you. Each agent runs in its own session service, so closing lapis normally
+terminal. You group agents into colour-coded categories, see every agent and its
+state in the sidebar, and jump straight to whichever needs you. Each agent runs in its own session service, so closing lapis normally
 leaves it running (macOS 27 adds [conditions](docs/install.md#updates)); if its
 service is gone, it starts again in its card when lapis next opens and resumes
 its conversation where its CLI can. [Install](docs/install.md#updates)
@@ -37,11 +36,12 @@ updates. See
   slice until remote reconnect and fan-out qualification passes. Each CLI uses
   the sign-in its machine already has.
   [Agents](docs/agents.md)
-- **Categories** group agents. The strip under the stage shows each agent's
-  latest lines; click one, or step along with Command-Shift-[ and ], to show it
-  on the stage.
+- **Categories** group agents. The sidebar lists each category, in its colour,
+  with its agents under it; click one, or step through them all with
+  Command-Shift-[ and ], to show it on the stage. A strip of live previews under
+  the stage is there if you turn it on.
   [Workspace](docs/workspace.md)
-- **See what needs you**: cards and categories pulse until you look, and with
+- **See what needs you**: agents and categories are marked until you look, and with
   suggestions on, Tab with no guess to accept moves to the next agent waiting on
   you. A chime says when.
 - **Your phone** can show and drive the same agents as a separately installed
@@ -74,7 +74,7 @@ uv run --no-project python scripts/lapis.py run
 | --- | --- |
 | [install](docs/install.md) | Download, where lapis keeps things, closing, upgrading |
 | [agents](docs/agents.md) | Starting agents, CLIs and modes, requests, restarts, reboots |
-| [workspace](docs/workspace.md) | Categories, the strip, the visual view, links, history |
+| [workspace](docs/workspace.md) | The sidebar and categories, the strip, the visual view, links, history |
 | [keys](docs/keys.md) | Every keyboard shortcut |
 | [config](docs/config.md) | `lapis.json`: defaults, alerts, CLI flags |
 | [phone](docs/phone.md) | The prototype iPhone app and its separately installed gateway |

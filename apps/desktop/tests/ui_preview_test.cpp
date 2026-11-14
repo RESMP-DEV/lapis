@@ -7,6 +7,7 @@
 #include "platform/window_activation.hpp"
 #include "terminal_surface.hpp"
 #include "terminals.hpp"
+#include "transcript.hpp"
 #include "transport/local_protocol.hpp"
 #include "workspace.hpp"
 #include <QAccessible>
@@ -371,10 +372,26 @@ void wait_sidebar(QQuickWindow& window, lapis::desktop::Config& config_model, bo
           visible);
 }
 
+// Opens the Settings section that holds `item`, as a click on it would.
+void show_setting_section(QQuickWindow& window, QQuickItem* item) {
+    for (auto* row = item; row != nullptr; row = row->parentItem()) {
+        if (!row->property("isSettingRow").toBool())
+            continue;
+        auto* dialog = window.findChild<QObject*>(QStringLiteral("settingsDialog"));
+        CHECK(dialog != nullptr);
+        CHECK(QMetaObject::invokeMethod(dialog, "showSection",
+                                        Q_ARG(QVariant, row->property("section"))));
+        pump(20);
+        return;
+    }
+}
+
 void click_setting(QQuickWindow& window, const QString& name) {
     auto* item = find_visual(window.contentItem(), name);
     auto* scroll = find_visual(window.contentItem(), QStringLiteral("settingsScroll"));
     CHECK(item != nullptr && scroll != nullptr);
+    show_setting_section(window, item);
+    CHECK(item->isVisible());
     scroll->setProperty("contentY", 0);
     pump(10);
     const auto offset = item->mapToItem(scroll, QPointF()).y();
@@ -1229,6 +1246,14 @@ QStringList strip_ids(const lapis::desktop::Workspace& workspace) {
         ids.append(value.value<lapis::desktop::Agent*>()->agentId());
     return ids;
 }
+// Every agent in the sidebar's order: each category's agents in turn.
+QStringList sidebar_ids(const lapis::desktop::Workspace& workspace) {
+    QStringList ids;
+    for (const auto& group : workspace.categories())
+        for (const auto& value : group.toMap().value(QStringLiteral("agents")).toList())
+            ids.append(value.value<lapis::desktop::Agent*>()->agentId());
+    return ids;
+}
 
 // The stage and strip drags, through the window as a person would use them.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -1249,6 +1274,7 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
         qobject_cast<lapis::desktop::TerminalSurface*>(item(QStringLiteral("liveTerminal")));
     auto* visual = item(QStringLiteral("visualView"));
     const auto ids = strip_ids(workspace);
+    const auto strip_category = workspace.activeCategoryId();
     CHECK(terminal != nullptr && ids.size() >= 3);
     CHECK(workspace.selectAgent(ids[0]));
     pump(40);
@@ -1285,16 +1311,21 @@ void check_stage_and_drags(QQuickWindow& window, lapis::desktop::Workspace& work
     CHECK(workspace.selectAgent(ids[0]));
     pump(40);
 
-    // The next and previous agent keys walk the strip and wrap; the stage
+    // The next and previous agent keys walk the sidebar: through this
+    // category, on into the next one's agents, and around; the stage
     // terminal follows every press.
-    for (qsizetype step = 1; step <= ids.size(); ++step) {
+    const auto walk = sidebar_ids(workspace);
+    CHECK(walk.size() > ids.size() && walk.indexOf(ids[0]) == 0);
+    for (qsizetype step = 1; step <= walk.size(); ++step) {
         key("nextWindow");
-        fills_stage(ids[step % ids.size()]);
+        fills_stage(walk[step % walk.size()]);
     }
     key("previousWindow");
-    fills_stage(ids.constLast());
+    fills_stage(walk.constLast());
+    CHECK(workspace.activeCategoryId() != strip_category);
     key("nextWindow");
     fills_stage(ids[0]);
+    CHECK(workspace.activeCategoryId() == strip_category);
 
     // Clicking a card shows it on the stage.
     click_visual(window, *item(QStringLiteral("agentTab_") + ids[2]));
@@ -1506,8 +1537,8 @@ void reveal_card(QQuickWindow& window, const lapis::desktop::Workspace& workspac
 }
 
 // Keyboard focus, activity and lost connections stay visually distinct, and each
-// status class has a non-color shape cue on its tab. An agent waiting on an
-// answer looks like a finished turn: it pinged as one.
+// status class has a non-color shape cue on its tab: a filled dot at work, a
+// hollow ring once done, a diamond in the attention colour waiting on an answer.
 void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& workspace) {
     const QStringList kinds{QStringLiteral("working"),    QStringLiteral("waiting"),
                             QStringLiteral("idle"),       QStringLiteral("finished"),
@@ -1521,17 +1552,20 @@ void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& wor
     }
     const QSet<QString> classes{
         shapes.value(QStringLiteral("working")), shapes.value(QStringLiteral("idle")),
-        shapes.value(QStringLiteral("disconnected")), shapes.value(QStringLiteral("ended")),
-        shapes.value(QStringLiteral("unknown"))};
-    CHECK(classes.size() == 5);
+        shapes.value(QStringLiteral("waiting")), shapes.value(QStringLiteral("disconnected")),
+        shapes.value(QStringLiteral("ended")),   shapes.value(QStringLiteral("unknown"))};
+    CHECK(classes.size() == 6);
+    CHECK(shapes.value(QStringLiteral("working")) == QStringLiteral("dot"));
+    CHECK(shapes.value(QStringLiteral("finished")) == QStringLiteral("ring"));
     CHECK(shapes.value(QStringLiteral("idle")) == shapes.value(QStringLiteral("finished")));
-    CHECK(shapes.value(QStringLiteral("waiting")) == shapes.value(QStringLiteral("finished")));
+    CHECK(shapes.value(QStringLiteral("waiting")) == QStringLiteral("diamond"));
     CHECK(shapes.value(QStringLiteral("connecting")) == shapes.value(QStringLiteral("unknown")));
     const auto focus = window.property("focusedBorderColor").value<QColor>();
     const auto attention = window.property("attentionColor").value<QColor>();
     CHECK(focus.isValid() && attention.isValid());
     CHECK(colors.value(QStringLiteral("working")) != focus);
-    CHECK(colors.value(QStringLiteral("waiting")) == colors.value(QStringLiteral("finished")));
+    CHECK(colors.value(QStringLiteral("working")) != colors.value(QStringLiteral("finished")));
+    CHECK(colors.value(QStringLiteral("waiting")) == attention);
     for (const auto& kind : {QStringLiteral("disconnected"), QStringLiteral("ended")}) {
         CHECK(colors.value(kind) != attention);
         CHECK(colors.value(kind) != focus);
@@ -1559,9 +1593,11 @@ void check_status_semantics(QQuickWindow& window, lapis::desktop::Workspace& wor
         CHECK(mark->property("shape").toString() ==
               shapes.value(workspace.agent(id)->statusKind()));
     }
+    // The sample agent waits on an answer: its own mark, not a finished turn's.
+    CHECK(workspace.agent(QStringLiteral("agent"))->statusKind() == QStringLiteral("waiting"));
     CHECK(find_visual(window.contentItem(), QStringLiteral("statusMark_agent"))
               ->property("shape")
-              .toString() == QStringLiteral("ring"));
+              .toString() == QStringLiteral("diamond"));
 }
 
 void check_category_alignment(QQuickWindow& window) {
@@ -1591,6 +1627,8 @@ void wait_tab_visible(QQuickItem& tab, QQuickItem& view) {
     CHECK(visible());
 }
 
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run_attention_ui_tests() {
     using namespace lapis::desktop;
     Workspace workspace(WorkspaceMode::fixture);
@@ -1598,6 +1636,8 @@ int run_attention_ui_tests() {
     CHECK(palette_config.isValid());
     Config config_model;
     config_model.setSourcePathForTesting(palette_config.filePath(QStringLiteral("palette.json")));
+    // The checks below follow the selected card along the opt-in strip.
+    CHECK(config_model.setPreviewsVisible(true));
     AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
                                   .screen = QString(),
@@ -2273,8 +2313,8 @@ void wait_ready(lapis::desktop::ConversationIndex& conversations) {
 
 // The agent strip is the category's navigation: live previews in tab order
 // that never take input or resize a terminal, keep part of the neighboring
-// card in view as selection moves, and pulse an agent that finished or needs a
-// response until it is selected.
+// card in view as selection moves, and mark an agent that finished or needs a
+// response with its status shape.
 // The strip narrative is chronological and only one point above the threshold.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run_strip_ui_tests() {
@@ -2285,6 +2325,8 @@ int run_strip_ui_tests() {
     CHECK(config.isValid());
     Config config_model;
     config_model.setSourcePathForTesting(config.filePath(QStringLiteral("strip.json")));
+    // The strip is opt-in; these checks are about it.
+    CHECK(config_model.setPreviewsVisible(true));
     ConversationIndex conversations(config.filePath(QStringLiteral("history/claude")),
                                     config.filePath(QStringLiteral("history/codex")),
                                     config.filePath(QStringLiteral("conversations.json")));
@@ -2381,7 +2423,7 @@ int run_strip_ui_tests() {
     CHECK(pooled_agent == workspace.agent(QStringLiteral("agent")));
     finish_turn(*pooled_agent);
     pump(30);
-    CHECK(pooled_agent->unseen() && pooled_card->property("pulseRunning").toBool());
+    CHECK(pooled_agent->unseen());
     const auto pool_events = [](QQuickItem* parent, auto&& visit) -> int {
         int count = parent->property("poolCount").toInt();
         for (auto* child : parent->childItems())
@@ -2394,8 +2436,6 @@ int run_strip_ui_tests() {
     CHECK(pooled_card->setProperty("pooled", true));
     pump(30);
     CHECK(!item(QStringLiteral("previewTerminal_agent"))->isVisible());
-    CHECK(item(QStringLiteral("unseenCue_agent"))->isVisible());
-    CHECK(!pooled_card->property("pulseRunning").toBool());
     {
         lapis::session::Terminal source{{4, 2}};
         source.feed("pooled\n");
@@ -2409,7 +2449,6 @@ int run_strip_ui_tests() {
     auto* reused_card = item(QStringLiteral("agentTab_agent"));
     CHECK(reused_card == pooled_card && reused_card->property("pooled").toBool() == false);
     CHECK(item(QStringLiteral("previewTerminal_agent"))->isVisible());
-    CHECK(pooled_card->property("pulseRunning").toBool());
     {
         lapis::session::Terminal source{{4, 2}};
         source.feed("reused\n");
@@ -2418,7 +2457,8 @@ int run_strip_ui_tests() {
     }
     CHECK(wait_for([&] { return pooled_agent->decodedScreens() > pooled_decoded; }, 5000));
 
-    // A finished turn pulses an unselected card; the selected agent never does.
+    // A finished turn changes a card's status mark and nothing else: no cue
+    // says whether it was looked at, and a card looks the same either way.
     CHECK(workspace.selectAgent(QStringLiteral("renderer")));
     pump(260);
     finish_turn(*workspace.agent(QStringLiteral("agent")));
@@ -2426,12 +2466,16 @@ int run_strip_ui_tests() {
     pump(30);
     CHECK(workspace.agent(QStringLiteral("agent"))->unseen());
     CHECK(!workspace.agent(QStringLiteral("renderer"))->unseen());
-    auto* cue = item(QStringLiteral("unseenCue_agent"));
-    CHECK(cue->isVisible());
-    CHECK(QQmlProperty::read(cue, QStringLiteral("border.color")).value<QColor>() ==
-          window->property("textColor").value<QColor>());
-    CHECK(!item(QStringLiteral("unseenCue_renderer"))->isVisible());
-    // A pending request pulses in ink, as a finished turn does.
+    CHECK(find_visual(window->contentItem(), QStringLiteral("unseenCue_agent")) == nullptr);
+    const auto card_mark = [&](const QString& id) {
+        reveal_card(*window, workspace, id);
+        return item(QStringLiteral("statusMark_") + id);
+    };
+    CHECK(card_mark(QStringLiteral("agent"))->property("shape").toString() ==
+          QStringLiteral("ring"));
+    CHECK(card_mark(QStringLiteral("agent"))->property("tone") ==
+          card_mark(QStringLiteral("renderer"))->property("tone"));
+    // A pending request shows its own mark, in the attention colour.
     {
         namespace wire = lapis::session::wire;
         wire::AttentionSnapshot request;
@@ -2441,20 +2485,14 @@ int run_strip_ui_tests() {
         workspace.agent(QStringLiteral("agent"))->applyAttention(request);
     }
     pump(30);
-    CHECK(
-        QQmlProperty::read(item(QStringLiteral("unseenCue_agent")), QStringLiteral("border.color"))
-            .value<QColor>() == window->property("textColor").value<QColor>());
+    CHECK(card_mark(QStringLiteral("agent"))->property("shape").toString() ==
+          QStringLiteral("diamond"));
+    CHECK(card_mark(QStringLiteral("agent"))->property("tone").value<QColor>() ==
+          window->property("attentionColor").value<QColor>());
     capture("unseen");
-    const QPointer<QQuickItem> replaced_cue = item(QStringLiteral("unseenCue_agent"));
-    CHECK(replaced_cue != nullptr);
-    // Category changes reset the strip model. Drain deferred deletes without
-    // adding a sleep so the subsequent lookups prove they see fresh delegates.
+    // No category counts or marks agents nobody looked at.
     CHECK(workspace.addCategory(QStringLiteral("Other")));
-    QCoreApplication::processEvents();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-    QCoreApplication::processEvents();
-    CHECK(replaced_cue.isNull());
-    // Unseen agents elsewhere mark their category.
+    pump(30);
     const auto other = workspace.activeCategoryId();
     CHECK(workspace.selectCategory(QStringLiteral("general")));
     CHECK(workspace.moveAgent(QStringLiteral("notes"), other));
@@ -2462,16 +2500,15 @@ int run_strip_ui_tests() {
     pump(30);
     finish_turn(*workspace.agent(QStringLiteral("notes")));
     pump(30);
-    CHECK(item(QStringLiteral("categoryUnseen_") + other)->isVisible());
-    CHECK(!item(QStringLiteral("categoryUnseen_general"))->isVisible());
+    CHECK(workspace.agent(QStringLiteral("notes"))->unseen());
+    CHECK(find_visual(window->contentItem(), QStringLiteral("categoryUnseen_") + other) == nullptr);
     // Selecting the agent is looking at it.
     click_visual(*window, *item(QStringLiteral("agentTab_agent")));
     pump(30);
-    CHECK(!workspace.agent(QStringLiteral("agent"))->unseen() &&
-          !item(QStringLiteral("unseenCue_agent"))->isVisible());
+    CHECK(!workspace.agent(QStringLiteral("agent"))->unseen());
     CHECK(workspace.selectAgent(QStringLiteral("notes")));
     pump(30);
-    CHECK(!item(QStringLiteral("categoryUnseen_") + other)->isVisible());
+    CHECK(!workspace.agent(QStringLiteral("notes"))->unseen());
     CHECK(workspace.selectCategory(QStringLiteral("general")));
     pump(30);
     // Assistive activation of a card selects its agent, as a click does.
@@ -2570,6 +2607,310 @@ int run_strip_ui_tests() {
     check_side_terminal(*window, terminals, config_model, *terminal);
     workspace.setSshConfigForTesting(config.filePath(QStringLiteral("ssh_config")));
     check_new_agent_machine(*window, config_model);
+    CHECK(preview.diagnostics().isEmpty());
+    return EXIT_SUCCESS;
+}
+
+void right_click(QQuickWindow& window, QQuickItem& item) {
+    const auto position = item.mapToScene(QPointF(item.width() / 2, item.height() / 2));
+    const auto global = window.mapToGlobal(position);
+    QMouseEvent press(QEvent::MouseButtonPress, position, global, Qt::RightButton, Qt::RightButton,
+                      Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, position, global, Qt::RightButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &press);
+    QCoreApplication::sendEvent(&window, &release);
+}
+
+// The sidebar is the navigation: each category a colour-coded group with its
+// agents listed under it. A row shows its agent (and category), the agent on
+// the stage is marked in its group's colour, a row's menu is the strip card's,
+// rows drag onto categories, and the category menu sets the colour.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+int run_sidebar_ui_tests() {
+    using namespace lapis::desktop;
+    Workspace workspace(WorkspaceMode::fixture);
+    QTemporaryDir config(QStringLiteral("/tmp/lapis-ui-XXXXXX"));
+    CHECK(config.isValid());
+    Config config_model;
+    config_model.setSourcePathForTesting(config.filePath(QStringLiteral("sidebar.json")));
+    // The sidebar navigates; the strip is off until asked for.
+    CHECK(!config_model.previewsVisible());
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = false,
+                                  .screen = QString(),
+                                  .config = &config_model});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    window->resize(1400, 960);
+    wait_active(*window);
+    pump(60);
+    const auto item = [window](const QString& name) {
+        auto* found = find_visual(window->contentItem(), name);
+        if (found == nullptr)
+            throw std::runtime_error("missing item " + name.toStdString());
+        return found;
+    };
+    const auto capture = [window](const char* name) {
+        if (const auto path = qEnvironmentVariable("LAPIS_WORKSPACE_CAPTURE_PREFIX");
+            !path.isEmpty())
+            CHECK(window->grabWindow().save(path + QStringLiteral("sidebar-") +
+                                            QString::fromLatin1(name) + QStringLiteral(".png")));
+    };
+    auto* terminal = qobject_cast<TerminalSurface*>(item(QStringLiteral("liveTerminal")));
+    CHECK(terminal != nullptr);
+
+    // General: Codex, Workspace notes. Build: Renderer, Agent bridge, Checks.
+    // Research: Session service. Ideas: empty.
+    const auto build = workspace.createCategory(QStringLiteral("Build"));
+    const auto research = workspace.createCategory(QStringLiteral("Research"));
+    const auto ideas = workspace.createCategory(QStringLiteral("Ideas"));
+    CHECK(!build.isEmpty() && !research.isEmpty() && !ideas.isEmpty());
+    CHECK(workspace.placeAgents(
+        {QStringLiteral("renderer"), QStringLiteral("agent"), QStringLiteral("checks")}, build, 0));
+    CHECK(workspace.moveAgent(QStringLiteral("service"), research));
+    CHECK(workspace.setCategoryColor(research, QStringLiteral("pink")));
+    CHECK(workspace.selectAgent(QStringLiteral("renderer")));
+    pump(40);
+    // One agent at work, two finished (not yet looked at), one waiting on an
+    // answer; the rest have no status yet.
+    {
+        namespace wire = lapis::session::wire;
+        wire::AttentionSnapshot working;
+        working.available = working.connected = working.ready = true;
+        working.activity = lapis::session::attention::Activity::working;
+        workspace.agent(QStringLiteral("checks"))->applyAttention(working);
+        auto asking = working;
+        asking.requests.emplace_back();
+        workspace.agent(QStringLiteral("notes"))->applyAttention(asking);
+    }
+    finish_turn(*workspace.agent(QStringLiteral("agent")));
+    finish_turn(*workspace.agent(QStringLiteral("service")));
+    pump(60);
+    CHECK(!item(QStringLiteral("agentTabs"))->isVisible());
+
+    // A row per agent, in the sidebar's order, under its category's header.
+    const auto order = sidebar_ids(workspace);
+    CHECK(order == (QStringList{QStringLiteral("shell"), QStringLiteral("notes"),
+                                QStringLiteral("renderer"), QStringLiteral("agent"),
+                                QStringLiteral("checks"), QStringLiteral("service")}));
+    const auto default_row_height = item(QStringLiteral("sidebarAgent_renderer"))->height();
+    qreal previous = -1;
+    for (const auto& id : order) {
+        auto* row = item(QStringLiteral("sidebarAgent_") + id);
+        CHECK(row->isVisible() && row->height() >= 24);
+        const auto top = row->mapToScene(QPointF()).y();
+        CHECK(top > previous);
+        previous = top;
+    }
+    CHECK(item(QStringLiteral("category_") + build)->mapToScene(QPointF()).y() <
+          item(QStringLiteral("sidebarAgent_renderer"))->mapToScene(QPointF()).y());
+    CHECK(item(QStringLiteral("sidebarAgent_notes"))->mapToScene(QPointF()).y() <
+          item(QStringLiteral("category_") + build)->mapToScene(QPointF()).y());
+    // Each row's mark says what its agent does, but only the rare ones show: a
+    // working or done agent's row is its title alone, and a diamond waiting on
+    // an answer sits after the title. Nothing says whether the person looked:
+    // no dot on a row, no count on a category.
+    const auto row_mark = [&](const QString& id) {
+        auto* mark = item(QStringLiteral("sidebarStatus_") + id);
+        return std::pair{mark->property("shape").toString(),
+                         mark->property("tone").value<QColor>()};
+    };
+    CHECK(row_mark(QStringLiteral("checks")).first == QStringLiteral("dot"));
+    CHECK(row_mark(QStringLiteral("checks")).second ==
+          window->property("activityColor").value<QColor>());
+    CHECK(row_mark(QStringLiteral("agent")).first == QStringLiteral("ring"));
+    CHECK(row_mark(QStringLiteral("notes")).first == QStringLiteral("diamond"));
+    CHECK(row_mark(QStringLiteral("notes")).second ==
+          window->property("attentionColor").value<QColor>());
+    CHECK(!item(QStringLiteral("sidebarStatus_checks"))->isVisible());
+    CHECK(!item(QStringLiteral("sidebarStatus_agent"))->isVisible());
+    {
+        auto* mark = item(QStringLiteral("sidebarStatus_notes"));
+        auto* title = item(QStringLiteral("sidebarTitle_notes"));
+        CHECK(mark->isVisible());
+        CHECK(mark->mapToScene(QPointF()).x() >= title->mapToScene(QPointF(title->width(), 0)).x());
+    }
+    CHECK(workspace.agent(QStringLiteral("agent"))->unseen() &&
+          workspace.agent(QStringLiteral("service"))->unseen());
+    for (const auto& id : sidebar_ids(workspace))
+        CHECK(find_visual(window->contentItem(), QStringLiteral("sidebarUnseen_") + id) == nullptr);
+    for (const auto& value : workspace.categories())
+        CHECK(find_visual(window->contentItem(),
+                          QStringLiteral("categoryUnseen_") +
+                              value.toMap().value(QStringLiteral("id")).toString()) == nullptr);
+    // The mark grows with the sidebar's text.
+    const auto default_mark = item(QStringLiteral("sidebarStatus_notes"))->width();
+    CHECK(default_mark >= 8);
+    // The focused row is marked in its category's colour; the others are not.
+    const auto hex = [&](const QString& category) {
+        for (const auto& value : workspace.categories())
+            if (value.toMap().value(QStringLiteral("id")).toString() == category)
+                return call_window(*window, "categoryHex",
+                                   value.toMap().value(QStringLiteral("color")).toString())
+                    .value<QColor>();
+        return QColor();
+    };
+    const auto edge = [&](const QString& id) {
+        return QQmlProperty::read(item(QStringLiteral("sidebarAgentEdge_") + id),
+                                  QStringLiteral("color"))
+            .value<QColor>();
+    };
+    const auto marked = [&](const QString& id) {
+        return item(QStringLiteral("sidebarAgent_") + id)->property("marked").toBool();
+    };
+    CHECK(marked(QStringLiteral("renderer")) && !marked(QStringLiteral("agent")));
+    CHECK(edge(QStringLiteral("renderer")) == hex(build));
+    CHECK(edge(QStringLiteral("agent")).alphaF() < 0.9);
+    CHECK(hex(research) ==
+          call_window(*window, "categoryHex", QStringLiteral("pink")).value<QColor>());
+    CHECK(hex(build) != hex(research));
+    capture("default");
+
+    // A click on a row in another category shows that agent and its category,
+    // and leaves the keyboard with the terminal.
+    wait_terminal_focus(*window, *terminal);
+    click_visual(*window, *item(QStringLiteral("sidebarAgent_service")));
+    pump(40);
+    CHECK(focused_id(workspace) == QStringLiteral("service"));
+    CHECK(workspace.activeCategoryId() == research);
+    CHECK(terminal->document() == workspace.agent(QStringLiteral("service")));
+    CHECK(terminal->hasActiveFocus());
+    CHECK(!workspace.agent(QStringLiteral("service"))->unseen());
+    // Looked at or not, a finished agent's mark is the same.
+    CHECK(workspace.agent(QStringLiteral("agent"))->unseen());
+    CHECK(row_mark(QStringLiteral("service")) == row_mark(QStringLiteral("agent")));
+    capture("seen-and-unseen");
+    CHECK(marked(QStringLiteral("service")) && !marked(QStringLiteral("renderer")));
+    CHECK(edge(QStringLiteral("service")) == hex(research));
+    // A header click selects its category and the agent it remembers.
+    click_visual(*window, *item(QStringLiteral("category_") + build));
+    pump(40);
+    CHECK(workspace.activeCategoryId() == build &&
+          focused_id(workspace) == QStringLiteral("renderer"));
+    // Command-Shift-] walks the rows in order, across the category edge.
+    wait_input_ready(*window, *terminal);
+    CHECK(workspace.selectAgent(QStringLiteral("checks")));
+    pump(20);
+    send_binding(*window, config_model.sequences(QStringLiteral("nextWindow")).front());
+    pump(40);
+    CHECK(focused_id(workspace) == QStringLiteral("service") && marked(QStringLiteral("service")));
+    send_binding(*window, config_model.sequences(QStringLiteral("nextWindow")).front());
+    pump(40);
+    CHECK(focused_id(workspace) == QStringLiteral("shell") &&
+          workspace.activeCategoryId() == QStringLiteral("general"));
+    send_binding(*window, config_model.sequences(QStringLiteral("previousWindow")).front());
+    pump(40);
+    CHECK(focused_id(workspace) == QStringLiteral("service"));
+
+    // A row's right-click opens the strip card's agent menu for that agent.
+    auto* agent_menu = window->findChild<QObject*>(QStringLiteral("agentMenu"));
+    CHECK(agent_menu != nullptr);
+    right_click(*window, *item(QStringLiteral("sidebarAgent_notes")));
+    wait_popup(*agent_menu, true);
+    CHECK(focused_id(workspace) == QStringLiteral("notes"));
+    CHECK(QMetaObject::invokeMethod(agent_menu, "close"));
+    wait_popup(*agent_menu, false);
+
+    // The category menu's Colour sets the category's colour.
+    auto* category_menu = window->findChild<QObject*>(QStringLiteral("categoryMenu"));
+    CHECK(category_menu != nullptr);
+    right_click(*window, *item(QStringLiteral("category_") + build));
+    wait_popup(*category_menu, true);
+    CHECK(workspace.activeCategoryId() == build);
+    // The swatches are the Colour submenu's items, under its content item.
+    auto* color_menu = window->findChild<QObject*>(QStringLiteral("categoryColorMenu"));
+    CHECK(color_menu != nullptr);
+    auto* swatches = color_menu->property("contentItem").value<QQuickItem*>();
+    CHECK(swatches != nullptr);
+    auto* cyan = find_visual(swatches, QStringLiteral("categoryColor_cyan"));
+    CHECK(cyan != nullptr);
+    CHECK(find_visual(swatches, QStringLiteral("categoryColor_grey")) != nullptr);
+    CHECK(QMetaObject::invokeMethod(cyan, "click"));
+    pump(40);
+    if (category_menu->property("visible").toBool())
+        CHECK(QMetaObject::invokeMethod(category_menu, "close"));
+    wait_popup(*category_menu, false);
+    CHECK(workspace.categories().at(1).toMap().value(QStringLiteral("color")).toString() ==
+          QStringLiteral("cyan"));
+    // The colour shows in the group's name: full for the shown group, the
+    // quieter mix for the others. No number or square precedes the name.
+    const auto name_color = [&](const QString& category) {
+        return QQmlProperty::read(item(QStringLiteral("categoryName_") + category),
+                                  QStringLiteral("color"))
+            .value<QColor>();
+    };
+    CHECK(name_color(build) ==
+          call_window(*window, "categoryHex", QStringLiteral("cyan")).value<QColor>());
+    CHECK(name_color(research) ==
+          call_window(*window, "categoryQuietHex", QStringLiteral("pink")).value<QColor>());
+    CHECK(name_color(research) != hex(research));
+    CHECK(edge(QStringLiteral("renderer")).rgb() == hex(build).rgb());
+    {
+        auto* header = item(QStringLiteral("category_") + build);
+        auto* name = item(QStringLiteral("categoryName_") + build);
+        auto* title = item(QStringLiteral("sidebarTitle_renderer"));
+        CHECK(name->mapToItem(header, QPointF()).x() <= 13);
+        CHECK(qAbs(name->mapToScene(QPointF()).x() - title->mapToScene(QPointF()).x()) <= 1);
+    }
+
+    // A row dragged onto another category's header moves the agent there.
+    wait_input_ready(*window, *terminal);
+    auto* target = item(QStringLiteral("category_") + ideas);
+    drag_visual(*window, *item(QStringLiteral("sidebarAgent_notes")),
+                target->mapToScene(QPointF(target->width() / 2, target->height() / 2)));
+    pump(40);
+    CHECK(workspace.agentPlace(QStringLiteral("notes"))
+              .value(QStringLiteral("category"))
+              .toString() == QStringLiteral("Ideas"));
+    CHECK(item(QStringLiteral("sidebarAgent_notes"))->mapToScene(QPointF()).y() >
+          target->mapToScene(QPointF()).y());
+
+    // Captures for review: themes, a narrow sidebar with long titles, the
+    // owner's larger text, and the strip shown. Each waits out the theme's
+    // colour transitions before it is taken.
+    CHECK(workspace.selectAgent(QStringLiteral("renderer")));
+    const auto settle = [] { pump(400); };
+    CHECK(config_model.setTheme(QStringLiteral("oled")));
+    settle();
+    capture("oled");
+    CHECK(config_model.setTheme(QStringLiteral("daylight")));
+    settle();
+    capture("daylight");
+    CHECK(config_model.setTheme(QStringLiteral("lapis")));
+    CHECK(config_model.setTerminalFontSize(21));
+    settle();
+    auto* rail = item(QStringLiteral("categoryRail"));
+    CHECK(rail->width() > 196);
+    // Larger terminal text makes the sidebar's rows and names larger too.
+    CHECK(item(QStringLiteral("sidebarAgent_renderer"))->height() > default_row_height);
+    CHECK(item(QStringLiteral("sidebarStatus_notes"))->width() > default_mark);
+    capture("comfortable-font21");
+    // The owner's setting: the oled theme at terminal font 21.
+    CHECK(config_model.setTheme(QStringLiteral("oled")));
+    settle();
+    capture("oled-font21");
+    CHECK(config_model.setTheme(QStringLiteral("lapis")));
+    settle();
+    CHECK(config_model.setTerminalFontSize(kTerminalFontSizeDefault));
+    CHECK(config_model.setPreviewsVisible(true));
+    settle();
+    CHECK(item(QStringLiteral("agentTabs"))->isVisible());
+    capture("strip");
+    CHECK(config_model.setPreviewsVisible(false));
+    CHECK(config_model.setDensity(QStringLiteral("minimal")));
+    CHECK(workspace.renameAgent(QStringLiteral("renderer"),
+                                QStringLiteral("Refactor the renderer's glyph cache and atlas")));
+    CHECK(workspace.renameAgent(QStringLiteral("agent"),
+                                QStringLiteral("Review the adapter contract before continuing")));
+    CHECK(workspace.renameCategory(research, QStringLiteral("Research and long-range planning")));
+    settle();
+    // Long names elide inside the sidebar.
+    auto* long_row = item(QStringLiteral("sidebarAgent_renderer"));
+    CHECK(scene_rect(*rail).contains(scene_rect(*long_row)));
+    capture("narrow-long");
+    CHECK(config_model.setDensity(QStringLiteral("comfortable")));
+    pump(40);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;
 }
@@ -2858,6 +3199,242 @@ int run_restored_suggestion_tests() {
     return EXIT_SUCCESS;
 }
 
+// A made-up conversation for the window captures: a prompt and a reply with
+// inline code, a list and a code block.
+const char* const kSettingsThread[] = {
+    R"({"type":"user","uuid":"p1","timestamp":"2026-11-11T16:00:00.000Z","message":{"content":"Why is the warm switch slow?"}})",
+    R"({"type":"assistant","uuid":"a1","timestamp":"2026-11-11T16:00:20.000Z","message":{"content":[{"type":"text","text":"Each switch measured the whole screen again. Two changes fix it:\n\n- keep the last `layout()` result per agent\n- skip glyph shaping for rows that did not change\n\n```cpp\nif (auto hit = cache.find(id); hit != cache.end())\n    return hit->second;\n```\n\nThe warm switch drops from 18 ms to 4 ms."}]}})",
+    R"({"type":"system","subtype":"turn_duration","durationMs":20000})",
+};
+
+// Light mode: the sun and moon beside the visual view and the Commands entry
+// switch the window and the thread together, terminals untouched.
+void check_appearance_toggle(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                             lapis::desktop::Config& config_model, const QTemporaryDir& directory,
+                             const QString& captures) {
+    using namespace lapis::desktop;
+    auto* toggle = find_visual(window.contentItem(), QStringLiteral("appearanceToggle"));
+    CHECK(toggle != nullptr && toggle->isVisible());
+    const auto terminal_background = [&window] {
+        return qobject_cast<TerminalSurface*>(
+                   find_visual(window.contentItem(), QStringLiteral("liveTerminal")))
+            ->property("backgroundColor")
+            .value<QColor>();
+    };
+    const QColor terminal_before = terminal_background();
+    CHECK(config_model.appearance() == QStringLiteral("dark") &&
+          config_model.themeName() == QStringLiteral("oled"));
+    click_visual(window, *toggle);
+    pump(50);
+    CHECK(config_model.appearance() == QStringLiteral("light"));
+    CHECK(config_model.themeName() == QStringLiteral("daylight"));
+    CHECK(window.property("backgroundColor").value<QColor>() == QColor(QStringLiteral("#f4f5f7")));
+    CHECK(terminal_background() == terminal_before);
+    auto* view = find_visual(window.contentItem(), QStringLiteral("visualView"));
+    CHECK(view != nullptr);
+    CHECK(view->property("themeName").toString() == QStringLiteral("claude-light"));
+    CHECK(view->property("lightPage").toBool());
+
+    // The Commands entry names the way it switches.
+    CHECK(QMetaObject::invokeMethod(&window, "openCommandsDialog"));
+    auto* commands = window.findChild<QObject*>(QStringLiteral("commandsDialog"));
+    CHECK(commands != nullptr);
+    wait_popup(*commands, true);
+    QString label;
+    for (const auto& value : commands->property("commands").toList())
+        if (value.toMap().value(QStringLiteral("id")).toString() ==
+            QStringLiteral("toggleAppearance"))
+            label = value.toMap().value(QStringLiteral("label")).toString();
+    CHECK(label == QStringLiteral("Switch to dark mode"));
+    CHECK(QMetaObject::invokeMethod(commands, "close"));
+    wait_popup(*commands, false);
+
+    // The whole window in light mode with a thread on the stage.
+    if (!captures.isEmpty()) {
+        const auto path = directory.filePath(QStringLiteral("thread.jsonl"));
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly));
+        for (const char* line : kSettingsThread)
+            file.write(QByteArray(line) + '\n');
+        file.close();
+        auto* model = qobject_cast<TranscriptModel*>(workspace.transcript());
+        CHECK(model != nullptr);
+        model->setPath(path);
+        model->loadNow();
+        view->setProperty("visible", true);
+        pump(400);
+        CHECK(
+            window.grabWindow().save(QDir(captures).filePath(QStringLiteral("window-light.png"))));
+        view->setProperty("visible", false);
+        model->setPath(QString());
+    }
+    CHECK(QMetaObject::invokeMethod(&window, "runCommand",
+                                    Q_ARG(QVariant, QStringLiteral("toggleAppearance"))));
+    pump(50);
+    CHECK(config_model.appearance() == QStringLiteral("dark") &&
+          config_model.themeName() == QStringLiteral("oled"));
+    CHECK(view->property("themeName").toString() == QStringLiteral("terminal"));
+}
+
+// The Settings window: sections by click and by arrow, search across
+// sections (keys included), Reset on a row and for a section, the light and
+// dark switch with its preview, and Esc. Captures go to `captures`.
+void check_settings_window(QQuickWindow& window, lapis::desktop::AppWindow& preview,
+                           lapis::desktop::Config& config_model, const QString& captures) {
+    using namespace lapis::desktop;
+    auto* dialog = window.findChild<QObject*>(QStringLiteral("settingsDialog"));
+    CHECK(dialog != nullptr);
+    const auto save = [&](const char* name) {
+        if (!captures.isEmpty())
+            CHECK(window.grabWindow().save(QDir(captures).filePath(QString::fromLatin1(name))));
+    };
+    const auto item = [&window](const QString& name) {
+        return find_visual(window.contentItem(), name);
+    };
+    const auto shown = [&item](const QString& name) {
+        auto* found = item(name);
+        return found != nullptr && found->isVisible();
+    };
+    const auto search = [&](const QString& text) {
+        item(QStringLiteral("settingsSearch"))->setProperty("text", text);
+        pump(30);
+    };
+    CHECK(preview.openSettings());
+    wait_popup(*dialog, true);
+    CHECK(dialog->property("title").toString() == QStringLiteral("Settings"));
+    CHECK(item(QStringLiteral("settingsSearch"))->hasActiveFocus());
+    CHECK(dialog->property("currentSection").toString() == QStringLiteral("general"));
+    CHECK(shown(QStringLiteral("switch-keepAwake")) && !shown(QStringLiteral("fontLarger")));
+    CHECK(!item(QStringLiteral("resetSection"))->isEnabled()); // nothing changed yet
+    pump(100);
+    save("settings-general.png");
+
+    // Down from the search reaches the sections; arrows walk them.
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &down);
+    pump(20);
+    CHECK(item(QStringLiteral("settingsSections"))->hasActiveFocus());
+    QCoreApplication::sendEvent(&window, &down);
+    pump(20);
+    CHECK(dialog->property("currentSection").toString() == QStringLiteral("appearance"));
+    CHECK(shown(QStringLiteral("appearance-light")) && !shown(QStringLiteral("switch-keepAwake")));
+    QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &up);
+    pump(20);
+    CHECK(dialog->property("currentSection").toString() == QStringLiteral("general"));
+
+    // Search: rows of every section by label, help or keywords, under
+    // their section's name; keys too; and a line when nothing matches.
+    search(QStringLiteral("font"));
+    CHECK(shown(QStringLiteral("fontLarger")) && shown(QStringLiteral("visual-font-system")) &&
+          shown(QStringLiteral("visual-codeFont-system")));
+    CHECK(!shown(QStringLiteral("switch-keepAwake")));
+    pump(100);
+    save("settings-search.png");
+    search(QStringLiteral("sleep"));
+    CHECK(shown(QStringLiteral("switch-keepAwake")) && !shown(QStringLiteral("fontLarger")));
+    search(QStringLiteral("new agent"));
+    bool key_found = false;
+    for (const auto& value : dialog->property("shortcutRows").toList()) {
+        const auto label = value.toMap().value(QStringLiteral("label")).toString();
+        if (label == QStringLiteral("New agent"))
+            key_found = shown(QStringLiteral("key-") + label);
+    }
+    CHECK(key_found);
+    search(QStringLiteral("no such setting here"));
+    CHECK(shown(QStringLiteral("settingsNoMatch")));
+    search(QString());
+    CHECK(!shown(QStringLiteral("settingsNoMatch")) && shown(QStringLiteral("switch-keepAwake")));
+
+    // A changed row offers Reset; Reset puts the built-in value back.
+    CHECK(config_model.keepAwake() && !shown(QStringLiteral("reset-Keep this Mac awake")));
+    click_setting(window, QStringLiteral("switch-keepAwake"));
+    CHECK(!config_model.keepAwake());
+    CHECK(shown(QStringLiteral("reset-Keep this Mac awake")));
+    click_setting(window, QStringLiteral("reset-Keep this Mac awake"));
+    CHECK(config_model.keepAwake() && !shown(QStringLiteral("reset-Keep this Mac awake")));
+    // Reset Terminal puts every changed row of the section back.
+    click_setting(window, QStringLiteral("fontLarger"));
+    click_setting(window, QStringLiteral("switch-scrollToBottom"));
+    CHECK(config_model.terminalFontSize() == kTerminalFontSizeDefault + 1 &&
+          !config_model.scrollToBottomOnTyping());
+    CHECK(dialog->property("currentSection").toString() == QStringLiteral("terminal"));
+    click_setting(window, QStringLiteral("resetSection"));
+    CHECK(config_model.terminalFontSize() == kTerminalFontSizeDefault &&
+          config_model.scrollToBottomOnTyping());
+
+    // Appearance leads with light, dark and Match macOS, over a preview.
+    CHECK(QMetaObject::invokeMethod(dialog, "showSection",
+                                    Q_ARG(QVariant, QStringLiteral("appearance"))));
+    pump(100);
+    auto* sample = item(QStringLiteral("settingsPreview"));
+    CHECK(sample != nullptr && sample->isVisible());
+    const auto page = [sample] {
+        return QQmlProperty::read(sample, QStringLiteral("color")).value<QColor>();
+    };
+    CHECK(page().lightnessF() < 0.5);
+    save("settings-appearance-dark.png");
+    click_setting(window, QStringLiteral("appearance-light"));
+    CHECK(config_model.appearance() == QStringLiteral("light") &&
+          config_model.themeName() == QStringLiteral("daylight"));
+    CHECK(page().lightnessF() > 0.5);
+    CHECK(dialog->property("paletteWindow").value<QColor>().lightnessF() > 0.5);
+    pump(100);
+    save("settings-appearance-light.png");
+    click_setting(window, QStringLiteral("appearance-system"));
+    CHECK(config_model.appearance() == QStringLiteral("system") && !config_model.lightShown());
+    config_model.setSystemDark(false);
+    pump(30);
+    CHECK(page().lightnessF() > 0.5);
+    config_model.setSystemDark(true);
+    pump(30);
+    CHECK(page().lightnessF() < 0.5);
+    click_setting(window, QStringLiteral("appearance-dark"));
+    CHECK(config_model.appearance() == QStringLiteral("dark") &&
+          config_model.themeName() == QStringLiteral("oled"));
+
+    // New agents: a CLI's updates turn off and on.
+    CHECK(QMetaObject::invokeMethod(dialog, "showSection",
+                                    Q_ARG(QVariant, QStringLiteral("agents"))));
+    pump(30);
+    click_setting(window, QStringLiteral("agent-mode-edits"));
+    CHECK(config_model.agentDefaults().mode == QStringLiteral("edits"));
+    click_setting(window, QStringLiteral("reset-Approval mode"));
+    CHECK(config_model.agentDefaults().mode.isEmpty());
+
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &escape);
+    wait_popup(*dialog, false);
+}
+
+// Light mode and the Settings window, on a config of its own.
+int run_settings_window_tests() {
+    using namespace lapis::desktop;
+    Workspace workspace(WorkspaceMode::fixture);
+    QTemporaryDir directory;
+    CHECK(directory.isValid());
+    write_config(directory, QStringLiteral(R"({"theme":"oled"})"));
+    Config config_model;
+    config_model.setSourcePathForTesting(directory.filePath(QStringLiteral("lapis.json")));
+    config_model.setSystemDark(true);
+    CHECK(config_model.load());
+    AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                                  .compact = true,
+                                  .screen = QString(),
+                                  .config = &config_model});
+    CHECK(preview.load());
+    auto* window = preview.window();
+    window->resize(1400, 900);
+    window->show();
+    wait_active(*window);
+    pump(80);
+    const auto captures = qEnvironmentVariable("LAPIS_SETTINGS_CAPTURE_DIR");
+    check_appearance_toggle(*window, workspace, config_model, directory, captures);
+    check_settings_window(*window, preview, config_model, captures);
+    CHECK(preview.diagnostics().isEmpty());
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char** argv) {
     bool background = false;
     bool shortcuts_only = false;
@@ -2919,8 +3496,10 @@ int main(int argc, char** argv) {
                    run_preview_frame_sync_tests() != EXIT_SUCCESS ||
                    run_attention_dialog_tests() != EXIT_SUCCESS ||
                    run_attention_ui_tests() != EXIT_SUCCESS ||
-                   run_strip_ui_tests() != EXIT_SUCCESS || run_history_ui_tests() != EXIT_SUCCESS ||
-                   run_restored_suggestion_tests() != EXIT_SUCCESS)
+                   run_strip_ui_tests() != EXIT_SUCCESS || run_sidebar_ui_tests() != EXIT_SUCCESS ||
+                   run_history_ui_tests() != EXIT_SUCCESS ||
+                   run_restored_suggestion_tests() != EXIT_SUCCESS ||
+                   run_settings_window_tests() != EXIT_SUCCESS)
             return EXIT_FAILURE;
         std::cout << "ui_preview_test: PASS"
                   << (background ? " (offscreen/software; not native input or GPU acceptance)" : "")

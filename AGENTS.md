@@ -4,9 +4,12 @@
 
 Build lapis into a portable desktop workspace for supervising many live CLI
 agents. Categories own ordered agent tabs and remember their selections. One
-GPU-accelerated terminal stage shows the selected agent. A strip of throttled
-live previews under the stage is the category's navigation; previews never take
-input or resize a terminal. There is no tab row and no tiling: the stage always
+GPU-accelerated terminal stage shows the selected agent. The sidebar is the
+navigation: every category as a colour-coded group with its agents listed under
+it, walked in order across categories by the next and previous agent keys. An
+optional strip of throttled live previews under the stage (off by default) shows
+the category's agents; previews never take input or resize a terminal. There is
+no tab row and no tiling: the stage always
 shows exactly one agent, the category's selected one. Normal use has no sample cards; the only plain shells are the side terminal's
 (Command-`), one per machine for a quick command and never an agent. Codex is
 the first agent integration.

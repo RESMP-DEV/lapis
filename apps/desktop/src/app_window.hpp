@@ -2,6 +2,7 @@
 #define LAPIS_DESKTOP_APP_WINDOW_HPP
 
 #include "config.hpp"
+#include "media_actions.hpp"
 #include "workspace.hpp"
 #include <QKeySequence>
 #include <QList>
@@ -56,7 +57,7 @@ class AppWindow final : public QObject {
     Q_PROPERTY(bool systemReducedMotion READ systemReducedMotion NOTIFY reducedMotionChanged)
     Q_PROPERTY(QString diagnostics READ diagnostics NOTIFY diagnosticsChanged)
     Q_PROPERTY(QStringList settingsShortcuts READ settingsShortcuts NOTIFY settingsShortcutsChanged)
-    // Installed fixed-pitch families offered by Appearance, sorted by name.
+    // Installed fixed-pitch families offered by Settings, sorted by name.
     Q_PROPERTY(QStringList monospaceFamilies READ monospaceFamilies CONSTANT)
   public:
     AppWindow(Workspace& workspace, AppWindowOptions options, QObject* parent = nullptr);
@@ -102,6 +103,8 @@ class AppWindow final : public QObject {
     AppWindowOptions options_;
     // Backs options_.config when the caller passed none; outlives engine_.
     std::unique_ptr<Config> defaults_config_;
+    // What the visual view does with a file it shows; QML's `mediaActions`.
+    MediaActions media_actions_;
     std::unique_ptr<QQmlApplicationEngine> engine_;
     QPointer<QQuickWindow> window_;
     QString diagnostics_;

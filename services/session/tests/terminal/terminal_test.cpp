@@ -315,6 +315,22 @@ void input_modes() {
     require(!terminal.synchronizing(), "an ended update is reported");
 }
 
+// Return as each CLI's keyboard mode wants it: Claude Code and agy push
+// kitty flags 5, Codex 7, all of which keep a plain Return as "\r"; only
+// "report all keys as escape codes" (8) makes it "\x1b[13u".
+void enter_in_keyboard_modes() {
+    using lapis::session::TerminalKey;
+    Terminal terminal({12, 4});
+    const auto enter = [&terminal] { return terminal.encode_key(TerminalKey::enter); };
+    require(enter() == "\r", "legacy Return");
+    for (const char* push : {"\x1b[>1u", "\x1b[>5u", "\x1b[>7u", "\x1b[>4;2m"}) {
+        terminal.feed(push);
+        require(enter() == "\r", std::string("Return under ") + (push + 1));
+    }
+    terminal.feed("\x1b[>15u");
+    require(enter() == "\x1b[13u", "Return when every key is an escape code");
+}
+
 // The wheel reaches a full-screen program as it asked: mouse wheel events in
 // its format (SGR here, as Claude Code's full-screen mode asks), arrow keys
 // on the alternate screen without mouse reporting, and nothing on the primary
@@ -639,6 +655,7 @@ constexpr std::array cases{
     Case{"alternate_screen", alternate_screen},
     Case{"resize_and_wrap_spacer", resize_and_wrap_spacer},
     Case{"input_modes", input_modes},
+    Case{"enter_in_keyboard_modes", enter_in_keyboard_modes},
     Case{"wheel_input", wheel_input},
     Case{"snapshot_durability", snapshots_survive_changes},
     Case{"cursor_visibility_and_shape", cursor_visibility_and_shape},
