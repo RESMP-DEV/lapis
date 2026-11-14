@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-14T02:15:20Z",
+  "recorded_at": "2026-11-14T02:36:25Z",
   "agent": "Codex",
   "base_revision": "a44c6cb4576951eda03ddf8e7ae76107c8c5ff86",
   "integration_revision": "ee73f8547c809d465f7b7dfedae2f63d2517a2d9",
   "merge_revision": "a02b86b3cc77939923f90ffe3df606e4efae60bd",
-  "source_revision": "e57899da9b2001b3d99048ea9aac165a9e32f27b",
+  "source_revision": "6dde157488d8aa0409112a3e778093054c49bcf4",
   "changed_source_manifest": {
     "algorithm": "sha256(git diff --binary base_revision..source_revision -- ':(exclude)evidence/*')",
-    "digest": "494e46843a0eef47b30782e3050c8b79e1403f2428c74850a55f2321e312d4fc",
+    "digest": "b39f8d5950ba643475d34472cefb19dc3ac7a3481f83cf5b841c6378995a4b67",
     "changed_paths": 80
   },
   "scope": "Merge the visual thread-loading, visual-view, sidebar/status, media/settings, and Factory stack into current main while preserving main's pooled preview decoding.",
@@ -24,16 +24,17 @@
     "The review sweep also repaired Factory keyboard/accessibility activation and receipt eliding, the orchestrator terminal override, narrow-window agent selection and sidebar range order, key-granular config saves, case-insensitive harness update keys, Linux descriptor enumeration, safe-close staleness and landed expiry refresh, Factory state version enforcement, Codex scan/search windows, send/capture timing and format handling, and the documented Tab-versus-chime lifetime.",
     "Cold transcript switches keep synchronous parsing at the 1 MiB tail; warm deltas above 1 MiB show the kept state and parse on the low-priority catch-up thread before adoption.",
     "The public site no longer advertises the removed Dock badge; it points to the persistent Requests list instead.",
-    "The second review wave repaired Factory selection rollback, agent-scoped send checks, final task-detail loads, running-state config adoption, signed blank diff lines, malformed \\not handling, active child-reader retention, reset-safe reader replacement, new request timestamps, capture fixture paths, benchmark loading checks, and attachment-only prompt acknowledgement."
+    "The second review wave repaired Factory selection rollback, agent-scoped send checks, final task-detail loads, running-state config adoption, signed blank diff lines, malformed \\not handling, active child-reader retention, reset-safe reader replacement, new request timestamps, capture fixture paths, benchmark loading checks, and attachment-only prompt acknowledgement.",
+    "Append-only warm catch-up adoption now preserves already-open work rows and the saved scroll place, and does not duplicate queued sent prompts; the warm-growth regression covers all three."
   ],
   "validation": [
     {
       "command": "python3 scripts/lapis.py quality",
-      "result": "passed on e57899d content; receipt build/reports/quality/receipt.json"
+      "result": "passed on 6dde157 content; receipt build/reports/quality/receipt.json"
     },
     {
       "command": "python3 scripts/lapis.py build",
-      "result": "passed on e57899d content: configure, build, 49/49 enabled CTest, clang-format, 116/116 clang-tidy jobs, and Cppcheck"
+      "result": "passed on 6dde157 content: configure, build, 49/49 enabled CTest, clang-format, 116/116 clang-tidy jobs, and Cppcheck"
     },
     {
       "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -LE screen",
@@ -45,7 +46,7 @@
     },
     {
       "command": "python3 scripts/lapis.py ui-review --json",
-      "result": "passed on e57899d content; receipt build/reports/ui-review/20261114T021304Z-p1o7k3ly/receipt.json"
+      "result": "passed on 6dde157 content; one preceding run exposed a transient file-watcher diagnostic ordering failure, the focused shortcut case passed immediately, and the full ui-review rerun passed; receipt build/reports/ui-review/20261114T023418Z-zj7hm1be/receipt.json"
     },
     {
       "command": "QT_QPA_PLATFORM=offscreen ctest --test-dir build/desktop --output-on-failure -R '^(transcript|transcript-switch|transcript-clis)$'",
@@ -81,7 +82,7 @@
     },
     {
       "command": "LAPIS_SIGN_IDENTITY=- python3 scripts/package_macos.py app && python3 scripts/package_macos.py verify",
-      "result": "ad-hoc signed arm64 bundle, strict signature/linkage checks, MoltenVK GPU enumeration, and launchd headless host passed on e57899d content"
+      "result": "ad-hoc signed arm64 bundle, strict signature/linkage checks, MoltenVK GPU enumeration, and launchd headless host passed on 6dde157 content"
     }
   ],
   "static_analysis_state": {
@@ -95,7 +96,7 @@
       "bugprone-easily-swappable-parameters": 24,
       "other": 19
     },
-    "cleanup_revision": "e57899da9b2001b3d99048ea9aac165a9e32f27b",
+    "cleanup_revision": "6dde157488d8aa0409112a3e778093054c49bcf4",
     "remaining_unique_findings": 0,
     "desktop_clang_tidy_jobs_passed": 116,
     "note": "Concrete optional-access, move, arithmetic, shift, enum, loop, branch, and exception-escape defects were repaired. Cohesive parser/test complexity and fixed positional contracts are suppressed only at the offending declarations with local reasons; thresholds and global baselines were not changed."
