@@ -338,7 +338,7 @@ class Reader {
     // Takes over the prompts `from`, an earlier reading of the same
     // conversation (a tail this whole reading replaces), still waits for,
     // less those this reading has recorded since.
-    void carry_sent(const Reader& from, qsizetype first_sent = 0);
+    void carry_sent(const Reader& from);
 
   protected:
     Reader(const Reader&) = default; // for clone()
@@ -366,6 +366,7 @@ class Reader {
         int at{};     // items read when it was sent
         bool queued{};
         QString written;
+        quint64 ticket{};
     };
     std::vector<Sent> sent_;
 };
@@ -896,7 +897,6 @@ class TranscriptModel final : public QAbstractListModel {
     Child* child(const QString& path, transcript::Format format);
     std::vector<Child> children_; // most recent first, a few kept
     QStringList active_children_; // running subagent files, never evicted
-    qsizetype warm_sent_base_{};  // sent entries already held by a warm clone
     // A Claude Code subagent's tool calls so far, counted from its file's
     // bytes as it grows (cheaper than reading it); -1 when it is missing.
     int counted_steps(const QString& path);
@@ -951,6 +951,7 @@ class TranscriptModel final : public QAbstractListModel {
         QVariantMap view;
         qint64 bytes{};  // the reader's footprint when kept
         quint64 shown{}; // when it was last shown (shown_clock_), 0 if never
+        bool tail{};
         bool catch_up_shown{};
     };
     // Most recently shown first; read ahead and never shown last.

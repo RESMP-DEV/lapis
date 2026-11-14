@@ -40,6 +40,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <algorithm>
+#include <atomic>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -599,9 +600,11 @@ std::unique_ptr<Reader> make_reader(Format format) {
 }
 
 void Reader::note_sent(const QString& text, bool queued) {
+    static std::atomic<quint64> next_ticket;
     const auto simple = text.simplified();
     if (!simple.isEmpty())
-        sent_.push_back({simple, static_cast<int>(items_.size()), queued, text.trimmed()});
+        sent_.push_back(
+            {simple, static_cast<int>(items_.size()), queued, text.trimmed(), ++next_ticket});
 }
 
 QStringList Reader::sent_as_written() const {
@@ -618,8 +621,8 @@ QStringList Reader::sent() const {
     return out;
 }
 
-void Reader::carry_sent(const Reader& from, qsizetype first_sent) {
-    if (first_sent < 0 || std::cmp_greater_equal(first_sent, from.sent_.size()))
+void Reader::carry_sent(const Reader& from) {
+    if (from.sent_.empty())
         return;
     // Where each was sent, found again by the record of the item before it
     // (the history above a tail moves every index); the end without one.
@@ -636,9 +639,13 @@ void Reader::carry_sent(const Reader& from, qsizetype first_sent) {
         return size;
     };
     int first_item = size;
-    const auto first = std::next(from.sent_.cbegin(), static_cast<std::ptrdiff_t>(first_sent));
-    for (auto entry = first; entry != from.sent_.cend(); ++entry) {
-        auto sent = *entry;
+    for (const auto& entry : from.sent_) {
+        auto sent = entry;
+        const auto already = std::any_of(sent_.cbegin(), sent_.cend(), [&sent](const Sent& have) {
+            return have.ticket != 0 && have.ticket == sent.ticket;
+        });
+        if (already)
+            continue;
         sent.at = place(sent.at);
         first_item = std::min(first_item, sent.at);
         sent_.push_back(std::move(sent));
@@ -3421,35 +3428,73 @@ void TranscriptModel::setPath(const QString& path) {
     // The view notes where it is (keepView) before the rows go.
     if (!path_.isEmpty())
         emit leaving();
-    const auto format = format_for(path);
-    if (!path_.isEmpty() && loading_) {
-        const auto leaving =
+    if (!path_.isEmpty() && !tail_ && !loading_) {
+        Parsed saved;
+        saved.path = path_;
+        saved.reader = reader_->clone();
+        saved.offset = offset_;
+        saved.pending = pending_;
+        saved.expanded = expanded_;
+        saved.view = view_;
+        saved.shown = ++shown_clock_;
+        keep(std::move(saved));
+    } else if (!path_.isEmpty()) {
+        // Keep the in-flight reading (and every prompt sent to it) for the
+        // delivery that is already running.
+        const auto in_flight =
             std::ranges::find_if(kept_, [this](const Parsed& kept) { return kept.path == path_; });
-        if (leaving != kept_.end())
-            leaving->catch_up_shown = false;
+        if (in_flight != kept_.end()) {
+            in_flight->reader->carry_sent(*reader_);
+            in_flight->expanded = expanded_;
+            in_flight->view = view_;
+            in_flight->tail = tail_;
+        } else {
+            Parsed saved;
+            saved.path = path_;
+            saved.reader = reader_->clone();
+            saved.offset = offset_;
+            saved.pending = pending_;
+            saved.expanded = expanded_;
+            saved.view = view_;
+            saved.shown = ++shown_clock_;
+            saved.tail = tail_;
+            saved.catch_up_shown = true;
+            keep(std::move(saved));
+        }
     }
-    // Keep what was read whole; a tail is dropped, and the whole reading
-    // still under way is kept when it arrives.
-    if (!path_.isEmpty() && !tail_ && !loading_)
-        keep({path_, reader_->clone(), offset_, pending_, expanded_, view_, 0, ++shown_clock_});
+    const auto format = format_for(path);
     expanded_.clear();
     view_.clear();
     tail_ = false;
     loading_ = false;
     offset_ = 0;
     pending_.clear();
-    warm_sent_base_ = 0;
-    const auto hit = std::ranges::find_if(kept_, [&path, format](const Parsed& kept) {
+    auto hit = std::ranges::find_if(kept_, [&path, format](const Parsed& kept) {
         return kept.path == path && kept.reader->format() == format;
     });
     bool warm = false;
     std::unique_ptr<transcript::Reader> next_reader;
     bool background_load = false;
+    bool schedule_catchup = false;
     if (path.isEmpty()) {
         next_reader = transcript::make_reader(format);
     } else if (hit != kept_.end()) {
+        std::rotate(kept_.begin(), hit, hit + 1);
+        hit = kept_.begin();
+        if (hit->tail) {
+            next_reader = hit->reader->clone();
+            offset_ = hit->offset;
+            pending_ = hit->pending;
+            expanded_ = hit->expanded;
+            view_ = hit->view;
+            tail_ = true;
+            loading_ = true;
+            hit->catch_up_shown = true;
+            background_load = !loads_.contains(path);
+            warm = true;
+        }
         const qint64 grown = QFileInfo(path).size() - hit->offset;
-        if (grown > tail_bytes) {
+        if (!hit->tail && grown > tail_bytes) {
             // A large delta is caught up on the low-priority thread. The kept
             // entry stays for that work while this clone shows its last state.
             next_reader = hit->reader->clone();
@@ -3458,10 +3503,10 @@ void TranscriptModel::setPath(const QString& path) {
             expanded_ = hit->expanded;
             view_ = hit->view;
             loading_ = true;
-            warm_sent_base_ = static_cast<qsizetype>(next_reader->sent().size());
             hit->catch_up_shown = true;
+            schedule_catchup = true;
             warm = true;
-        } else {
+        } else if (!hit->tail) {
             next_reader = std::move(hit->reader);
             offset_ = hit->offset;
             pending_ = std::move(hit->pending);
@@ -3522,6 +3567,8 @@ void TranscriptModel::setPath(const QString& path) {
         watcher->addPath(path);
     if (!catch_up_timer_->isActive() && !kept_.empty())
         catch_up_timer_->start();
+    if (schedule_catchup)
+        catchUp();
 }
 
 void TranscriptModel::keepView(int row, double offset, bool following) {
@@ -3565,6 +3612,10 @@ void TranscriptModel::received(const QString& path, transcript::Read read, bool 
     const bool tail = read.tail;
     if (!tail)
         loads_.remove(path);
+    const auto prior =
+        std::ranges::find_if(kept_, [&path](const Parsed& kept) { return kept.path == path; });
+    if (prior != kept_.end() && !tail)
+        read.reader->carry_sent(*prior->reader);
     if (path == path_) {
         // A reading of the shown conversation replaces a shorter one.
         if (tail_ && read.reader->format() == reader_->format() &&
@@ -3588,10 +3639,7 @@ void TranscriptModel::received(const QString& path, transcript::Read read, bool 
 
 void TranscriptModel::adopt(transcript::Read read, bool appended) {
     // A prompt sent while only the tail showed stays shown until recorded.
-    if (appended)
-        read.reader->carry_sent(*reader_, warm_sent_base_);
-    else
-        read.reader->carry_sent(*reader_);
+    read.reader->carry_sent(*reader_);
     const auto& old_items = reader_->items();
     const auto& new_items = read.reader->items();
     // Opened work stays open where its items line up at the end.
@@ -3625,10 +3673,9 @@ void TranscriptModel::adopt(transcript::Read read, bool appended) {
     offset_ = read.offset;
     pending_ = std::move(read.pending);
     tail_ = read.tail;
-    if (appended)
-        warm_sent_base_ = 0;
     live_tasks_.clear();
     endResetModel();
+    std::erase_if(kept_, [this](const Parsed& kept) { return kept.path == path_; });
     emit reloaded();
     emit countChanged();
     noteStatus();
@@ -3761,22 +3808,34 @@ void TranscriptModel::caughtUp(const QString& path, qint64 base, transcript::Rea
     const auto entry =
         std::ranges::find_if(kept_, [&path](const Parsed& kept) { return kept.path == path; });
     if (entry != kept_.end() && entry->offset == base) {
+        read.reader->carry_sent(*entry->reader);
         entry->catch_up_shown = false;
+        entry->tail = false;
         entry->reader = std::move(read.reader);
         entry->offset = read.offset;
         entry->pending = std::move(read.pending);
         entry->bytes = entry->reader->footprint();
-        if (path == path_ && !tail_ && entry->offset > offset_) {
+        if (path == path_ && !tail_) {
+            const bool behind = entry->offset > offset_;
             transcript::Read caught{std::move(entry->reader), entry->offset,
                                     std::move(entry->pending), false};
             kept_.erase(entry);
             evict();
-            adopt(std::move(caught), true);
+            if (behind) {
+                adopt(std::move(caught), true);
+            } else if (loading_) {
+                loading_ = false;
+                emit loadingChanged();
+            }
         } else {
             evict();
         }
     } else if (path == path_ && tail_) {
         adopt(std::move(read));
+    }
+    if (path == path_ && !tail_ && loading_) {
+        loading_ = false;
+        emit loadingChanged();
     }
     warmNext();
 }

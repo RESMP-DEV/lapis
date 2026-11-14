@@ -1087,12 +1087,13 @@ ApplicationWindow {
     function inspectFactoryAgent(id) {
         if (!factoryMode || id.length === 0 || id === factoryHomeId) {
             showFactoryHome()
-            return
+            return true
         }
         if (!workspace.selectAgent(id))
-            return
+            return false
         factoryInspectAgentId = id
         visualFocus()
+        return true
     }
     // A worker's terminal rather than its thread, to answer it there.
     function openFactoryTerminal(id) {
@@ -1101,7 +1102,8 @@ ApplicationWindow {
             toggleVisual()
     }
     function factoryDetails(id) {
-        inspectFactoryAgent(id)
+        if (!inspectFactoryAgent(id))
+            return
         if (workspace.focusedAgent !== null && workspace.focusedAgent.attentionCount > 0)
             openAttentionDialog()
     }

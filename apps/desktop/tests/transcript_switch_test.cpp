@@ -390,6 +390,29 @@ void large_growth_moves_off_the_gui_thread() {
             "append-only adoption keeps the saved place");
 }
 
+// The same protection applies when the person leaves before the background
+// catch-up lands: the prompt sent during loading stays with the conversation.
+void large_growth_keeps_a_prompt_sent_before_leaving() {
+    QTemporaryDir directory;
+    const auto a =
+        write(directory, QStringLiteral("leave-a.jsonl"), claude_conversation("leave-a", 2));
+    const auto b =
+        write(directory, QStringLiteral("leave-b.jsonl"), claude_conversation("leave-b", 2));
+    TranscriptModel model;
+    model.setPath(a);
+    model.setPath(b);
+    append(a, claude_conversation("leave-grown", 30, 50'000));
+    model.setPath(a);
+    require(model.loading(), "the large delta is deferred");
+    model.noteSent(QStringLiteral("still waiting"), true);
+    model.setPath(b);
+    wait_for([&] { return !model.readingAhead(); });
+    model.setPath(a);
+    wait_for([&] { return !model.loading(); });
+    require(model.pendingPrompts() == QStringList{QStringLiteral("still waiting")},
+            "leaving during catch-up keeps the prompt with its conversation");
+}
+
 // A model destroyed while its threads read: the shown conversation's
 // history (startLoad, on the global pool), a read-ahead and a kept one's
 // catch-up (its own low-priority thread), and readings already queued back
@@ -614,6 +637,7 @@ int run(int argc, char** argv) {
     cold_conversation_shows_its_end();
     kept_within_budget();
     large_growth_moves_off_the_gui_thread();
+    large_growth_keeps_a_prompt_sent_before_leaving();
     kept_ones_follow_their_files();
     destroyed_while_reading();
     view_comes_back();
