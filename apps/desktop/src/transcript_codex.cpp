@@ -232,6 +232,7 @@ void CodexReader::item(const QJsonObject& item, qint64 started_ms, qint64 comple
             // Codex 0.157 reads a message sent mid-turn at its next step.
             entry.steered = !starts;
             taken(entry);
+            mark_peer(entry);
             push(std::move(entry));
         };
         if (!text.isEmpty())

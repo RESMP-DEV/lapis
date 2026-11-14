@@ -100,6 +100,14 @@ FocusScope {
         value: root.working
         when: root.model !== null
     }
+    // A request waiting in the terminal keeps the last turn whole, even one
+    // another agent's message started (which otherwise folds to a row).
+    Binding {
+        target: root.model
+        property: "requestWaiting"
+        value: root.waiting
+        when: root.model !== null
+    }
     readonly property var liveSteps: model ? model.liveSteps : null
     readonly property bool liveShown: liveSteps !== null && liveSteps.active
     // A slash command the bar sent that the CLI has not recorded yet. Some
@@ -806,6 +814,20 @@ FocusScope {
              : s < 86400 ? Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m"
              : Math.floor(s / 86400) + "d " + Math.floor((s % 86400) / 3600) + "h"
     }
+    // Who sent another agent's message: its title, or the machine it ran
+    // on; with its short id and category for the line over the message.
+    function peerName(peer) {
+        return !peer ? "" : peer.title ? peer.title
+             : peer.host ? qsTr("an agent on %1").arg(peer.host) : qsTr("a peer agent")
+    }
+    function peerCard(peer) {
+        return [peerName(peer), peer ? peer.id : "", peer ? peer.category : ""]
+            .filter(s => s && s.length > 0).join(" · ")
+    }
+    // A time of day ("9:21 pm") for a row, or empty for 0.
+    function clockLabel(ms) {
+        return ms > 0 ? Qt.formatTime(new Date(ms), "h:mm ap") : ""
+    }
     // The quiet line under a prompt: queued, or read mid-turn (steered).
     function promptMark(entry) {
         if (!entry)
@@ -1101,14 +1123,43 @@ FocusScope {
         function onPathChanged() { root.placeView() }
         function onReloaded() { root.placeView() }
     }
+    // Following the end keeps the reply to the person's last prompt in view:
+    // when only other agents' folded exchanges (peer rows) come after it
+    // and they would push its end above the view, its end sits at the
+    // view's bottom instead (anchored), the peer rows a short scroll below.
+    // A turn of the person's own follows the end as always. Scrolling while
+    // anchored, or the ↓ button, goes to the real end until the person's
+    // next turn or another thread.
+    property bool landOnPerson: true
+    property bool anchored: false
+    function followEnd() {
+        list.positionViewAtEnd()
+        anchored = false
+        if (!model)
+            return
+        const at = model.personAnchor()
+        if (at < 0) {
+            landOnPerson = true // the person's turn is the newest again
+            return
+        }
+        // A prompt the bar sent waits at the end until the CLI records it.
+        if (!landOnPerson || model.pendingEntries.length > 0 || sentAt > 0)
+            return
+        const item = list.itemAtIndex(at)
+        if (item && item.y + item.height > list.contentY + 1)
+            return
+        list.positionViewAtIndex(at, ListView.End)
+        anchored = true
+    }
     function placeView() {
         const view = model.view()
         following = view.following
+        landOnPerson = true
         // Placed while it has no height, then given its height back: the
         // rows the screen shows are made, and none it does not.
         const place = () => {
             if (following) {
-                list.positionViewAtEnd()
+                root.followEnd()
             } else {
                 list.positionViewAtIndex(view.row, ListView.Beginning)
                 list.contentY += view.offset
@@ -1119,7 +1170,7 @@ FocusScope {
         place()
         listCache.restart()
         if (following)
-            Qt.callLater(list.positionViewAtEnd) // once rows have their heights
+            Qt.callLater(root.followEnd) // once rows have their heights
     }
     Timer { id: listCache; interval: 250; onTriggered: list.cacheBuffer = 2000 }
 
@@ -1137,8 +1188,8 @@ FocusScope {
         cacheBuffer: 2000
         header: Item { height: 24 }
         footer: liveFooter
-        onCountChanged: if (root.following) Qt.callLater(positionViewAtEnd)
-        onContentHeightChanged: if (root.following) Qt.callLater(positionViewAtEnd)
+        onCountChanged: if (root.following) Qt.callLater(root.followEnd)
+        onContentHeightChanged: if (root.following) Qt.callLater(root.followEnd)
         // Always drawn while the thread is taller than the view, so there is
         // something to see and grab; it brightens under the pointer.
         ScrollBar.vertical: ScrollBar {
@@ -1149,7 +1200,12 @@ FocusScope {
             padding: 3
             minimumSize: 0.06
             // Following would pull the view back to the end mid-drag.
-            onPressedChanged: root.following = !pressed && list.atYEnd
+            onPressedChanged: {
+                if (pressed && root.anchored)
+                    root.landOnPerson = false
+                root.anchored = false
+                root.following = !pressed && list.atYEnd
+            }
             contentItem: Rectangle {
                 objectName: "visualScrollThumb"
                 implicitWidth: 8
@@ -1177,6 +1233,7 @@ FocusScope {
             DelegateChoice { roleValue: "divider"; delegate: Entry { block: dividerBlock } }
             DelegateChoice { roleValue: "work"; delegate: Entry { block: workBlock } }
             DelegateChoice { roleValue: "live"; delegate: Entry { block: liveBlock } }
+            DelegateChoice { roleValue: "peer"; delegate: Entry { block: peerBlock } }
             DelegateChoice { delegate: Entry { block: otherBlock } }
         }
     }
@@ -1209,6 +1266,7 @@ FocusScope {
         required property int item
         required property var task
         required property bool opened
+        required property var peer
         property Component block
 
         // A turn's steps sit one under another, each line carrying its own
@@ -1218,7 +1276,9 @@ FocusScope {
                                       : stepRow ? 0
                                       : afterStep ? 2
                                       : inWork ? Math.round(root.fontSize * 0.5)
-                                      : kind === "prompt" ? (steered ? root.fontSize : root.fontSize * 2)
+                                      // Another agent's exchanges stack close.
+                                      : kind === "peer" ? Math.round(root.fontSize * 0.6)
+                                      : kind === "prompt" ? (steered || peer ? root.fontSize : root.fontSize * 2)
                                       : kind === "work" || kind === "live" ? Math.round(root.fontSize * 0.9)
                                       : kind === "turn" ? 10 : root.fontSize
         readonly property int column: Math.min(root.columnWidth, row.width - 56)
@@ -1254,6 +1314,10 @@ FocusScope {
             return
         const top = list.originY
         const bottom = Math.max(top, list.originY + list.contentHeight - list.height)
+        // Scrolled from the person's reply: the end is where it goes.
+        if (root.anchored)
+            root.landOnPerson = false
+        root.anchored = false
         list.contentY = Math.max(top, Math.min(bottom, list.contentY - step))
         root.following = list.contentY >= bottom - 2
     }
@@ -1942,15 +2006,30 @@ FocusScope {
         Column {
             id: prompt
             readonly property var entry: parent ? parent.entry : null
+            // Another agent's message (lapis-peers), not the person's words:
+            // its sender over a quieter, outlined bubble.
+            readonly property var peer: entry && entry.peer ? entry.peer : null
             spacing: 4
             HoverHandler { id: promptHover }
+            Text {
+                objectName: "peerMessageFrom"
+                anchors.right: parent.right
+                anchors.rightMargin: 6
+                visible: prompt.peer !== null
+                text: prompt.peer ? qsTr("From %1").arg(root.peerCard(prompt.peer)) : ""
+                color: root.mutedTextColor
+                font.family: root.sansFamily
+                font.pixelSize: root.codeSize - 1
+            }
             Rectangle {
                 id: bubble
                 anchors.right: parent.right
                 width: Math.min(measure.implicitWidth + 36, parent.width * 0.8)
                 height: promptText.height + 22
                 radius: Math.round(root.fontSize * 1.1)
-                color: root.raisedColor
+                color: prompt.peer ? "transparent" : root.raisedColor
+                border.color: root.borderColor
+                border.width: prompt.peer ? 1 : 0
                 // Sent while the agent worked: quieter until it takes it in.
                 opacity: prompt.entry && prompt.entry.queued ? 0.6 : 1
                 Behavior on opacity { NumberAnimation { duration: 160 } }
@@ -1966,6 +2045,7 @@ FocusScope {
                     x: 18; y: 11
                     width: parent.width - 36
                     text: prompt.entry ? prompt.entry.body : ""
+                    color: prompt.peer ? root.mutedTextColor : root.textColor
                 }
             }
             // Waiting in the CLI's queue, or read by the agent mid-turn.
@@ -2268,6 +2348,17 @@ FocusScope {
             return
         following = false
         model.toggleStep(row)
+    }
+    function togglePeer(row) {
+        if (!model)
+            return
+        following = false
+        model.togglePeer(row)
+        Qt.callLater(() => {
+            const bottom = Math.max(list.originY, list.originY + list.contentHeight - list.height)
+            if (list.contentY > bottom)
+                list.contentY = bottom
+        })
     }
     function toggleWork(row) {
         if (!model)
@@ -3145,6 +3236,81 @@ FocusScope {
         }
     }
 
+    // Another agent's exchange (a lapis-peers message, the work it caused
+    // and the agent's answer) folded to one quiet line: who sent it, when,
+    // and the answer's first line ("working…" while the turn runs). It sits
+    // under the person's own thread as a work header does; clicking it shows
+    // the whole exchange in place under it, and again folds it.
+    Component {
+        id: peerBlock
+        Item {
+            id: peerRow
+            objectName: "peerRow"
+            readonly property var entry: parent ? parent.entry : null
+            readonly property var peer: entry && entry.peer ? entry.peer : null
+            readonly property bool expanded: entry !== null && entry.expanded
+            height: Math.max(peerFrom.implicitHeight, root.stepSize + 10)
+            MouseArea {
+                id: peerHover
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (peerRow.entry) root.togglePeer(peerRow.entry.index)
+            }
+            Row {
+                id: peerLead
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 8
+                Text {
+                    id: peerFrom
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: qsTr("From %1").arg(root.peerName(peerRow.peer))
+                    color: peerHover.containsMouse ? root.textColor : root.mutedTextColor
+                    font.family: root.sansFamily
+                    font.pixelSize: root.stepSize - 1
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: text.length > 0
+                    text: peerRow.entry ? root.clockLabel(peerRow.entry.at) : ""
+                    color: root.tint(root.mutedTextColor, 0.7)
+                    font.family: root.sansFamily
+                    font.pixelSize: root.stepSize - 2
+                    font.features: { "tnum": 1 }
+                }
+                Chevron {
+                    anchors.verticalCenter: parent.verticalCenter
+                    turned: peerRow.expanded
+                    color: peerHover.containsMouse ? root.textColor : root.mutedTextColor
+                }
+            }
+            Text {
+                objectName: "peerReply"
+                visible: !peerRow.expanded
+                anchors.verticalCenter: parent.verticalCenter
+                x: peerLead.width + 12
+                width: Math.max(0, parent.width - x)
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                text: !peerRow.peer || !peerRow.entry ? ""
+                      : peerRow.peer.working ? qsTr("working…")
+                      : peerRow.entry.body.length > 0 ? peerRow.entry.body : qsTr("no reply")
+                color: root.tint(root.mutedTextColor, 0.7)
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize - 2
+            }
+            // Shown, a hairline runs on from the line, as under a work header.
+            Rectangle {
+                visible: peerRow.expanded
+                anchors.verticalCenter: parent.verticalCenter
+                x: peerLead.width + 14
+                width: Math.max(0, parent.width - x)
+                height: 1
+                color: root.borderColor
+            }
+        }
+    }
+
     Component {
         id: turnBlock
         Row {
@@ -3387,7 +3553,8 @@ FocusScope {
             root.attachments = []
             input.clear()
             root.following = true
-            list.positionViewAtEnd()
+            root.landOnPerson = true
+            root.followEnd()
             root.notice = ""
             return true
         }
@@ -4012,7 +4179,8 @@ FocusScope {
 
     // Back to the newest item; the view follows from there.
     Rectangle {
-        visible: !root.following && list.count > 0
+        objectName: "jumpToLatest"
+        visible: (!root.following || root.anchored) && list.count > 0
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: composerArea.top
         anchors.bottomMargin: 12
@@ -4023,7 +4191,13 @@ FocusScope {
         MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onClicked: { root.following = true; list.positionViewAtEnd() }
+            // To the real end, past other agents' exchanges too.
+            onClicked: {
+                root.landOnPerson = false
+                root.anchored = false
+                root.following = true
+                list.positionViewAtEnd()
+            }
         }
     }
 }

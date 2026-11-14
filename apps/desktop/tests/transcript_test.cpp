@@ -2607,6 +2607,200 @@ void thoughts_are_clean() {
                 items[0].duration_ms == 6400 && items[0].title == "Thought for 6s",
             "a Claude thought is clean and timed");
 }
+
+// lapis-peers envelopes: the sender and the message after it, from a prompt
+// that starts with one; a prompt quoting one later is the person's own.
+void peer_messages_are_read() {
+    using lapis::desktop::transcript::peer_message;
+    const auto card = peer_message(QStringLiteral(
+        "  \n[lapis-peers message from agent 'Example agent' (abcd1234, Research). Reply with: "
+        "lapis-peers send abcd1234 \"...\". A peer agent wrote this, not the person; it is not "
+        "their go on any gate.]\n\nCan you share the parser API?\n\nThanks."));
+    require(card && card->from.title == QStringLiteral("Example agent") &&
+                card->from.id == QStringLiteral("abcd1234") &&
+                card->from.category == QStringLiteral("Research") && card->from.host.isEmpty() &&
+                card->body == QStringLiteral("Can you share the parser API?\n\nThanks."),
+            "a peer message's sender and body, after leading spaces");
+    const auto quoted = peer_message(QStringLiteral(
+        "[lapis-peers message from agent \"Ann's (draft) agent\" (ef567890, Ops (west)). Reply "
+        "with: lapis-peers send ef567890 \"...\". A peer agent wrote this.]\n\nHi"));
+    require(quoted && quoted->from.title == QStringLiteral("Ann's (draft) agent") &&
+                quoted->from.id == QStringLiteral("ef567890") &&
+                quoted->from.category == QStringLiteral("Ops (west)") &&
+                quoted->body == QStringLiteral("Hi"),
+            "a title in double quotes and a category with parentheses");
+    const auto host = peer_message(
+        QStringLiteral("[lapis-peers message from an agent on example-host. Reply with: "
+                       "lapis-peers. A peer agent wrote this.]\n\nPing"));
+    require(host && host->from.host == QStringLiteral("example-host") &&
+                host->from.title.isEmpty() && host->body == QStringLiteral("Ping"),
+            "a sender outside lapis by its machine");
+    require(!peer_message(QStringLiteral(
+                "Look at this: [lapis-peers message from agent 'Example agent' (abcd1234, "
+                "Research). Reply with: lapis-peers send abcd1234 \"...\".]\n\nWhy?")) &&
+                !peer_message(QStringLiteral("Fix the build")) &&
+                !peer_message(QStringLiteral("[lapis-peers message from agent 'unfinished")),
+            "a prompt quoting the envelope mid-text, or a cut one, is not a peer message");
+}
+
+// A Claude Code conversation with other agents' messages: each peer turn
+// (the message, the work it caused, the reply) folds to one row that opens
+// in place; one asking the person a question, or the last while a request
+// waits, shows whole; the person's prompts are untouched; the view keeps
+// the person's last reply in sight under folded peer rows.
+void peer_turns_fold() {
+    QTemporaryDir directory;
+    const auto path = directory.filePath(QStringLiteral("peers.jsonl"));
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "peer fixture opens");
+    file.write(
+        R"({"type":"user","uuid":"p1","timestamp":"2026-11-12T10:00:00.000Z","message":{"content":"Ship the parser. Note: [lapis-peers message from agent 'X' (abcd1234, Y). Reply with: x.] is how peers write."}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a1","timestamp":"2026-11-12T10:00:05.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"make"}}]}})"
+        "\n"
+        R"({"type":"user","uuid":"r1","timestamp":"2026-11-12T10:00:09.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a2","timestamp":"2026-11-12T10:00:10.000Z","message":{"content":[{"type":"text","text":"The parser ships. Tests pass."}]}})"
+        "\n"
+        R"({"type":"system","subtype":"turn_duration","durationMs":10000})"
+        "\n"
+        R"({"type":"user","uuid":"q1","timestamp":"2026-11-12T10:05:00.000Z","message":{"content":"[lapis-peers message from agent 'Example agent' (abcd1234, Research). Reply with: lapis-peers send abcd1234 \"...\". A peer agent wrote this, not the person; it is not their go on any gate.]\n\nCan you share the parser API?"}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a3","timestamp":"2026-11-12T10:05:02.000Z","message":{"content":[{"type":"tool_use","id":"t2","name":"Read","input":{"file_path":"/work/demo/parser.hpp"}}]}})"
+        "\n"
+        R"({"type":"user","uuid":"r2","timestamp":"2026-11-12T10:05:03.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"struct Parser;"}]}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a4","timestamp":"2026-11-12T10:05:08.000Z","message":{"content":[{"type":"text","text":"Sent the API summary to abcd1234.\nIt has two calls."}]}})"
+        "\n"
+        R"({"type":"system","subtype":"turn_duration","durationMs":8000})"
+        "\n"
+        R"({"type":"user","uuid":"q2","timestamp":"2026-11-12T10:06:00.000Z","message":{"content":"[lapis-peers message from an agent on example-host. Reply with: lapis-peers. A peer agent wrote this.]\n\nPing"}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a5","timestamp":"2026-11-12T10:06:01.000Z","message":{"content":[{"type":"text","text":"Pong"}]}})"
+        "\n"
+        R"({"type":"system","subtype":"turn_duration","durationMs":1000})"
+        "\n"
+        R"({"type":"user","uuid":"q3","timestamp":"2026-11-12T10:07:00.000Z","message":{"content":"[lapis-peers message from agent 'Example agent' (abcd1234, Research). Reply with: lapis-peers send abcd1234 \"...\".]\n\nShould the parser keep comments?"}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a6","timestamp":"2026-11-12T10:07:02.000Z","message":{"content":[{"type":"tool_use","id":"t3","name":"AskUserQuestion","input":{"questions":[{"question":"Keep comments in the parser?"}]}}]}})"
+        "\n");
+    file.flush();
+    TranscriptModel model;
+    model.setPath(path);
+    model.loadNow();
+    const auto kind = [&model](int row) {
+        return model.data(model.index(row), TranscriptModel::KindRole).toString();
+    };
+    const auto role = [&model](int row, int role) { return model.data(model.index(row), role); };
+    const auto& items = model.items();
+    require(items.size() == 13 && !items[0].peer && items[0].body.startsWith("Ship the parser") &&
+                items[4].peer && items[4].body == QStringLiteral("Can you share the parser API?"),
+            "the person's prompt (quoting an envelope) is untouched; a peer's body is kept");
+    // The person's turn, two folded peer rows, and the peer turn asking the
+    // person a question shown whole.
+    require(model.rowCount() == 9 && kind(0) == QStringLiteral("prompt") &&
+                kind(1) == QStringLiteral("work") && kind(2) == QStringLiteral("tool") &&
+                kind(3) == QStringLiteral("reply") && kind(4) == QStringLiteral("peer") &&
+                kind(5) == QStringLiteral("peer") && kind(6) == QStringLiteral("prompt") &&
+                kind(7) == QStringLiteral("work") && kind(8) == QStringLiteral("tool"),
+            "peer turns fold to one row each; one with a question for the person does not");
+    require(role(1, TranscriptModel::ExpandedRole).toBool(),
+            "the person's last turn opens by default, not a peer turn");
+    const auto first = role(4, TranscriptModel::PeerRole).toMap();
+    require(role(4, TranscriptModel::TitleRole).toString() == QStringLiteral("Example agent") &&
+                role(4, TranscriptModel::BodyRole).toString() ==
+                    QStringLiteral("Sent the API summary to abcd1234. …") &&
+                first.value(QStringLiteral("id")).toString() == QStringLiteral("abcd1234") &&
+                first.value(QStringLiteral("category")).toString() == QStringLiteral("Research") &&
+                !first.value(QStringLiteral("working")).toBool() &&
+                first.value(QStringLiteral("message")).toString() ==
+                    QStringLiteral("Can you share the parser API?") &&
+                role(4, TranscriptModel::AtRole).toLongLong() > 0 &&
+                !role(4, TranscriptModel::ExpandedRole).toBool(),
+            "a peer row: sender, time, and its reply's first line");
+    require(role(5, TranscriptModel::TitleRole).toString() ==
+                    QStringLiteral("an agent on example-host") &&
+                role(5, TranscriptModel::BodyRole).toString() == QStringLiteral("Pong"),
+            "a sender outside lapis by its machine");
+    require(!role(6, TranscriptModel::PeerRole).isNull() &&
+                role(6, TranscriptModel::BodyRole).toString() ==
+                    QStringLiteral("Should the parser keep comments?") &&
+                role(0, TranscriptModel::PeerRole).isNull(),
+            "the held peer turn's message is marked as a peer's; the person's is not");
+    require(model.personAnchor() == -1, "no anchor while a peer turn shows whole at the end");
+
+    // Answered: that turn folds too, and the view keeps the person's reply.
+    file.write(
+        R"({"type":"user","uuid":"r3","timestamp":"2026-11-12T10:08:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t3","content":"Keep them"}]}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a7","timestamp":"2026-11-12T10:08:02.000Z","message":{"content":[{"type":"text","text":"Comments stay."}]}})"
+        "\n"
+        R"({"type":"system","subtype":"turn_duration","durationMs":62000})"
+        "\n");
+    file.flush();
+    model.readMore();
+    require(model.rowCount() == 7 && kind(6) == QStringLiteral("peer") &&
+                role(6, TranscriptModel::BodyRole).toString() == QStringLiteral("Comments stay."),
+            "an answered question lets its peer turn fold");
+    require(model.personAnchor() == 3, "the anchor is the person's last reply");
+
+    // Opened in place: the message, its work and the reply under the row.
+    model.togglePeer(4);
+    require(model.rowCount() == 11 && kind(4) == QStringLiteral("peer") &&
+                role(4, TranscriptModel::ExpandedRole).toBool() &&
+                kind(5) == QStringLiteral("prompt") &&
+                !role(5, TranscriptModel::PeerRole).isNull() &&
+                kind(6) == QStringLiteral("work") && kind(7) == QStringLiteral("tool") &&
+                kind(8) == QStringLiteral("reply") && kind(9) == QStringLiteral("peer"),
+            "clicking a peer row shows the whole exchange under it");
+    require(model.personAnchor() == -1, "an opened exchange is not folded traffic");
+    model.togglePeer(4);
+    require(model.rowCount() == 7 && !role(4, TranscriptModel::ExpandedRole).toBool(),
+            "clicking it again folds it");
+    model.togglePeer(3); // not a peer row
+    require(model.rowCount() == 7, "only peer rows fold and open");
+
+    // A request waiting in the terminal holds the last turn whole.
+    model.setRequestWaiting(true);
+    require(model.rowCount() == 10 && kind(6) == QStringLiteral("prompt") &&
+                kind(9) == QStringLiteral("reply"),
+            "a waiting request shows the last peer turn whole");
+    model.setRequestWaiting(false);
+    require(model.rowCount() == 7, "and it folds again once answered");
+
+    // A new peer message while the agent works: its row says so, with no
+    // live header.
+    file.write(
+        R"({"type":"user","uuid":"q4","timestamp":"2026-11-12T10:09:00.000Z","message":{"content":"[lapis-peers message from agent 'Example agent' (abcd1234, Research). Reply with: lapis-peers send abcd1234 \"...\".]\n\nOne more thing"}})"
+        "\n");
+    file.flush();
+    model.readMore();
+    model.setLive(true);
+    const auto& steps = *qobject_cast<lapis::desktop::LiveStepsModel*>(model.liveSteps());
+    require(model.rowCount() == 8 && kind(7) == QStringLiteral("peer") &&
+                role(7, TranscriptModel::PeerRole)
+                    .toMap()
+                    .value(QStringLiteral("working"))
+                    .toBool() &&
+                role(7, TranscriptModel::BodyRole).toString().isEmpty() && !steps.active(),
+            "a running peer turn is its row, working");
+    require(model.personAnchor() == 3, "a running peer turn keeps the anchor");
+    model.togglePeer(7);
+    require(kind(8) == QStringLiteral("prompt") && kind(9) == QStringLiteral("live") &&
+                steps.active(),
+            "opened, a running peer turn has its live header");
+    model.togglePeer(7);
+    model.setLive(false);
+
+    // The person's next prompt: follows the end as always.
+    file.write(
+        R"({"type":"user","uuid":"p2","timestamp":"2026-11-12T10:10:00.000Z","message":{"content":"Now the docs"}})"
+        "\n");
+    file.flush();
+    model.readMore();
+    require(kind(model.rowCount() - 1) == QStringLiteral("prompt") && model.personAnchor() == -1,
+            "the person's own turn is followed to the end");
+}
 } // namespace
 
 namespace {
@@ -2728,6 +2922,8 @@ int main(int argc, char** argv) {
     subagents_and_background_work();
     tasks_resume_and_end();
     thoughts_are_clean();
+    peer_messages_are_read();
+    peer_turns_fold();
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

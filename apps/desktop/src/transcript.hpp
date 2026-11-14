@@ -40,6 +40,28 @@ struct DiffLine {
     QString text;
 };
 
+// Who sent a message another agent pasted in with `lapis-peers send`: the
+// sending lapis agent's title, short id and category, or, for a sender
+// outside lapis, the machine it ran on. Any part can be empty.
+struct Peer {
+    QString title;
+    QString id;
+    QString category;
+    QString host;
+    bool operator==(const Peer&) const = default;
+};
+// A prompt that is a lapis-peers message: its text starts (after spaces) with
+// the envelope "[lapis-peers message from agent 'TITLE' (abcd1234,
+// CATEGORY). Reply with: ...]" or "[lapis-peers message from an agent on
+// HOST. Reply with: ...]", the message after it. `body` is that message
+// without the envelope. A prompt quoting the envelope later in its text is
+// the person's own.
+struct PeerMessage {
+    Peer from;
+    QString body;
+};
+[[nodiscard]] std::optional<PeerMessage> peer_message(const QString& text);
+
 struct Item {
     Kind kind{Kind::other};
     // A step's past-tense verb ("Ran", "Edited"), a divider's or notice's
@@ -79,6 +101,10 @@ struct Item {
     qint64 duration_ms{}; // a turn item: how long the turn took
     // The reader's task (Reader::tasks) this step started, or -1.
     int task{-1};
+    // A prompt another agent sent (peer_message): `body` is its message and
+    // `from` its sender. Not the person's words.
+    bool peer{};
+    Peer from;
 };
 
 // Work a step left running past its own call: a subagent, a background shell
@@ -167,6 +193,14 @@ struct Turn {
     // commands, edited 2 files, read 3 files".
     QString summary;
     std::vector<Part> parts; // at least one
+    // Started by another agent's message (Item::peer): the exchange folds to
+    // one row unless `held`.
+    bool peer{};
+    // A peer turn kept as a person's turn shows: the person steered it, it
+    // asks the person a question not yet answered, or a request waits in
+    // the terminal while it is the last turn.
+    bool held{};
+    bool folded{}; // a peer turn shown as its row alone
 };
 // The summary for the work items in [first, last], skipping `except`.
 [[nodiscard]] QString work_summary(const std::vector<Item>& items, int first, int last, int except);
@@ -177,6 +211,9 @@ struct Row {
     bool in_work{};  // a step of a part's work, shown because its header is expanded
     bool live{};     // the running turn's live header
     bool expanded{}; // a header whose work's rows follow it
+    // A peer turn's row (item: its message), folded or, `expanded`, over the
+    // turn's own rows.
+    bool peer{};
 };
 struct Layout {
     std::vector<Turn> turns;
@@ -191,12 +228,24 @@ inline constexpr int expanded_finished_turns = 1;
 // default above), flipped for the leads in `toggled` (the person's clicks).
 // The defaults leave every part folded. `live`: the agent is working, so the
 // last turn, while open, has a live header.
+// A turn another agent's message started (a peer turn: Turn::peer) is one row
+// (Row::peer) standing for its message, work and reply, up to the next turn,
+// unless its start is in `peers_open` (then its rows follow that row) or it
+// is held (Turn::held; `request_waiting`: a request waits in the terminal,
+// which holds the last turn). Prompts the person queued in it still show.
 [[nodiscard]] Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled,
                              bool live = false,
-                             int expand_from = std::numeric_limits<int>::max());
+                             int expand_from = std::numeric_limits<int>::max(),
+                             const QSet<int>& peers_open = {}, bool request_waiting = false);
 // The first item whose parts open by default (expanded_finished_turns): the
-// start of the oldest such finished turn, or 0 when there are fewer.
+// start of the oldest such finished turn, or 0 when there are fewer. Peer
+// turns do not count: the person's own last turn opens.
 [[nodiscard]] int expand_from(const Layout& layout);
+// The row the view keeps in sight when it follows the thread's end: the last
+// row of the last turn the person started when every row after it is a
+// folded peer turn's (at least one), so another agent's traffic never pushes
+// the reply to the person out of view; else -1 (follow the end).
+[[nodiscard]] int person_anchor(const Layout& layout);
 // The items the running turn `turn` of `layout` lists under its live header: its
 // last part's steps, thinking, notes and replies, in order.
 [[nodiscard]] std::vector<int> live_items(const std::vector<Item>& items, const Layout& layout,
@@ -761,6 +810,11 @@ class TranscriptModel final : public QAbstractListModel {
     // reply, a turn-end record or a next prompt). A status estimated from
     // output can say working after the record shows the turn over.
     Q_PROPERTY(bool turnOpen READ turnOpen NOTIFY turnOpenChanged)
+    // A request waits for the person in the terminal (an approval, a
+    // question): the last turn shows whole even when another agent's
+    // message started it (transcript::lay_out's request_waiting).
+    Q_PROPERTY(bool requestWaiting READ requestWaiting WRITE setRequestWaiting NOTIFY
+                   requestWaitingChanged)
     // The running turn's steps (a LiveStepsModel).
     Q_PROPERTY(QObject* liveSteps READ liveSteps CONSTANT)
     // Prompts the bar sent that the CLI has not recorded yet, oldest first.
@@ -809,6 +863,11 @@ class TranscriptModel final : public QAbstractListModel {
         // lastCheck, report}; null for other items.
         TaskRole,
         OpenedRole, // a step row opened to its detail (toggleStep)
+        // A message another agent sent (transcript::Peer): {title, id,
+        // category, host}; null for the person's prompts and other items. A
+        // peer turn's row ("peer" kind) adds `working` (no reply yet while
+        // its turn is open) and `message` (the message's first line).
+        PeerRole,
     };
     // An item's value for a role (not the layout's roles: expanded, inWork,
     // steps, opened), shared by the thread and the running turn's steps.
@@ -976,6 +1035,16 @@ class TranscriptModel final : public QAbstractListModel {
     // Opens or closes a step row's detail in place. Kept by item, so it
     // survives rows arriving, the row scrolling out, and switching away.
     Q_INVOKABLE void toggleStep(int row);
+    // Opens a folded peer turn's row to the whole exchange in place, or
+    // folds it again. Kept by its message's item, as toggleStep keeps steps.
+    Q_INVOKABLE void togglePeer(int row);
+    // The row the view keeps in sight while it follows the end
+    // (transcript::person_anchor), or -1 to follow the end itself.
+    Q_INVOKABLE [[nodiscard]] int personAnchor() const {
+        return transcript::person_anchor(layout_);
+    }
+    [[nodiscard]] bool requestWaiting() const { return request_waiting_; }
+    void setRequestWaiting(bool waiting);
     // A prompt the bar sent (see pendingPrompts), shown at once until the
     // CLI records it; `queued` when the agent was working.
     Q_INVOKABLE void noteSent(const QString& text, bool queued = true);
@@ -1077,6 +1146,7 @@ class TranscriptModel final : public QAbstractListModel {
     void statusChanged();
     void liveChanged();
     void turnOpenChanged();
+    void requestWaitingChanged();
     void pendingChanged();
     void runningChanged();
     void queueModeChanged();
@@ -1134,6 +1204,7 @@ class TranscriptModel final : public QAbstractListModel {
     void notePending();
     bool live_{};
     bool turn_open_{};
+    bool request_waiting_{};
     LiveStepsModel live_steps_{this};
     QStringList shown_pending_;
     [[nodiscard]] transcript::Format format_for(const QString& path) const;
@@ -1150,7 +1221,9 @@ class TranscriptModel final : public QAbstractListModel {
     // the conversation is first laid out so later turns never fold earlier
     // ones; -1 until then.
     mutable int expand_from_{-1};
-    QSet<int> opened_; // items whose step rows are opened (toggleStep)
+    // Items whose step rows are opened (toggleStep), and the messages of
+    // peer turns opened to their whole exchange (togglePeer).
+    QSet<int> opened_;
     // A model or effort the person chose in the bar, per conversation file:
     // shown while the records still report what they did when it was chosen.
     struct Chosen {

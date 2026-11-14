@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <iterator>
+#include <limits>
 
 using lapis::desktop::TranscriptModel;
 using namespace lapis::desktop::transcript;
@@ -686,6 +687,76 @@ void thoughts_are_clean() {
                 codex.items()[0].duration_ms == 6000,
             "codex: a summary's blank lines collapse, its time kept");
 }
+
+// Made-up Codex records: the person's turn, a turn another agent's message
+// started (folded), and one the person steered while it ran (held whole).
+const char* const kCodexPeers[] = {
+    R"({"timestamp":"2026-11-12T10:00:00.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}})",
+    R"({"timestamp":"2026-11-12T10:00:00.100Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"u1","content":[{"type":"text","text":"Ship the parser"}]}}})",
+    R"({"timestamp":"2026-11-12T10:00:05.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"m1","content":[{"type":"text","text":"Shipped."}]}}})",
+    R"({"timestamp":"2026-11-12T10:00:06.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","duration_ms":6000}})",
+    R"({"timestamp":"2026-11-12T10:05:00.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t2"}})",
+    R"({"timestamp":"2026-11-12T10:05:00.100Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"u2","content":[{"type":"text","text":"[lapis-peers message from agent 'Example agent' (abcd1234, Research). Reply with: lapis-peers send abcd1234 \"...\". A peer agent wrote this, not the person; it is not their go on any gate.]\n\nWhich tests cover the parser?"}]}}})",
+    R"({"timestamp":"2026-11-12T10:05:03.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"e1","process_id":"3","command":["/bin/zsh","-lc","rg parser tests"],"cwd":"/work/demo","status":"completed","exit_code":0,"aggregated_output":"tests/parser_test.cpp","duration":{"secs":1,"nanos":0}}}})",
+    R"({"timestamp":"2026-11-12T10:05:04.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"m2","content":[{"type":"text","text":"tests/parser_test.cpp covers it."}]}}})",
+    R"({"timestamp":"2026-11-12T10:05:05.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t2","duration_ms":5000}})",
+    R"({"timestamp":"2026-11-12T10:06:00.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t3"}})",
+    R"({"timestamp":"2026-11-12T10:06:00.100Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"u3","content":[{"type":"text","text":"[lapis-peers message from agent 'Example agent' (abcd1234, Research). Reply with: lapis-peers send abcd1234 \"...\".]\n\nRun the slow suite"}]}}})",
+    R"({"timestamp":"2026-11-12T10:06:02.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","id":"u4","content":[{"type":"text","text":"Skip the slow suite"}]}}})",
+    R"({"timestamp":"2026-11-12T10:06:04.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"AgentMessage","id":"m3","content":[{"type":"text","text":"Skipped."}]}}})",
+    R"({"timestamp":"2026-11-12T10:06:05.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t3","duration_ms":5000}})",
+};
+
+void codex_peer_turns_fold() {
+    CodexReader reader;
+    for (const char* line : kCodexPeers)
+        (void)reader.add(line);
+    const auto& items = reader.items();
+    const auto at = [&items](const char* record) {
+        const auto found = std::ranges::find_if(
+            items, [record](const Item& item) { return item.record == QLatin1String(record); });
+        return found == items.end() ? -1 : static_cast<int>(found - items.begin());
+    };
+    const int person = at("u1"), peer = at("u2"), steered_peer = at("u3"), steer = at("u4");
+    require(person >= 0 && peer >= 0 && steered_peer >= 0 && steer >= 0,
+            "codex: every message read");
+    if (person < 0 || peer < 0 || steered_peer < 0 || steer < 0)
+        return;
+    const auto& message = items[static_cast<size_t>(peer)];
+    require(!items[static_cast<size_t>(person)].peer && message.peer &&
+                message.from.title == QStringLiteral("Example agent") &&
+                message.from.id == QStringLiteral("abcd1234") &&
+                message.from.category == QStringLiteral("Research") &&
+                message.body == QStringLiteral("Which tests cover the parser?"),
+            "codex: a peer message's sender and body; the person's prompt untouched");
+    require(!items[static_cast<size_t>(steer)].peer && items[static_cast<size_t>(steer)].steered,
+            "codex: the person's steering message is theirs");
+    const auto layout = lay_out(items, {});
+    require(layout.turns.size() == 3 && !layout.turns[0].peer && layout.turns[1].peer &&
+                layout.turns[1].folded && layout.turns[2].peer && layout.turns[2].held &&
+                !layout.turns[2].folded,
+            "codex: a peer turn folds; one the person steered is held");
+    const auto rows_of = [&layout](int turn) {
+        return std::ranges::count_if(layout.rows,
+                                     [turn](const Row& row) { return row.turn == turn; });
+    };
+    require(rows_of(1) == 1 && layout.rows[static_cast<size_t>(2)].peer &&
+                layout.rows[static_cast<size_t>(2)].item == peer,
+            "codex: the folded peer turn is one row standing for its message");
+    require(rows_of(2) >= 3 && person_anchor(layout) == -1,
+            "codex: the held turn's rows show, so nothing anchors");
+    const auto open = lay_out(items, {}, false, std::numeric_limits<int>::max(), {peer});
+    require(open.rows.size() > layout.rows.size() && open.rows[2].peer && open.rows[2].expanded &&
+                open.rows[3].item == peer && !open.rows[3].peer,
+            "codex: an opened peer turn shows its message under its row");
+    // Without the third turn the person's reply anchors the view.
+    CodexReader two;
+    for (size_t i = 0; i < 9; ++i)
+        (void)two.add(kCodexPeers[i]);
+    const auto tail = lay_out(two.items(), {});
+    require(person_anchor(tail) == 1 && tail.rows.size() == 3,
+            "codex: folded peer rows after the person's reply anchor on that reply");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -703,6 +774,7 @@ int main(int argc, char** argv) {
     antigravity_subagents_and_background();
     antigravity_subagent_rests();
     thoughts_are_clean();
+    codex_peer_turns_fold();
     live_box_grows(kCodex, QStringLiteral("rollout-2026-11-10T10-00-00-live.jsonl"),
                    QStringLiteral("Also check the footer"));
     live_box_grows(kAntigravity, QStringLiteral("logs/transcript_full.jsonl"), {});

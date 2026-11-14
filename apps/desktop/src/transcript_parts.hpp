@@ -28,6 +28,9 @@ void set_result(Item& item, const QString& output);
 // break, and agy's stock opening ("I'm thinking through how to approach
 // this.") dropped, so a thought of only that is empty.
 [[nodiscard]] QString thought_text(QString text);
+// Marks a prompt whose body is a lapis-peers message (peer_message) as
+// another agent's: its body becomes the message and `from` its sender.
+void mark_peer(Item& prompt);
 // Thinking and tool steps are drawn tight against one another.
 [[nodiscard]] bool is_step(Kind kind);
 // ms since the epoch for an ISO 8601 time ("2026-11-10T20:21:33Z", with or

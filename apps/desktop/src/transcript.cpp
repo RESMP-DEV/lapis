@@ -85,7 +85,76 @@ QString duration_text(qint64 ms) {
     return QStringLiteral("%1d %2h").arg(seconds / 86400).arg((seconds % 86400) / 3600);
 }
 
+std::optional<PeerMessage> peer_message(const QString& text) {
+    static const auto lead = QStringLiteral("[lapis-peers message from ");
+    qsizetype at = 0;
+    while (at < text.size() && text.at(at).isSpace())
+        ++at;
+    if (!QStringView(text).mid(at).startsWith(lead))
+        return std::nullopt;
+    at += lead.size();
+    PeerMessage out;
+    // The sender: "agent 'TITLE' (abcd1234, CATEGORY)", the title as Python
+    // writes a string (in double quotes when it holds a single one,
+    // backslashes escaping), or "an agent on HOST".
+    static const auto agent = QStringLiteral("agent ");
+    static const auto host = QStringLiteral("an agent on ");
+    static const auto reply = QStringLiteral(". Reply with:");
+    qsizetype rest = at;
+    if (QStringView(text).mid(at).startsWith(agent) && at + agent.size() < text.size() &&
+        (text.at(at + agent.size()) == QLatin1Char('\'') ||
+         text.at(at + agent.size()) == QLatin1Char('"'))) {
+        const QChar quote = text.at(at + agent.size());
+        qsizetype i = at + agent.size() + 1;
+        QString title;
+        for (; i < text.size() && text.at(i) != quote && text.at(i) != QLatin1Char('\n'); ++i) {
+            if (text.at(i) == QLatin1Char('\\') && i + 1 < text.size())
+                ++i;
+            title += text.at(i);
+        }
+        if (i >= text.size() || text.at(i) != quote)
+            return std::nullopt;
+        out.from.title = title;
+        rest = i + 1;
+        static const QRegularExpression card(QStringLiteral(R"( \(([^,()\s]*), ([^\n]*?)\)\. )"));
+        if (const auto match = card.match(text, rest, QRegularExpression::NormalMatch,
+                                          QRegularExpression::AnchorAtOffsetMatchOption);
+            match.hasMatch()) {
+            out.from.id = match.captured(1);
+            out.from.category = match.captured(2);
+        }
+    } else if (QStringView(text).mid(at).startsWith(host)) {
+        const auto end = text.indexOf(reply, at);
+        const auto line = text.indexOf(QLatin1Char('\n'), at);
+        if (end >= 0 && (line < 0 || end < line))
+            out.from.host = text.mid(at + host.size(), end - at - host.size()).trimmed();
+    }
+    // The envelope ends at the first "]" that ends its line; the message
+    // follows after a blank line.
+    qsizetype end = -1;
+    for (auto i = text.indexOf(QLatin1Char(']'), rest); i >= 0;
+         i = text.indexOf(QLatin1Char(']'), i + 1))
+        if (i + 1 == text.size() || text.at(i + 1) == QLatin1Char('\n') ||
+            text.at(i + 1) == QLatin1Char('\r')) {
+            end = i;
+            break;
+        }
+    if (end < 0)
+        return std::nullopt;
+    out.body = text.mid(end + 1).trimmed();
+    return out;
+}
+
 namespace detail {
+void mark_peer(Item& prompt) {
+    auto message = peer_message(prompt.body);
+    if (!message)
+        return;
+    prompt.peer = true;
+    prompt.from = std::move(message->from);
+    prompt.body = std::move(message->body);
+}
+
 QString clip(QString text, qsizetype limit) {
     if (text.size() <= limit)
         return text;
@@ -1372,7 +1441,9 @@ int expand_from(const Layout& layout) {
         // A turn with no end recorded may still be running, whether or not
         // the view knows the agent works yet.
         // A turn with no steps (a plain answer) has nothing to show.
-        if (layout.turns[t].live || !layout.turns[t].closed || layout.turns[t].steps == 0)
+        // Another agent's exchange is not the turn the person comes back to.
+        if (layout.turns[t].live || !layout.turns[t].closed || layout.turns[t].steps == 0 ||
+            layout.turns[t].peer)
             continue;
         if (++finished >= expanded_finished_turns)
             return layout.turns[t].start;
@@ -1380,8 +1451,22 @@ int expand_from(const Layout& layout) {
     return 0;
 }
 
+int person_anchor(const Layout& layout) {
+    auto row = layout.rows.size();
+    // Back over the folded peer rows at the end...
+    while (row > 0 && layout.rows[row - 1].peer && !layout.rows[row - 1].expanded)
+        --row;
+    if (row == layout.rows.size() || row == 0)
+        return -1;
+    // ...to the last row of a turn the person started.
+    const auto& last = layout.rows[row - 1];
+    if (last.turn < 0 || layout.turns[static_cast<size_t>(last.turn)].peer)
+        return -1;
+    return static_cast<int>(row - 1);
+}
+
 Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool live,
-               int expand_from) {
+               int expand_from, const QSet<int>& peers_open, bool request_waiting) {
     Layout out;
     const int count = static_cast<int>(items.size());
     std::vector<int> turn_of(items.size(), -1);
@@ -1502,6 +1587,24 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool li
         }
         if (turn.closed && turn.steps > 0)
             turn.summary = work_summary(items, end + 1, turn.last, turn.final_reply);
+        // Another agent's message starts a peer turn, which folds to one row
+        // unless something in it is for the person: a prompt of theirs it
+        // read mid-turn, a question to them with no answer yet, or (the last
+        // turn) a request waiting in the terminal.
+        const auto& lead = items[static_cast<size_t>(turn.start)];
+        turn.peer = lead.kind == Kind::prompt && lead.peer;
+        if (!turn.peer)
+            continue;
+        turn.held = request_waiting && t + 1 == out.turns.size();
+        for (int i = end + 1; i <= turn.last && !turn.held; ++i) {
+            const auto& item = items[static_cast<size_t>(i)];
+            if (item.dropped)
+                continue;
+            turn.held = (item.kind == Kind::prompt && !item.queued && !item.peer) ||
+                        (item.kind == Kind::tool && !item.answered &&
+                         item.title == QLatin1String("Asked"));
+        }
+        turn.folded = !turn.held && !peers_open.contains(turn.start);
     }
 
     out.rows.reserve(items.size());
@@ -1523,6 +1626,22 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool li
             // A background task's wake-up starts a turn but is not worth a line.
             return !item.dropped && !item.quiet && item.kind != Kind::turn;
         };
+        // Prompts still waiting in the CLI's queue come last, in order.
+        const auto queued_rows = [&] {
+            for (int at = header_end[static_cast<size_t>(t)] + 1; at <= turn.last; ++at) {
+                const auto& item = items[static_cast<size_t>(at)];
+                if (item.kind == Kind::prompt && item.queued && !item.dropped)
+                    out.rows.push_back({.item = at, .turn = t});
+            }
+        };
+        if (turn.peer && !turn.held) {
+            out.rows.push_back(
+                {.item = turn.start, .turn = t, .expanded = !turn.folded, .peer = true});
+            if (turn.folded) {
+                queued_rows();
+                continue;
+            }
+        }
         for (int at = turn.start; at <= header_end[static_cast<size_t>(t)]; ++at)
             if (shown(at))
                 out.rows.push_back({.item = at, .turn = t});
@@ -1552,12 +1671,7 @@ Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled, bool li
         // The final reply closes the turn, after any work shown above it.
         if (turn.final_reply >= 0 && !turn.live)
             out.rows.push_back({.item = turn.final_reply, .turn = t});
-        // Prompts still waiting in the CLI's queue come last, in order.
-        for (int at = header_end[static_cast<size_t>(t)] + 1; at <= turn.last; ++at) {
-            const auto& item = items[static_cast<size_t>(at)];
-            if (item.kind == Kind::prompt && item.queued && !item.dropped)
-                out.rows.push_back({.item = at, .turn = t});
-        }
+        queued_rows();
     }
     return out;
 }
@@ -1871,6 +1985,7 @@ int ClaudeReader::add(const QByteArray& line) {
             auto item = make(Kind::prompt, {}, clip(unwrap_pastes(text).trimmed(), body_chars));
             item.queued = true;
             taken(item);
+            mark_peer(item);
             queued_.emplace_back(text, first);
             push(std::move(item));
             return first;
@@ -2009,7 +2124,10 @@ int ClaudeReader::add(const QByteArray& line) {
         compact_item_ = -1;
         auto item = make(Kind::prompt, {}, clip(unwrap_pastes(text).trimmed(), body_chars));
         item.starts_turn = true;
+        // Matched as sent first: a message lapis pasted in for another
+        // agent is waited for with its envelope.
         taken(item);
+        mark_peer(item);
         push(std::move(item));
         prompted = true;
     };
@@ -2233,7 +2351,8 @@ void trim_to_turns(Layout& layout) {
 
 bool same_content(const Layout& a, const std::vector<Item>& a_items, const Row& x, const Layout& b,
                   const std::vector<Item>& b_items, const Row& y) {
-    if (x.in_work != y.in_work || x.live != y.live || (x.item < 0) != (y.item < 0))
+    if (x.in_work != y.in_work || x.live != y.live || x.peer != y.peer ||
+        (x.peer && x.expanded != y.expanded) || (x.item < 0) != (y.item < 0))
         return false;
     const auto same_item = [&](int i, int j) {
         const auto& p = a_items[static_cast<size_t>(i)];
@@ -2241,8 +2360,15 @@ bool same_content(const Layout& a, const std::vector<Item>& a_items, const Row& 
         return p.kind == q.kind && p.record == q.record && p.title == q.title && p.body == q.body &&
                p.result == q.result && p.answered == q.answered && p.failed == q.failed &&
                p.queued == q.queued && p.steered == q.steered && p.at_ms == q.at_ms &&
-               p.duration_ms == q.duration_ms && (p.task < 0) == (q.task < 0);
+               p.duration_ms == q.duration_ms && (p.task < 0) == (q.task < 0) &&
+               p.peer == q.peer && p.from == q.from;
     };
+    if (x.peer) {
+        // A peer turn's row also shows its reply.
+        const int r = a.turns[static_cast<size_t>(x.turn)].final_reply;
+        const int s = b.turns[static_cast<size_t>(y.turn)].final_reply;
+        return same_item(x.item, y.item) && (r < 0) == (s < 0) && (r < 0 || same_item(r, s));
+    }
     if (x.item >= 0)
         return same_item(x.item, y.item);
     const auto& s = a.turns[static_cast<size_t>(x.turn)];
@@ -2259,6 +2385,9 @@ qint64 Reader::footprint() const {
     for (const auto& item : items_) {
         bytes += text(item.title) + text(item.body) + text(item.detail) + text(item.result) +
                  text(item.tool_id) + text(item.record);
+        if (item.peer)
+            bytes += text(item.from.title) + text(item.from.id) + text(item.from.category) +
+                     text(item.from.host);
         bytes += static_cast<qint64>(item.diff.capacity() * sizeof(DiffLine));
         for (const auto& line : item.diff)
             bytes += text(line.text);
@@ -2405,6 +2534,48 @@ QVariant TranscriptModel::data(const QModelIndex& index, int role) const {
     if (!index.isValid() || std::cmp_greater_equal(index.row(), layout_.rows.size()))
         return {};
     const auto& row = layout_.rows[static_cast<size_t>(index.row())];
+    if (row.peer) {
+        // A peer turn's row: who wrote, when, and the first line of the
+        // agent's answer to it.
+        const auto& turn = layout_.turns[static_cast<size_t>(row.turn)];
+        const auto& items = reader_->items();
+        const auto& message = items[static_cast<size_t>(row.item)];
+        switch (role) {
+        case KindRole:
+            return QStringLiteral("peer");
+        case TitleRole:
+            return !message.from.title.isEmpty() ? message.from.title
+                   : !message.from.host.isEmpty()
+                       ? QStringLiteral("an agent on %1").arg(message.from.host)
+                       : QStringLiteral("a peer agent");
+        case BodyRole:
+            return turn.final_reply >= 0
+                       ? transcript::detail::first_line(
+                             items[static_cast<size_t>(turn.final_reply)].body.trimmed())
+                       : QString();
+        case DetailRole:
+            return turn.summary;
+        case ExpandedRole:
+            return row.expanded;
+        case StepsRole:
+            return turn.steps;
+        case DurationRole:
+            return turn.duration_ms;
+        case PeerRole: {
+            auto peer = item_value(message, row.item, PeerRole).toMap();
+            peer.insert(QStringLiteral("working"), !turn.closed && turn.final_reply < 0);
+            peer.insert(QStringLiteral("message"), transcript::detail::first_line(message.body));
+            return peer;
+        }
+        case InWorkRole:
+        case OpenedRole:
+        case QueuedRole:
+        case SteeredRole:
+            return false;
+        default:
+            return item_data(row.item, role);
+        }
+    }
     if (row.item < 0) {
         // A part's "Worked for" header over its steps, or the running
         // turn's live header.
@@ -2862,6 +3033,13 @@ QVariant TranscriptModel::item_value(const transcript::Item& item, int index, in
         return item.at_ms;
     case DurationRole:
         return item.duration_ms;
+    case PeerRole:
+        if (!item.peer)
+            return {};
+        return QVariantMap{{QStringLiteral("title"), item.from.title},
+                           {QStringLiteral("id"), item.from.id},
+                           {QStringLiteral("category"), item.from.category},
+                           {QStringLiteral("host"), item.from.host}};
     default:
         return {};
     }
@@ -2878,7 +3056,8 @@ QHash<int, QByteArray> TranscriptModel::role_names() {
         {RecordRole, "record"},     {ExpandedRole, "expanded"}, {InWorkRole, "inWork"},
         {StepsRole, "steps"},       {QueuedRole, "queued"},     {AtRole, "at"},
         {DurationRole, "duration"}, {SteeredRole, "steered"},   {WaitedRole, "waited"},
-        {ItemRole, "item"},         {TaskRole, "task"},         {OpenedRole, "opened"}};
+        {ItemRole, "item"},         {TaskRole, "task"},         {OpenedRole, "opened"},
+        {PeerRole, "peer"}};
 }
 
 QVariantMap TranscriptModel::itemEntry(int item) const {
@@ -2951,6 +3130,9 @@ namespace {
 // A row's identity across layouts: its item; for a part's "Worked for" row,
 // minus (its lead + 1); for the live row, that less 2^40.
 qint64 row_key(const transcript::Layout& layout, const transcript::Row& row) {
+    // A peer turn's row stands apart from its message's own row under it.
+    if (row.peer)
+        return -(row.item + 1) - (qint64{1} << 41);
     if (row.item >= 0)
         return row.item;
     const auto& turn = layout.turns[static_cast<size_t>(row.turn)];
@@ -2959,7 +3141,7 @@ qint64 row_key(const transcript::Layout& layout, const transcript::Row& row) {
 }
 // The last item a row's look depends on.
 int row_depends_on(const transcript::Layout& layout, const transcript::Row& row) {
-    return row.item >= 0 ? row.item : layout.turns[static_cast<size_t>(row.turn)].last;
+    return row.item >= 0 && !row.peer ? row.item : layout.turns[static_cast<size_t>(row.turn)].last;
 }
 bool same_row(const transcript::Layout& a, const transcript::Row& x, const transcript::Layout& b,
               const transcript::Row& y) {
@@ -2998,8 +3180,12 @@ void TranscriptModel::relayout(int changed) {
     // Rows kept whose item, or whose turn's timing, changed are redrawn.
     int first = -1;
     int last = -1;
+    // The last turn's peer row is redrawn every time: its reply line follows
+    // the agent's working state too, which no item records.
+    const auto last_turn = static_cast<int>(layout_.turns.size()) - 1;
     for (size_t i = 0; i < layout_.rows.size(); ++i)
-        if (row_depends_on(layout_, layout_.rows[i]) >= changed) {
+        if (row_depends_on(layout_, layout_.rows[i]) >= changed ||
+            (layout_.rows[i].peer && layout_.rows[i].turn == last_turn)) {
             if (first < 0)
                 first = static_cast<int>(i);
             last = static_cast<int>(i);
@@ -3013,7 +3199,10 @@ void TranscriptModel::relayout(int changed) {
 }
 
 void TranscriptModel::showLive(int changed) {
-    const bool running = !layout_.turns.empty() && layout_.turns.back().live;
+    // Another agent's exchange folded to its row shows no live header: the
+    // row says it is working.
+    const bool running =
+        !layout_.turns.empty() && layout_.turns.back().live && !layout_.turns.back().folded;
     if (!running)
         live_steps_.clear();
     else
@@ -3080,6 +3269,27 @@ void TranscriptModel::toggleWork(int row) {
         expanded_.insert(lead);
     relayout(std::numeric_limits<int>::max());
     emit dataChanged(index(row), index(row), {ExpandedRole});
+}
+
+void TranscriptModel::togglePeer(int row) {
+    if (row < 0 || std::cmp_greater_equal(row, layout_.rows.size()))
+        return;
+    const auto& shown = layout_.rows[static_cast<size_t>(row)];
+    if (!shown.peer)
+        return;
+    const int item = shown.item;
+    if (!opened_.remove(item))
+        opened_.insert(item);
+    relayout(std::numeric_limits<int>::max());
+    emit dataChanged(index(row), index(row), {ExpandedRole});
+}
+
+void TranscriptModel::setRequestWaiting(bool waiting) {
+    if (waiting == request_waiting_)
+        return;
+    request_waiting_ = waiting;
+    relayout(std::numeric_limits<int>::max());
+    emit requestWaitingChanged();
 }
 
 void TranscriptModel::toggleStep(int row) {
@@ -3986,7 +4196,8 @@ transcript::Layout TranscriptModel::layoutNow() const {
         // same whatever is open, so a folded layout finds them).
         expand_from_ = transcript::expand_from(transcript::lay_out(reader_->items(), {}, live_));
     }
-    auto layout = transcript::lay_out(reader_->items(), expanded_, live_, expand_from_);
+    auto layout = transcript::lay_out(reader_->items(), expanded_, live_, expand_from_, opened_,
+                                      request_waiting_);
     if (tail_)
         transcript::trim_to_turns(layout);
     return layout;
@@ -4274,7 +4485,8 @@ void TranscriptModel::adopt(transcript::Read read) {
     expand_from_ = expand_from_ >= 0
                        ? std::max(0, expand_from_ + shift)
                        : transcript::expand_from(transcript::lay_out(new_items, {}, live_));
-    auto next = transcript::lay_out(new_items, expanded, live_, expand_from_);
+    auto next =
+        transcript::lay_out(new_items, expanded, live_, expand_from_, opened, request_waiting_);
     if (read.tail)
         transcript::trim_to_turns(next);
     // The view notes its place, the rows are replaced at once, and it goes

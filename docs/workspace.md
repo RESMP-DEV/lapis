@@ -171,6 +171,20 @@ steps; older turns start folded so long threads stay readable. A turn a
 background task or subagent woke shows only its header and the reply, with no
 "finished" notice.
 
+Messages other agents send with `lapis-peers send` are not your prompts. A
+Claude Code or Codex turn that one starts (the message, the work it caused
+and the agent's answer, up to the next prompt) folds to one quiet line under
+your thread: **From Example agent**, its time and a chevron, then the first
+line of the answer, or "working…" while it runs. Clicking it shows the whole exchange in
+place, the message in an outlined bubble naming its sender; clicking again
+folds it. Each exchange has its own line, so a burst of them stacks closely.
+An exchange stays whole when something in it is yours: a prompt you sent
+into it, a question to you not answered yet, or a request waiting in the
+terminal. Following the end keeps the end of the reply to your last prompt
+in view; folded lines that would push it off the top wait a short scroll
+below it, and **↓** goes to the very end. Tab's guesses never take another
+agent's message for something you typed.
+
 While the agent works, the running turn's header is a line such as **Working ·
 2m 10s · 14 steps**, and its steps appear under it as the CLI records them,
 the newest at the bottom; the thread follows its end unless you scrolled up.

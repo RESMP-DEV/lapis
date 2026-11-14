@@ -10,6 +10,7 @@
 #include "transcript.hpp"
 #include "workspace.hpp"
 #include <QAccessible>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QJSValue>
@@ -3630,6 +3631,122 @@ void check_hidden_sidebar_title(QQuickWindow& window, lapis::desktop::Workspace&
     CHECK(!title->isVisible());
 }
 
+// Other agents' messages in a thread (made-up lapis-peers traffic): each
+// exchange is one quiet row under the person's last reply, opening in place
+// on a click; with more rows than fit, following the end keeps the end of
+// the person's reply in view (anchored) and the ↓ button reaches the end.
+void check_peer_thread(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                       lapis::desktop::Config& config_model, const QTemporaryDir& directory,
+                       const QString& captures) {
+    using namespace lapis::desktop;
+    auto* view = find_visual(window.contentItem(), QStringLiteral("visualView"));
+    CHECK(view != nullptr);
+    auto* model = qobject_cast<TranscriptModel*>(workspace.transcript());
+    CHECK(model != nullptr);
+    CHECK(config_model.setVisual(QStringLiteral("theme"), QStringLiteral("codex")));
+    const auto write = [&directory](const QString& name, int peers) {
+        const auto path = directory.filePath(name);
+        QFile file(path);
+        CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        for (const char* line : kSettingsThread)
+            file.write(QByteArray(line) + '\n');
+        const char* const asks[] = {"Can you share the parser API?", "Ping",
+                                    "Which tests cover the parser?"};
+        const char* const answers[] = {"Sent the API summary to abcd1234; it has two calls.",
+                                       "Pong", "tests/parser_test.cpp covers it."};
+        for (int i = 0; i < peers; ++i) {
+            const auto at = QDateTime::fromString(QStringLiteral("2026-11-11T16:10:00Z"), Qt::ISODate)
+                                .addSecs(60LL * i)
+                                .toString(Qt::ISODateWithMs);
+            const auto sender = i % 3 == 1
+                                    ? QStringLiteral("an agent on example-host")
+                                    : QStringLiteral("agent 'Example agent' (abcd1234, Research)");
+            file.write(QStringLiteral(
+                           R"({"type":"user","uuid":"q%1","timestamp":"%2","message":{"content":"[lapis-peers message from %3. Reply with: lapis-peers send abcd1234 \"...\". A peer agent wrote this, not the person; it is not their go on any gate.]\n\n%4"}})")
+                           .arg(i)
+                           .arg(at, sender, QString::fromLatin1(asks[i % 3]))
+                           .toUtf8() +
+                       '\n');
+            file.write(QStringLiteral(
+                           R"({"type":"assistant","uuid":"r%1","timestamp":"%2","message":{"content":[{"type":"text","text":"%3"}]}})")
+                           .arg(i)
+                           .arg(at, QString::fromLatin1(answers[i % 3]))
+                           .toUtf8() +
+                       '\n');
+            file.write(R"({"type":"system","subtype":"turn_duration","durationMs":4000})"
+                       "\n");
+        }
+        return path;
+    };
+    const auto rows_named = [&window](const QString& name) {
+        int count = 0;
+        std::function<void(QQuickItem*)> walk = [&](QQuickItem* item) {
+            if (item->objectName() == name && item->isVisible())
+                ++count;
+            for (auto* child : item->childItems())
+                walk(child);
+        };
+        walk(window.contentItem());
+        return count;
+    };
+
+    // Three exchanges under the person's reply: three folded rows.
+    view->setProperty("visible", true);
+    model->setPath(write(QStringLiteral("peer-thread.jsonl"), 3));
+    model->loadNow();
+    pump(300);
+    // The person's prompt and reply, then a row per exchange.
+    CHECK(model->rowCount() == 2 + 3);
+    CHECK(rows_named(QStringLiteral("peerRow")) == 3);
+    CHECK(rows_named(QStringLiteral("peerReply")) == 3);
+    CHECK(view->property("following").toBool() && !view->property("anchored").toBool());
+    if (!captures.isEmpty())
+        CHECK(window.grabWindow().save(QDir(captures).filePath(QStringLiteral("peer-folded.png"))));
+
+    // The first opens in place: its message, from its sender, and its reply.
+    CHECK(QMetaObject::invokeMethod(view, "togglePeer", Q_ARG(QVariant, QVariant(2))));
+    pump(300);
+    CHECK(model->data(model->index(2), TranscriptModel::ExpandedRole).toBool());
+    CHECK(rows_named(QStringLiteral("peerMessageFrom")) == 1);
+    CHECK(rows_named(QStringLiteral("peerReply")) == 2);
+    if (!captures.isEmpty())
+        CHECK(
+            window.grabWindow().save(QDir(captures).filePath(QStringLiteral("peer-expanded.png"))));
+    CHECK(QMetaObject::invokeMethod(view, "togglePeer", Q_ARG(QVariant, QVariant(2))));
+    pump(200);
+    CHECK(rows_named(QStringLiteral("peerMessageFrom")) == 0);
+
+    // Many exchanges: the view lands on the end of the person's reply.
+    model->setPath(write(QStringLiteral("peer-many.jsonl"), 60));
+    model->loadNow();
+    pump(400);
+    auto* list = qvariant_cast<QQuickItem*>(view->property("list"));
+    CHECK(list != nullptr);
+    CHECK(model->personAnchor() == 1);
+    CHECK(view->property("following").toBool() && view->property("anchored").toBool());
+    QQuickItem* reply = nullptr;
+    CHECK(QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, reply),
+                                    Q_ARG(int, 1)));
+    CHECK(reply != nullptr);
+    const double top = list->property("contentY").toDouble();
+    CHECK(reply->y() + reply->height() > top && reply->y() + reply->height() <= top + list->height() + 1);
+    auto* jump = find_visual(window.contentItem(), QStringLiteral("jumpToLatest"));
+    CHECK(jump != nullptr && jump->isVisible());
+    if (!captures.isEmpty())
+        CHECK(
+            window.grabWindow().save(QDir(captures).filePath(QStringLiteral("peer-anchored.png"))));
+    // ↓ reaches the end, and the view stays there.
+    click_visual(window, *jump);
+    pump(300);
+    CHECK(view->property("following").toBool() && !view->property("anchored").toBool());
+    CHECK(list->property("atYEnd").toBool());
+    CHECK(!jump->isVisible());
+
+    view->setProperty("visible", false);
+    model->setPath(QString());
+    CHECK(config_model.setVisual(QStringLiteral("theme"), QStringLiteral("terminal")));
+}
+
 // Light mode and the Settings window, on a config of its own.
 int run_settings_window_tests() {
     using namespace lapis::desktop;
@@ -3655,6 +3772,7 @@ int run_settings_window_tests() {
     check_appearance_toggle(*window, workspace, config_model, directory, captures);
     check_sidebar_theme(*window, workspace, config_model, directory, captures);
     check_hidden_sidebar_title(*window, workspace, config_model, directory, captures);
+    check_peer_thread(*window, workspace, config_model, directory, captures);
     check_settings_window(*window, preview, config_model, captures);
     CHECK(preview.diagnostics().isEmpty());
     return EXIT_SUCCESS;
