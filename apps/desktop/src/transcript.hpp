@@ -1296,7 +1296,7 @@ class TranscriptModel final : public QAbstractListModel {
     void caughtUp(const QString& path, qint64 base, transcript::Read read);
     // Shows another reading of the shown conversation in place of this
     // one, changing only the rows that differ (the history above a tail).
-    void adopt(transcript::Read read);
+    void adopt(transcript::Read read, bool appended = false);
     void startLoad(const QString& path, transcript::Format format);
     void warmNext();
     void catchUp();

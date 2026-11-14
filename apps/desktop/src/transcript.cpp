@@ -4541,15 +4541,22 @@ void TranscriptModel::received(const QString& path, transcript::Read read, bool 
         warmNext();
 }
 
-void TranscriptModel::adopt(transcript::Read read) {
+void TranscriptModel::adopt(transcript::Read read, bool appended) {
     // A prompt sent while only the tail showed stays shown until recorded.
-    read.reader->carry_sent(*reader_);
+    if (!appended)
+        read.reader->carry_sent(*reader_);
     const auto& old_items = reader_->items();
     const auto& new_items = read.reader->items();
     // Shown or folded work and opened steps stay so where their items line
-    // up at the end, and turns open by default from the same item.
-    const auto shift = static_cast<int>(new_items.size()) - static_cast<int>(old_items.size());
+    // up at the end, and turns open by default from the same item. A reading
+    // that only appended to the shown one (a warm catch-up) keeps every item
+    // where it was, so its state carries over unchanged.
+    const auto shift = appended ? 0
+                                : static_cast<int>(new_items.size()) -
+                                      static_cast<int>(old_items.size());
     const auto moved = [&](const QSet<int>& marked) {
+        if (appended)
+            return marked;
         QSet<int> out;
         for (const int at : marked) {
             const int to = at + shift;
@@ -4574,7 +4581,7 @@ void TranscriptModel::adopt(transcript::Read read) {
     // back to the same rows (now further down: the history is above them)
     // before anything is drawn.
     emit leaving();
-    if (view_.value(QStringLiteral("following"), true) == false)
+    if (!appended && view_.value(QStringLiteral("following"), true) == false)
         view_.insert(QStringLiteral("row"), view_.value(QStringLiteral("row")).toInt() +
                                                 static_cast<int>(next.rows.size()) -
                                                 static_cast<int>(layout_.rows.size()));
@@ -4723,7 +4730,7 @@ void TranscriptModel::caughtUp(const QString& path, qint64 base, transcript::Rea
                                     std::move(entry->pending), false};
             kept_.erase(entry);
             evict();
-            adopt(std::move(caught));
+            adopt(std::move(caught), true);
         } else {
             evict();
         }

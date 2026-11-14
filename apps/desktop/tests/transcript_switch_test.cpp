@@ -349,13 +349,29 @@ void large_growth_moves_off_the_gui_thread() {
     TranscriptModel model;
     model.setPath(a);
     require(!model.loading(), "the first conversation is whole");
+    int work_row = -1;
+    for (int row = 0; row < model.rowCount(); ++row)
+        if (model.data(model.index(row), TranscriptModel::KindRole).toString() ==
+            QStringLiteral("work")) {
+            work_row = row;
+            break;
+        }
+    require(work_row >= 0, "the kept conversation has work to open");
+    model.toggleWork(work_row);
+    model.keepView(work_row, 0.25, false);
+    model.noteSent(QStringLiteral("queued please"), true);
     model.setPath(b);
     const auto grown = claude_conversation("grown", 30, 50'000);
-    append(a, grown);
+    const QByteArray taken_prompt =
+        R"({"type":"user","uuid":"grown-taken","timestamp":"2026-11-07T23:59:59.000Z",)"
+        R"("message":{"content":"queued please"}})"
+        "\n";
+    append(a, grown + taken_prompt);
     require(grown.size() > TranscriptModel::tail_bytes,
             "the unread delta is larger than the switch budget");
     model.setPath(a);
     const auto shown = records(model);
+    const auto saved_place = model.view();
     require(model.loading() &&
                 std::ranges::all_of(
                     shown, [](const QString& record) { return !record.startsWith("grown-"); }),
@@ -366,6 +382,12 @@ void large_growth_moves_off_the_gui_thread() {
                 std::ranges::any_of(
                     caught, [](const QString& record) { return record.startsWith("grown-"); }),
             "the low-priority thread catches the delta up");
+    require(model.pendingPrompts().isEmpty(), "an appended record takes the queued prompt once");
+    require(model.data(model.index(work_row), TranscriptModel::ExpandedRole).toBool(),
+            "append-only adoption keeps the opened work row");
+    require(model.view().value(QStringLiteral("row")).toInt() ==
+                saved_place.value(QStringLiteral("row")).toInt(),
+            "append-only adoption keeps the saved place");
 }
 
 // A model destroyed while its threads read: the shown conversation's
