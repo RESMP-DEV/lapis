@@ -9,6 +9,7 @@
 #include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -26,7 +27,17 @@ namespace lapis::desktop {
 // become `other` blocks, so a CLI feature lapis has not learned yet still
 // shows up instead of vanishing.
 namespace transcript {
-enum class Kind { prompt, reply, thinking, tool, command, notice, divider, turn, other };
+enum class Kind : std::uint8_t {
+    prompt,
+    reply,
+    thinking,
+    tool,
+    command,
+    notice,
+    divider,
+    turn,
+    other
+};
 [[nodiscard]] QString kind_name(Kind kind);
 
 // One line of a tool's diff: '+' added, '-' removed, ' ' context.
@@ -80,7 +91,7 @@ struct Item {
 // command, a monitor. The reader keeps one per launch; later output checks,
 // events and the end record attach to it rather than adding rows.
 struct Task {
-    enum class Type { subagent, background, monitor };
+    enum class Type : std::uint8_t { subagent, background, monitor };
     Type type{Type::subagent};
     // The CLI's id for it: Claude Code's agentId or task id, Codex's thread
     // or process id, agy's conversation or task id. Empty until recorded.
@@ -112,7 +123,7 @@ struct Task {
 // (`alive_ms`: its start, a check or event, or its own file's last write) is
 // this old, so one whose end was never written (the CLI quit) does not run
 // forever. A monitor also stops at its own expiry.
-inline constexpr qint64 task_silence_ms = 60 * 60 * 1000;
+inline constexpr qint64 task_silence_ms = qint64{60} * 60 * 1000;
 [[nodiscard]] bool task_running(const Task& task, qint64 alive_ms, qint64 now_ms);
 
 // The model, effort and context use the agent last reported, read the same
@@ -271,11 +282,11 @@ struct Piece {
 // its first 40 characters, spaces collapsed). A sent prompt the CLI took
 // leaves an empty box (or its placeholder) there; earlier copies of the
 // text above it, as the CLI shows what was sent, do not count.
-enum class Format;
+enum class Format : std::uint8_t;
 [[nodiscard]] bool composer_holds(const QStringList& screen, const QString& text, Format format);
 
 // The CLIs whose saved conversations lapis reads, each with its own reader.
-enum class Format { claude, codex, antigravity };
+enum class Format : std::uint8_t { claude, codex, antigravity };
 [[nodiscard]] QString format_name(Format format);
 // A format by name ("claude", "codex", "antigravity"; the CLIs' ids "agy"
 // too), or nullopt.
@@ -821,7 +832,7 @@ class TranscriptModel final : public QAbstractListModel {
     // one is never let go. A conversation not kept shows its end (the last
     // tail_bytes, read at once) and the rest is read on another thread and
     // put in above it. See docs/architecture.md (visual view loading).
-    static constexpr qint64 tail_bytes = qint64{1} << 20;
+    static constexpr qint64 tail_bytes = qint64{1} * 1024 * 1024;
     static constexpr qint64 default_kept_mb = 1024;
     static constexpr int default_kept_count = 32;
     // The budget for conversations kept parsed besides the shown one: about
@@ -942,7 +953,7 @@ class TranscriptModel final : public QAbstractListModel {
     std::vector<Parsed> kept_;
     void keep(Parsed parsed);
     void evict();
-    qint64 kept_budget_{default_kept_mb << 20};
+    qint64 kept_budget_{default_kept_mb * 1024 * 1024};
     int kept_limit_{default_kept_count};
     quint64 shown_clock_{};
     // A whole reading (or a longer tail) of `path` from another thread.

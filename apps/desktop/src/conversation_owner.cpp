@@ -13,6 +13,7 @@
 #include <QUuid>
 #include <algorithm>
 #include <optional>
+#include <utility>
 
 namespace lapis::desktop::conversation_owner {
 namespace {
@@ -31,7 +32,7 @@ QJsonObject firstRecord(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return {};
-    return QJsonDocument::fromJson(file.readLine(qint64{1} << 20)).object();
+    return QJsonDocument::fromJson(file.readLine(qint64{1} * 1024 * 1024)).object();
 }
 
 QString canonical(const QString& path) {
@@ -99,7 +100,7 @@ QSet<QString> antigravityFolderConversations(const QString& folder) {
     const QDir cache(antigravity_home() + QStringLiteral("/cache"));
     const auto read = [&cache](const char* name) {
         QFile file(cache.filePath(QString::fromLatin1(name)));
-        if (!file.open(QIODevice::ReadOnly) || file.size() > qint64{32} << 20)
+        if (!file.open(QIODevice::ReadOnly) || file.size() > qint64{32} * 1024 * 1024)
             return QJsonObject{};
         return QJsonDocument::fromJson(file.readAll()).object();
     };
@@ -225,7 +226,7 @@ QString held_conversation(const QString& harness, const QString& endpoint, const
         }
     }
     if (held.isEmpty())
-        held = opened;
+        held = std::move(opened);
     if (held.isEmpty())
         return {};
     if (held.size() > 1 && std::any_of(held.cbegin(), held.cend(),

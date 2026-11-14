@@ -1873,15 +1873,15 @@ bool same_content(const Layout& a, const std::vector<Item>& a_items, const Row& 
 
 qint64 Reader::footprint() const {
     const auto text = [](const QString& s) { return static_cast<qint64>(s.capacity()) * 2 + 24; };
-    qint64 bytes = static_cast<qint64>(items_.capacity() * sizeof(Item));
+    qint64 bytes = static_cast<qint64>(items_.capacity()) * static_cast<qint64>(sizeof(Item));
     for (const auto& item : items_) {
         bytes += text(item.title) + text(item.body) + text(item.detail) + text(item.result) +
                  text(item.tool_id) + text(item.record);
-        bytes += static_cast<qint64>(item.diff.capacity() * sizeof(DiffLine));
+        bytes += static_cast<qint64>(item.diff.capacity()) * static_cast<qint64>(sizeof(DiffLine));
         for (const auto& line : item.diff)
             bytes += text(line.text);
     }
-    bytes += static_cast<qint64>(tasks_.capacity() * sizeof(Task));
+    bytes += static_cast<qint64>(tasks_.capacity()) * static_cast<qint64>(sizeof(Task));
     for (const auto& task : tasks_)
         bytes +=
             text(task.description) + text(task.last_check) + text(task.report) + text(task.file);
@@ -1912,7 +1912,7 @@ QVariantList diff_rows(const std::vector<transcript::DiffLine>& diff) {
 // under the same mutex before it can be deleted, so the lock keeps it alive
 // while the wake-up is queued.
 struct TranscriptModel::Mailbox {
-    enum class Kind {
+    enum class Kind : std::uint8_t {
         load,      // startLoad: the shown or a shown-before conversation
         ahead,     // warmNext: read ahead
         caught_up, // catchUp: a kept conversation brought up to date
@@ -1955,8 +1955,8 @@ struct TranscriptModel::Mailbox {
 };
 
 TranscriptModel::TranscriptModel(QObject* parent)
-    : QAbstractListModel(parent), reader_(transcript::make_reader(transcript::Format::claude)) {
-    mailbox_ = std::make_shared<Mailbox>();
+    : QAbstractListModel(parent), mailbox_(std::make_shared<Mailbox>()),
+      reader_(transcript::make_reader(transcript::Format::claude)) {
     mailbox_->waker = new QObject(this);
     mailbox_->owner = this;
     background_ = new QThreadPool(this);
@@ -2136,7 +2136,7 @@ QString file_tail(const QString& path, int lines) {
     QFile file(path);
     if (path.isEmpty() || !file.open(QIODevice::ReadOnly))
         return {};
-    constexpr qint64 window = 64 * 1024;
+    constexpr qint64 window = qint64{64} * 1024;
     if (file.size() > window)
         file.seek(file.size() - window);
     auto text = transcript::detail::without_escapes(QString::fromUtf8(file.readAll())).trimmed();
@@ -2835,12 +2835,12 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
     // format while walking the fragments can merge or split them.
     const qreal heading_scale[] = {1.0, 1.4, 1.25, 1.12, 1.0, 1.0, 1.0};
     struct BlockChange {
-        int position;
+        int position{};
         QTextBlockFormat format;
     };
     struct CharChange {
-        int position;
-        int length;
+        int position{};
+        int length{};
         QTextCharFormat format;
     };
     std::vector<BlockChange> blocks;
@@ -3483,14 +3483,15 @@ void TranscriptModel::startLoad(const QString& path, transcript::Format format) 
 }
 
 void TranscriptModel::received(const QString& path, transcript::Read read, bool ahead) {
-    if (!read.tail)
+    const bool tail = read.tail;
+    if (!tail)
         loads_.remove(path);
     if (path == path_) {
         // A reading of the shown conversation replaces a shorter one.
         if (tail_ && read.reader->format() == reader_->format() &&
             (!read.tail || read.reader->items().size() > reader_->items().size()))
             adopt(std::move(read));
-    } else if (!read.tail && !kept(path) && read.reader->format() == format_for(path)) {
+    } else if (!tail && !kept(path) && read.reader->format() == format_for(path)) {
         // Read for a conversation shown before, or read ahead (kept after
         // every shown one, so it never pushes one of those out).
         keep({path,
@@ -3502,7 +3503,7 @@ void TranscriptModel::received(const QString& path, transcript::Read read, bool 
               0,
               ahead ? 0 : ++shown_clock_});
     }
-    if (!read.tail)
+    if (!tail)
         warmNext();
 }
 

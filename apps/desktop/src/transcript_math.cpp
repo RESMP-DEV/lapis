@@ -8,6 +8,7 @@
 #include <QTextList>
 #include <QTextTable>
 #include <algorithm>
+#include <cstdint>
 #include <optional>
 #include <tuple>
 #include <utility>
@@ -126,7 +127,7 @@ qsizetype closing(const QString& text, qsizetype from, QStringView close) {
 
 // ---- rendering ---------------------------------------------------------
 
-enum class Class { ordinary, binary, relation, big, function, open, close, punct };
+enum class Class : std::uint8_t { ordinary, binary, relation, big, function, open, close, punct };
 struct Symbol {
     const char16_t* text;
     Class kind;
@@ -401,7 +402,7 @@ class Parser {
     }
 
   private:
-    enum class Last { none, operand, operation };
+    enum class Last : std::uint8_t { none, operand, operation };
 
     void fail() { failed_ = true; }
 
@@ -834,7 +835,7 @@ class Parser {
             text += QString::fromUcs4(&character, 1);
             text += QChar(mark);
         }
-        run.text = text;
+        run.text = std::move(text);
         append(std::move(inner), false);
     }
 
@@ -1224,7 +1225,8 @@ Prepared prepare(const QString& markdown) {
     auto spans = find(markdown);
     if (spans.empty())
         return out;
-    if (spans.size() > static_cast<size_t>(last_placeholder - first_placeholder + 1))
+    if (spans.size() >
+        static_cast<size_t>(last_placeholder) - static_cast<size_t>(first_placeholder) + 1)
         spans.resize(last_placeholder - first_placeholder + 1);
     QString text;
     text.reserve(markdown.size());

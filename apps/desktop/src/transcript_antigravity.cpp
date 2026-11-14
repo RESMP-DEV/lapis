@@ -405,7 +405,7 @@ int AntigravityReader::add(const QByteArray& line) {
         // agy reads input sent while it works at its next step, inside the
         // running turn: input right after a tool step of an open turn
         // steers it. Long after one, the turn was left (interrupted).
-        constexpr qint64 steer_window_ms = 10 * 60 * 1000;
+        constexpr qint64 steer_window_ms = qint64{10} * 60 * 1000;
         const bool steers = turn_open_ && step_at_ms_ > 0 && at_ms_ >= step_at_ms_ &&
                             at_ms_ - step_at_ms_ <= steer_window_ms;
         step_at_ms_ = 0;

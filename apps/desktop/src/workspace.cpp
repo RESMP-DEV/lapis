@@ -2283,7 +2283,7 @@ QString Workspace::knownConversationFile(const QString& id) {
 }
 void Workspace::setVisualKeep(int mb, int threads, bool ahead) {
     auto* transcript = qobject_cast<TranscriptModel*>(transcript_);
-    transcript->setBudget(qint64{mb} << 20, threads);
+    transcript->setBudget(qint64{mb} * 1024 * 1024, threads);
     // Once a run: a few seconds after launch, or after every agent is
     // switched to show as a thread.
     if (!ahead || warm_scheduled_ || fixture_mode_ || headless_)

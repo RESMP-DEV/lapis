@@ -239,15 +239,15 @@ void Workspace::rebuildFactory() const {
     const auto now = QDateTime::currentMSecsSinceEpoch();
     const auto* home = effectiveHomeAgent();
     struct Row {
-        int rank;
-        bool safe; // idle and judged safe to close: first in its stage
-        std::size_t order;
+        int rank{};
+        bool safe{}; // idle and judged safe to close: first in its stage
+        std::size_t order{};
         QVariantMap map;
     };
     std::vector<Row> rows;
     struct Waiting {
-        qint64 since;
-        std::size_t order;
+        qint64 since{};
+        std::size_t order{};
         QVariantMap map;
     };
     std::vector<Waiting> waiting;
@@ -336,10 +336,10 @@ void Workspace::rebuildFactory() const {
     });
     factory_items_.clear();
     for (auto& row : rows)
-        factory_items_.append(std::move(row.map));
+        factory_items_.append(QVariant::fromValue(std::move(row.map)));
     attention_inbox_.clear();
     for (auto& item : waiting)
-        attention_inbox_.append(std::move(item.map));
+        attention_inbox_.append(QVariant::fromValue(std::move(item.map)));
     factory_summary_ = {{"needsYou", counts[0]},
                         {"inProgress", counts[1]},
                         {"landed", counts[2]},

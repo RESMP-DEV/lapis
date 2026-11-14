@@ -17,6 +17,7 @@
 #include <QSGRendererInterface>
 #include <QTemporaryDir>
 #include <QThreadPool>
+#include <cstdint>
 #include <cstdio>
 
 using lapis::desktop::TranscriptModel;
@@ -343,7 +344,7 @@ void destroyed_while_reading() {
         write(directory, QStringLiteral("ahead.jsonl"), claude_conversation("ahead", 60, 40000));
     const auto grown = claude_conversation("grown", 60, 40000);
     require(QFileInfo(big).size() > 2 * TranscriptModel::tail_bytes, "the shown one is long");
-    enum class Case { read_ahead, catch_up, queued };
+    enum class Case : std::uint8_t { read_ahead, catch_up, queued };
     int loading = 0, reading = 0, queued = 0;
     constexpr int rounds = 36;
     for (int round = 0; round < rounds; ++round) {
@@ -351,7 +352,7 @@ void destroyed_while_reading() {
         const auto kept =
             write(directory, QStringLiteral("kept.jsonl"), claude_conversation("kept", 2));
         auto* model = new TranscriptModel;
-        model->setBudget(qint64{1} << 30, 8);
+        model->setBudget(qint64{1} * 1024 * 1024 * 1024, 8);
         if (which == Case::catch_up)
             model->setPath(kept); // read at once, then kept
         model->setPath(big);      // its end now, the rest on the global pool

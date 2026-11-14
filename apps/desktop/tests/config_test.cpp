@@ -856,10 +856,10 @@ void visual_keep_budget_parses() {
     require(config.load() && config.visualKeepMB() == 1024 && config.visualKeepThreads() == 32,
             "the keep budget defaults to 1024 MB and 32 threads");
     struct Case {
-        const char* name;
+        const char* name{};
         QByteArray visual;
-        int mb;
-        int threads;
+        int mb{};
+        int threads{};
     };
     const std::array cases{
         Case{"in range", R"({"keepMB": 512, "keepThreads": 8})", 512, 8},

@@ -804,7 +804,7 @@ QByteArray compact(const QJsonObject& object) {
 // Each CLI's records for a finished turn ending in that reply, for the
 // next prompt that starts a turn, and for that turn's step and final reply.
 struct SentFixture {
-    const char* format;
+    const char* format{};
     QList<QByteArray> before;
     QList<QByteArray> prompt;
     QList<QByteArray> step;
@@ -2354,7 +2354,7 @@ int main(int argc, char** argv) {
     // The offscreen platform reports generic names ("Sans Serif") whose
     // fallback spaces digits apart; name the Mac's interface fonts instead,
     // as the real window's platform resolves them.
-    const auto first_of = [](QStringList wanted, QFontDatabase::SystemFont fallback) {
+    const auto first_of = [](const QStringList& wanted, QFontDatabase::SystemFont fallback) {
         const auto families = QFontDatabase::families();
         for (const auto& family : wanted)
             if (families.contains(family))

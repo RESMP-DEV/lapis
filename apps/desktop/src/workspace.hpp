@@ -868,7 +868,7 @@ class Workspace final : public QObject {
     // unreachable states leave it, so a republished status is no new turn.
     QHash<const Agent*, QString> last_kind_;
     // Why an agent may need the person; the one rule that marks it unseen.
-    enum class Need { finished, quiet, request, away };
+    enum class Need : std::uint8_t { finished, quiet, request, away };
     QString markNeedsYou(Agent* item, Need need);
     void logMark(const Agent* item, const char* event, const QString& why) const;
     Looking looking_;
