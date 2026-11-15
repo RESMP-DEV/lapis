@@ -80,7 +80,8 @@ The six visual view rows name the tests that cover each part. Their screen
 checks are offscreen Qt on this Mac with no native window qualification, and no
 tracked receipt yet records those runs. The 2026-11-14
 [thread-loading integration receipt](../evidence/thread-loading-integration-20261114.json)
-covers the same non-documentation source tree as current main: desktop-enabled
+covers the same non-documentation source tree as PR-base main
+`4ff9c96331f2c8c04564874201907af71218753f`: desktop-enabled
 ASan/UBSan passed all 49 enabled tests, while threaded TSan passed 47 of 49
 with `next-prompt` and `terminal-input` timeouts that reproduced identically on
 the prior main; no sanitizer report was produced. Vendor Qt is uninstrumented,
@@ -122,7 +123,7 @@ they are not automatically current-main acceptance and do not supersede the
 remaining columns above.
 
 - [Supervisor removal](../evidence/supervisor-removal-20261109.json): retired the experimental supervisor path after quality, dev checks and 46 enabled desktop tests.
-- [Codex notify profiles](../evidence/codex-notify-profile-20261110.json): qualified base/profile notify chaining and the installed Codex route at its pinned heads.
+- [Codex notify profiles](../evidence/codex-notify-profile-20261110.json): qualified base/profile notify chaining with fixture CLIs at its pinned heads; it does not record an installed Codex model-provider turn.
 - [Configured model list](../evidence/configured-model-list-20261111.json): qualified configured local and ssh model-name launchability.
 - [Agent rename](../evidence/agent-rename-rebase-20261111.json), [wire pin](../evidence/lapis-wire-pin-20261111.json), [AppWindow rename](../evidence/app-window-rename-20261111.json), [Config rename](../evidence/config-rename-rebase-20261112.json) and [agent API rename](../evidence/agent-api-rename-rebase-20261112.json): record the November rename/rebase integration gates and their exact heads.
 - [Private-file writer](../evidence/private-file-repair-20261112.json) and [QML null publication](../evidence/qml-null-context-20261112.json): qualify the owner-only atomic writer and explicit QML null service values.

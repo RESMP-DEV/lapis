@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-15T02:31:54Z",
-  "recorded_at_basis": "Assembly upper bound; all commands, the accepted worker audit, and review-repair checks completed before this timestamp.",
+  "recorded_at": "2026-11-15T02:55:16Z",
+  "recorded_at_basis": "Assembly upper bound; all commands, the accepted worker audit, and review waves completed before this timestamp.",
   "source_revision": "4ff9c96331f2c8c04564874201907af71218753f",
   "source_dirty": true,
   "platform": "macOS Apple Silicon",
@@ -14,7 +14,7 @@
     {
       "command": "security find-identity -v -p codesigning",
       "exit_code": 0,
-      "result": "Four valid identities are visible: two copies of one Apple Development identity, a second Apple Development identity, and acu-local. No Developer ID Application identity is visible."
+      "result": "Four valid identities are visible, and none is a Developer ID Application identity."
     },
     {
       "command": "security find-certificate -a -c 'Developer ID Application'",
@@ -82,7 +82,7 @@
     "change": "docs/install.md now scopes its Developer ID/notarization claim to exact v0.5.0, names the audited DMG digest, links this receipt, and says that artifact predates fixes on source main."
   },
   "iterative_cleanup": {
-    "finding": "The repository tracked a GitHub Pages workflow while repository and organization Actions were disabled and the Pages API reported no configured site.",
+    "finding": "The repository tracked a GitHub Pages workflow while the repository Actions permissions API reported enabled=false and the Pages API reported no configured site.",
     "commands": [
       {
         "command": "gh api repos/RESMP-DEV/lapis/actions/permissions",
@@ -99,7 +99,7 @@
   },
   "status_reconciliation": {
     "finding": "The status preamble cited a 2026-11-12 all-suite sanitizer narrative instead of the newer exact-source integration receipt.",
-    "verified_source_relationship": "The only path changed from the 2026-11-14 receipt source revision 000c8c9f71b0dbf45aa76e985dd5838f2ffb6922 to current main 4ff9c96331f2c8c04564874201907af71218753f is evidence/thread-loading-integration-20261114.json; the non-documentation source tree is identical.",
+    "verified_source_relationship": "The only path changed from the 2026-11-14 receipt source revision 000c8c9f71b0dbf45aa76e985dd5838f2ffb6922 to PR-base main 4ff9c96331f2c8c04564874201907af71218753f is evidence/thread-loading-integration-20261114.json; the non-documentation source tree is identical.",
     "change": "Status now cites the 2026-11-14 receipt, its 49/49 ASan/UBSan result, 47/49 TSan result, two baseline timeouts, and absence of a sanitizer report. The PTY row no longer claims the real-service backpressure case passes; it records the receipt's 15/17 CLI result with open `backpressure` and `snapshot-limit` baseline timeouts."
   },
   "evidence_ledger": {
@@ -119,6 +119,15 @@
       "mode": "read-only governed MiniMax M3.1 Flash",
       "result": "Ranked five source-verified findings; parent independently verified and addressed all five in this documentation/evidence batch."
     }
+  },
+  "grok_review_repair": {
+    "reviewed_head": "0e86706ca371cd77eb64e01583bb061b21405456",
+    "changes": [
+      "Scoped the Codex receipt-map entry to fixture-CLI notify chaining and kept the installed-provider gate open.",
+      "Named the exact PR-base main revision for the sanitizer source-tree relationship.",
+      "Limited the Actions finding to the repository permissions endpoint actually queried.",
+      "Removed the local identity label from the sanitized keychain result."
+    ]
   },
   "non_claims": [
     "This audit does not locate or recover the missing private key or notary credentials.",
