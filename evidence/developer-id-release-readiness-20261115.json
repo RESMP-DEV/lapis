@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-15T02:00:25Z",
+  "source_revision": "4ff9c96331f2c8c04564874201907af71218753f",
+  "source_dirty": false,
+  "platform": "macOS Apple Silicon",
+  "scope": "Architecture freshness audit: distinguish the proven Developer ID signature and notarization of the published v0.5.0 artifact from the current signing host's ability to produce another release, and remove the dead GitHub Actions publication surface.",
+  "commands": [
+    {
+      "command": "security find-identity -v -p codesigning",
+      "exit_code": 0,
+      "result": "Four valid identities are visible: two copies of one Apple Development identity, a second Apple Development identity, and acu-local. No Developer ID Application identity is visible."
+    },
+    {
+      "command": "security find-certificate -a -c 'Developer ID Application'",
+      "exit_code": 0,
+      "result": "No matching certificate was returned."
+    },
+    {
+      "command": "security find-generic-password -s com.apple.gke.notary.tool",
+      "exit_code": 44,
+      "result": "The specified keychain item could not be found."
+    },
+    {
+      "command": "gh release download v0.5.0 --repo RESMP-DEV/lapis --pattern lapis-macos-arm64.dmg && shasum -a 256 lapis-macos-arm64.dmg",
+      "exit_code": 0,
+      "result": "4992b7cb0aa8936523a49462c067101d4047056569f713d26afa73cbabeee9d1"
+    },
+    {
+      "command": "codesign -dv --verbose=4 <mounted-v0.5.0>/Lapis.app",
+      "exit_code": 0,
+      "result": "Authority Developer ID Application: ELLIOT WILLIAM ARLEDGE (5FG68476XH); TeamIdentifier 5FG68476XH; timestamp 2026-09-28 21:34:34 -0700; Notarization Ticket stapled"
+    },
+    {
+      "command": "spctl -a -vv -t execute <mounted-v0.5.0>/Lapis.app",
+      "exit_code": 0,
+      "result": "accepted; source Notarized Developer ID; local assessment reports security override disabled"
+    },
+    {
+      "command": "xcrun stapler validate <mounted-v0.5.0>/Lapis.app",
+      "exit_code": 0,
+      "result": "The validate action worked."
+    },
+    {
+      "command": "codesign --extract-certificates and openssl x509 on the leaf certificate",
+      "exit_code": 0,
+      "result": "The Developer ID Application leaf is valid from 2026-07-22T06:14:34Z through 2027-02-01T22:12:15Z."
+    }
+  ],
+  "conclusion": "The project has a direct historical record of Developer ID signing and notarization, but the current signing keychain cannot produce a new Developer ID artifact until the matching identity/private key and a notarytool profile are restored or replaced.",
+  "publication_binding": {
+    "change": "docs/install.md now scopes its Developer ID/notarization claim to exact v0.5.0, names the audited DMG digest, links this receipt, and says that artifact predates fixes on source main."
+  },
+  "iterative_cleanup": {
+    "finding": "The repository tracked a GitHub Pages workflow while repository and organization Actions were disabled and the Pages API reported no configured site.",
+    "commands": [
+      {
+        "command": "gh api repos/RESMP-DEV/lapis/actions/permissions",
+        "exit_code": 0,
+        "result": "enabled=false"
+      },
+      {
+        "command": "gh api repos/RESMP-DEV/lapis/pages",
+        "exit_code": 1,
+        "result": "HTTP 404; no Pages site is configured"
+      }
+    ],
+    "change": "Removed `.github/workflows/site.yml` and replaced its publication claim with the source-only site status plus a requirement for a separately reviewed publication procedure."
+  },
+  "status_reconciliation": {
+    "finding": "The status preamble cited a 2026-11-12 all-suite sanitizer narrative instead of the newer exact-source integration receipt.",
+    "verified_source_relationship": "The only path changed from the 2026-11-14 receipt source revision 000c8c9f71b0dbf45aa76e985dd5838f2ffb6922 to current main 4ff9c96331f2c8c04564874201907af71218753f is evidence/thread-loading-integration-20261114.json; the non-documentation source tree is identical.",
+    "change": "Status now cites the 2026-11-14 receipt, its 49/49 ASan/UBSan result, 47/49 TSan result, two baseline timeouts, and absence of a sanitizer report. The PTY row no longer claims the real-service backpressure case passes; it records the receipt's 15/17 CLI result with open `backpressure` and `snapshot-limit` baseline timeouts."
+  },
+  "evidence_ledger": {
+    "finding": "All receipts recorded from 2026-11-10 through 2026-11-14 were tracked but absent from the canonical status evidence section.",
+    "change": "Added a current-integration receipt map that links every recorded receipt in that interval while stating that each is an exact-head observation rather than automatic current-main acceptance."
+  },
+  "worker_evidence": {
+    "discarded_launches": [
+      "20261114-175848-1werep4e",
+      "20261114-175848-_5fy1to7",
+      "20261114-175848-g4b21s2d"
+    ],
+    "discard_reason": "Launcher receipts remained marked running with no worker process or events and produced no reports; they are not accepted as audit evidence.",
+    "accepted_audit": {
+      "run_id": "20261114-180459-q2j5bsim",
+      "thread_id": "01a1dcf3-5f30-7960-b265-3dde2f58d1df",
+      "mode": "read-only governed MiniMax M3.1 Flash",
+      "result": "Ranked five source-verified findings; parent independently verified and addressed all five in this documentation/evidence batch."
+    }
+  },
+  "non_claims": [
+    "This audit does not locate or recover the missing private key or notary credentials.",
+    "The public certificate chain proves only the identity and validity window embedded in v0.5.0; it does not prove current access to Apple developer services.",
+    "Gatekeeper local assessment reported a disabled security override, so the authoritative notarization evidence here is the stapled ticket and successful stapler validation.",
+    "No package was built, submitted, published, installed, updated, or rolled back by this receipt."
+  ]
+}
