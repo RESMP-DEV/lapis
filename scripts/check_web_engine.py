@@ -271,16 +271,10 @@ def terminate_family(
     process: subprocess.Popen[bytes], sampled_pids: list[int] | None = None
 ) -> None:
     """Bound failure paths; successful runs must exit naturally."""
-    children = [
-        sample.pid
-        for sample in family_samples(process.pid)
-        if sample.pid != process.pid
-    ]
-    if sampled_pids is not None:
-        children = list(dict.fromkeys([*sampled_pids, *children]))
-    signal_processes(children, signal.SIGTERM)
-    if process.poll() is None:
-        process.terminate()
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and process.poll() is None:
         time.sleep(0.1)
@@ -290,9 +284,12 @@ def terminate_family(
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         pass
-    alive = {sample.pid for sample in process_samples()}
-    survivors = [pid for pid in children if pid in alive]
-    signal_processes(survivors, signal.SIGKILL)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    if sampled_pids is not None:
+        signal_processes(sampled_pids, signal.SIGKILL)
 
 
 def listening_tcp_report(pids: list[int]) -> str:
@@ -541,6 +538,7 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
             stdout=stdout,
             stderr=stderr,
             env=environment,
+            start_new_session=True,
         )
         try:
             samples, listeners = read_processes(process, run_dir)
@@ -553,7 +551,11 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
     if exit_code == 124:
         terminate_family(process, sampled_pids)
         raise CheckError(f"W0 host timed out after {arguments.timeout} seconds")
-    wait_for_descendant_exit(sampled_pids)
+    try:
+        wait_for_descendant_exit(sampled_pids)
+    except BaseException:
+        terminate_family(process, sampled_pids)
+        raise
     if exit_code != 0:
         if exit_code == 75 and (run_dir / "teardown-error.txt").exists():
             raise CheckError(
