@@ -2,8 +2,8 @@ import XCTest
 import Network
 
 // Answers, empirically, whether the app's ATS keys allow cleartext HTTP to a
-// raw private-range IP address, which is how a ZeroTier address (10.x, e.g.
-// 10.243.203.187) reaches the Mac. In Xcode the bundle is hosted in the Lapis
+// raw private-range IP address, which is how a ZeroTier or LAN address (for
+// example, 192.168.1.20) reaches the Mac. In Xcode the bundle is hosted in the Lapis
 // app (project.yml TEST_HOST), so the app's Info.plist governs the load;
 // scripts/check_ios_remote.py runs it in a runner copy carrying the app's
 // exact NSAppTransportSecurity dict, because that toolchain cannot inject
@@ -44,7 +44,7 @@ final class ATSTests: XCTestCase {
         XCTAssertEqual(String(data: body ?? Data(), encoding: .utf8), "ok",
                        "the request reached the stub but not as the stub's answer")
         // The recorded ATS evidence: which address answered in cleartext.
-        print("ATS probe: cleartext HTTP to \(address.text) "
+        print("ATS probe: cleartext HTTP to a private IPv4 interface "
             + "answered under the app's NSAppTransportSecurity keys.")
     }
 

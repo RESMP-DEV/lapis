@@ -406,15 +406,19 @@ def missing_cli(command):
     raise FileNotFoundError(2, "No such file or directory", command[0])
 
 
-# The shape this Mac's ZeroTier network has in `zerotier-cli -j listnetworks`,
-# with the identifiers sanitized.
+# A representative private `zerotier-cli -j listnetworks` answer, using
+# synthetic identifiers and RFC 5737 documentation addresses.
+ZT_ROUTE = "192.0.2.0/24"
+ZT_OWN_ADDRESS = "192.0.2.10"
+ZT_MEMBER_ADDRESS = "192.0.2.7"
+ZT_OUTSIDE_ADDRESS = "198.51.100.1"
 ZT_NETWORK = {
-    "id": "7d319a9c02e4f5b6",
+    "id": "deadbeefdeadbeef",
     "name": "VPN",
     "status": "OK",
     "type": "PRIVATE",
-    "assignedAddresses": ["10.243.203.187/16"],
-    "routes": [{"flags": 0, "metric": 0, "target": "10.243.0.0/16", "via": None}],
+    "assignedAddresses": [f"{ZT_OWN_ADDRESS}/24"],
+    "routes": [{"flags": 0, "metric": 0, "target": ZT_ROUTE, "via": None}],
 }
 
 
@@ -439,19 +443,19 @@ class AdmissionTests(unittest.TestCase):
 
     def test_zerotier_members_and_this_mac(self):
         auth = remote.ZeroTierAuth(runner=fake_zerotier([ZT_NETWORK]))
-        self.assertTrue(auth.allowed("10.243.9.7"))  # a member inside the route
-        self.assertTrue(auth.allowed("10.243.203.187"))  # this Mac's address
-        self.assertFalse(auth.allowed("10.244.0.1"))  # outside every route
+        self.assertTrue(auth.allowed(ZT_MEMBER_ADDRESS))  # inside the route
+        self.assertTrue(auth.allowed(ZT_OWN_ADDRESS))  # the host's address
+        self.assertFalse(auth.allowed(ZT_OUTSIDE_ADDRESS))  # outside every route
         self.assertFalse(auth.allowed("never-an-address"))
         ipv6 = {
             **ZT_NETWORK,
-            "assignedAddresses": ["fd5b:1a3c:9e22::99/64"],
+            "assignedAddresses": ["fd00:dead:beef::99/64"],
             "routes": [
-                {"flags": 0, "metric": 0, "target": "fd5b:1a3c:9e22::/64", "via": None}
+                {"flags": 0, "metric": 0, "target": "fd00:dead:beef::/64", "via": None}
             ],
         }
         auth = remote.ZeroTierAuth(runner=fake_zerotier([ipv6]))
-        self.assertTrue(auth.allowed("fd5b:1a3c:9e22::1"))
+        self.assertTrue(auth.allowed("fd00:dead:beef::1"))
 
     def test_public_or_unjoined_networks_admit_nobody(self):
         for network in (
@@ -460,20 +464,20 @@ class AdmissionTests(unittest.TestCase):
         ):
             with self.subTest(status=network["status"], type=network["type"]):
                 auth = remote.ZeroTierAuth(runner=fake_zerotier([network]))
-                self.assertFalse(auth.allowed("10.243.9.7"))
+                self.assertFalse(auth.allowed(ZT_MEMBER_ADDRESS))
                 self.assertEqual(auth.hosts(7349), set())
 
     def test_hosts_carry_the_assigned_addresses(self):
         auth = remote.ZeroTierAuth(runner=fake_zerotier([ZT_NETWORK]))
-        self.assertIn("10.243.203.187:7349", auth.hosts(7349))
-        ipv6 = {**ZT_NETWORK, "assignedAddresses": ["fd5b:1a3c:9e22::99/64"]}
+        self.assertIn(f"{ZT_OWN_ADDRESS}:7349", auth.hosts(7349))
+        ipv6 = {**ZT_NETWORK, "assignedAddresses": ["fd00:dead:beef::99/64"]}
         auth = remote.ZeroTierAuth(runner=fake_zerotier([ipv6]))
-        self.assertIn("[fd5b:1a3c:9e22::99]:7349", auth.hosts(7349))
+        self.assertIn("[fd00:dead:beef::99]:7349", auth.hosts(7349))
 
     def test_a_silent_zerotier_admits_nobody(self):
         auth = remote.ZeroTierAuth(runner=missing_cli)
         self.assertEqual(auth.current(), [])
-        self.assertFalse(auth.allowed("10.243.9.7"))
+        self.assertFalse(auth.allowed(ZT_MEMBER_ADDRESS))
         self.assertEqual(auth.hosts(7349), set())
 
     def test_the_first_question_fetches_even_near_a_zero_clock(self):
@@ -487,7 +491,7 @@ class AdmissionTests(unittest.TestCase):
             return [ZT_NETWORK]
 
         auth = remote.ZeroTierAuth(runner=runner, clock=lambda: 5.0)
-        self.assertTrue(auth.allowed("10.243.9.7"))
+        self.assertTrue(auth.allowed(ZT_MEMBER_ADDRESS))
         self.assertEqual(len(calls), 1)
 
     def test_a_fresh_list_then_silence_is_trusted_only_a_while(self):
@@ -503,16 +507,16 @@ class AdmissionTests(unittest.TestCase):
             raise FileNotFoundError(2, "No such file or directory", command[0])
 
         auth = remote.ZeroTierAuth(runner=runner, clock=lambda: clock.now)
-        self.assertTrue(auth.allowed("10.243.9.7"))
+        self.assertTrue(auth.allowed(ZT_MEMBER_ADDRESS))
         state["answered"] = False
         clock.now += remote.ZeroTierAuth.REFRESH + 1  # retried, silent, still fresh
-        self.assertTrue(auth.allowed("10.243.9.7"))
+        self.assertTrue(auth.allowed(ZT_MEMBER_ADDRESS))
         clock.now += remote.ZeroTierAuth.STALE + 1  # silent past the trust window
-        self.assertFalse(auth.allowed("10.243.9.7"))
+        self.assertFalse(auth.allowed(ZT_MEMBER_ADDRESS))
         self.assertEqual(auth.hosts(7349), set())
         state["answered"] = True
         clock.now += remote.ZeroTierAuth.REFRESH + 1  # recovered
-        self.assertTrue(auth.allowed("10.243.9.7"))
+        self.assertTrue(auth.allowed(ZT_MEMBER_ADDRESS))
 
     def test_one_fetch_at_a_time(self):
         started = threading.Semaphore(0)
@@ -531,7 +535,7 @@ class AdmissionTests(unittest.TestCase):
         answers = []
 
         def ask():
-            answers.append(auth.allowed("10.243.9.7"))
+            answers.append(auth.allowed(ZT_MEMBER_ADDRESS))
 
         threads = [threading.Thread(target=ask) for _ in range(3)]
         for thread in threads:
@@ -552,12 +556,12 @@ class AdmissionTests(unittest.TestCase):
             zerotier=remote.ZeroTierAuth(runner=fake_zerotier([ZT_NETWORK])),
         )
         self.assertTrue(admission.allowed("100.64.0.2"))  # a tailnet device
-        self.assertTrue(admission.allowed("10.243.9.7"))  # a ZeroTier member
-        self.assertFalse(admission.allowed("10.244.0.1"))
+        self.assertTrue(admission.allowed(ZT_MEMBER_ADDRESS))  # a ZeroTier member
+        self.assertFalse(admission.allowed(ZT_OUTSIDE_ADDRESS))
         self.assertEqual(admission.dns_name, "mac.example.ts.net")
         hosts = admission.hosts(7349)
         self.assertIn("mac.example.ts.net:7349", hosts)
-        self.assertIn("10.243.203.187:7349", hosts)
+        self.assertIn(f"{ZT_OWN_ADDRESS}:7349", hosts)
 
     def test_either_overlay_admits_a_request(self):
         auth = remote.Admission(
@@ -566,9 +570,9 @@ class AdmissionTests(unittest.TestCase):
         )
         with Server(self, "{}", auth=auth) as server:
             for host, expected in (
-                (f"10.243.203.187:{server.port}", 200),  # a ZeroTier address
+                (f"{ZT_OWN_ADDRESS}:{server.port}", 200),  # a ZeroTier address
                 (f"mac.example.ts.net:{server.port}", 200),  # the tailnet name
-                (f"10.244.0.1:{server.port}", 421),
+                (f"{ZT_OUTSIDE_ADDRESS}:{server.port}", 421),
             ):
                 with self.subTest(host=host):
                     status, _ = server.request(
@@ -597,7 +601,7 @@ class StartupTests(unittest.TestCase):
             tailnet_runner=missing_cli, zerotier_runner=fake_zerotier([ZT_NETWORK])
         )
         self.assertIsNone(tailnet)
-        self.assertTrue(zerotier.allowed("10.243.9.7"))
+        self.assertTrue(zerotier.allowed(ZT_MEMBER_ADDRESS))
 
     def test_both_overlays_are_built_when_both_answer(self):
         tailnet, zerotier = remote.build_admission(
@@ -605,7 +609,7 @@ class StartupTests(unittest.TestCase):
             zerotier_runner=fake_zerotier([ZT_NETWORK]),
         )
         self.assertEqual(tailnet.dns_name, "mac.example.ts.net")
-        self.assertTrue(zerotier.allowed("10.243.9.7"))
+        self.assertTrue(zerotier.allowed(ZT_MEMBER_ADDRESS))
 
     def test_without_any_overlay_the_error_names_both(self):
         with self.assertRaises(remote.GatewayError) as raised:
