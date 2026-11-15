@@ -798,6 +798,7 @@ Run from the repository root:
 | `just cli-check` | Isolated live service/CLI and shell GUI acceptance |
 | `just native-input` | Automated macOS keyboard/clipboard and real Japanese IME through the PTY |
 | `just ios-check` | iPhone app UI tests in a headless simulator, synced with a Mac-side client, including real Codex and Claude Code on a fake model |
+| `python3 scripts/check_web_engine.py` | Explicit opt-in CEF W0 probe on macOS arm64; downloads/builds a pinned 312 MB standard distribution and never runs as part of `just quality` |
 
 Required coverage accumulates when a change touches multiple areas. Take the
 union of the relevant checks; a check satisfying two rows runs once:
@@ -818,6 +819,7 @@ union of the relevant checks; a check satisfying two rows runs once:
 | iPhone app or gateway (`apps/ios`, `apps/remote`) | `just quality` (includes the gateway suite, with a live service when the desktop is built) and `uv run --no-project python scripts/check_ios_remote.py --codex --claude` on macOS with an iOS Simulator runtime; the gateway suite covers the deck and submit routes that lapis-peers uses |
 | Before a release (Mac and iPhone together) | The macOS desktop/native gates above, `just quality` and `just ios-check`, whose Mac-side client stays attached through every UI test and must see and answer the phone. Linux UI qualification remains deferred; run its gate when that port is explicitly selected. |
 | Mac app packaging (`scripts/package_macos.py`, `apps/desktop/macos`, `LAPIS_PACKAGE`) | `just quality`, then `package_macos.py app` and `verify` on the Mac; `verify --notarized` for a release |
+| Native browser W0 harness (`scripts/check_web_engine.py`, `tools/web_probe/`) | `just quality` for the Python/C++ baseline, focused Ruff/py_compile/clang-format, then the explicit runtime probe on macOS arm64; rerun at least twice when teardown or process cleanup changes |
 | Documentation or symlinks only | Verify paths, links and instruction consistency; run `just quality` for shared check/config/instruction changes; no unrelated C++ rebuild |
 
 For focused iPhone UI checks, repeat `--only` to select affected methods in one

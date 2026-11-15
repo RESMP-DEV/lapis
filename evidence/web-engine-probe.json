@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-11-15T05:21:00Z",
+  "agent": "Codex",
+  "scope": "Isolated native-browser W0 engine probe on macOS arm64. This records a hidden CEF host against a local fixture; it does not add product web-service wiring, a GUI surface, credentials, remote debugging, external-browser attachment, or a local-model runtime.",
+  "sanitization": "Public URLs, repository-relative paths, artifact digests, tool versions, and bounded observations only. No user account, host name, private path, credential, raw page payload, or model output is embedded.",
+  "source": {
+    "base_revision": "760dd01dc43b18e4c5f8454c2f5fbdc889e1f033",
+    "working_tree_dirty": true,
+    "changed_paths": [
+      "scripts/check_web_engine.py",
+      "tools/web_probe/cefsimple_mac.mm",
+      "tools/web_probe/simple_app.cc",
+      "tools/web_probe/simple_handler.cc",
+      "tools/web_probe/simple_handler.h",
+      "tools/web_probe/w0.html"
+    ],
+    "source_digest": {
+      "algorithm": "sha256 over repository-relative path, NUL, bytes, and NUL for each listed source, in sorted order",
+      "value": "c80cab3091638e433488733232565a1f460f255c8f4f93d6f0202ab550c34a6b"
+    }
+  },
+  "artifact_resolution": {
+    "index_url": "https://cef-builds.spotifycdn.com/index.json",
+    "index_sha256": "af3a6bc54b6b57c1bcd6f98e1e86d97f687d53559627a4c5f36d6919c886d399",
+    "channel": "stable",
+    "platform": "macosarm64",
+    "cef_version": "156.0.30+g6028375",
+    "chromium_version": "156.0.8078.96",
+    "standard_archive": {
+      "url": "https://cef-builds.spotifycdn.com/cef_binary_156.0.30+g6028375+chromium-156.0.8078.96_macosarm64.tar.bz2",
+      "size_bytes": 312211060,
+      "sha1": "269bb579ada39eefab3c13baf82b3fd46dd42581",
+      "sha256": "22a510e5d348a907953278b618e1e9e442ccf78773b9fee0e09eaf154eef53b0",
+      "index_last_modified": "2026-11-13T05:30:50.669000Z"
+    },
+    "installed_app_bytes_observed": 583849398
+  },
+  "toolchain": {
+    "cmake": "cmake version 4.4.5",
+    "ninja": "1.13.2",
+    "clangxx": "Apple clang version 21.0.0 (clang-21000.4.1.1)"
+  },
+  "implementation": {
+    "runner": "scripts/check_web_engine.py",
+    "owned_host": [
+      "tools/web_probe/cefsimple_mac.mm",
+      "tools/web_probe/simple_app.cc",
+      "tools/web_probe/simple_handler.cc",
+      "tools/web_probe/simple_handler.h",
+      "tools/web_probe/w0.html"
+    ],
+    "download_policy": "The runner is explicit and opt-in; normal quality does not download CEF.",
+    "hidden_runtime": "The host sets NSApplicationActivationPolicyProhibited, creates an Alloy windowless browser, and is launched with --disable-gpu for this software-rendered probe.",
+    "input_path": "Host-to-browser CefBrowserHost mouse and key APIs; no page-dispatched synthetic input.",
+    "inspection_path": "In-process CEF DevTools observer and ExecuteDevToolsMethod; no remote-debugging TCP endpoint.",
+    "teardown_contract": "CloseBrowser(true), then OnBeforeClose releases browser and DevTools references and quits. A bounded check retries forced close and, if close never completes, exits nonzero before CefShutdown rather than quitting with a live browser. The host writes a completion marker only after CefShutdown returns, and the runner requires that marker plus natural exit of every already-sampled descendant PID.",
+    "failure_deadline_basis": "Two-second initial close grace, then one-second forced-close retries through an eight-second deadline. The deadline is deliberately below the roughly ten-second Chromium macOS shutdown watchdog observed in failing exploratory runs; it bounds this probe and is not a CEF close guarantee."
+  },
+  "validation": {
+    "static_commands": [
+      {
+        "command": "ruff format --check scripts/check_web_engine.py",
+        "result": "pass"
+      },
+      {
+        "command": "ruff check scripts/check_web_engine.py",
+        "result": "pass"
+      },
+      {
+        "command": "python3 -m py_compile scripts/check_web_engine.py",
+        "result": "pass"
+      },
+      {
+        "command": "clang-format --dry-run --Werror tools/web_probe/simple_handler.h tools/web_probe/simple_handler.cc tools/web_probe/cefsimple_mac.mm tools/web_probe/simple_app.cc",
+        "result": "pass"
+      }
+    ],
+    "runtime_command": "python3 scripts/check_web_engine.py --cache-dir build/web-engine --report build/reports/web-engine/receipt-N.json",
+    "consecutive_passes": 20,
+    "stability_series": {
+      "first_recorded_at": "2026-11-15T05:20:00.330848Z",
+      "last_recorded_at": "2026-11-15T05:20:32.411138Z",
+      "ignored_receipts_aggregate_sha256": "29ba68f1341c92531b9cfea8764c96f42e9e1f4f188ac2986b6f33af75e5776e",
+      "process_count_each_run": 6,
+      "family_rss_mb_range": [
+        566.859375,
+        572.8125
+      ],
+      "created_to_first_paint_ms_range": [
+        105.715458,
+        158.564125
+      ],
+      "first_paint_to_interaction_ms_range": [
+        161.670417,
+        211.611375
+      ],
+      "paint_count_each_run": 3,
+      "accessibility_node_count_each_run": 14
+    },
+    "behavior": {
+      "bgra_on_paint": true,
+      "trusted_mouse_click_observed": true,
+      "trusted_keyboard_character_observed": true,
+      "deterministic_host_injection": true,
+      "accessibility_node_count": 14,
+      "accessibility_roles": [
+        "InlineTextBox",
+        "LabelText",
+        "RootWebArea",
+        "StaticText",
+        "button",
+        "generic",
+        "main",
+        "none",
+        "textbox"
+      ],
+      "dom_root": "#document",
+      "dom_controls": [
+        "INPUT",
+        "BUTTON"
+      ],
+      "runtime_value": {
+        "lapisProbe": "injected",
+        "button": true,
+        "input": true
+      },
+      "frame_geometry": "800x600 BGRA converted to bounded P6 evidence",
+      "frame_hash_observations": [
+        "614b5dcabc05c84b1af9f78568892a142ee0af77d93d071f39c72f4eb4099ae5",
+        "c3b3d73f6bbb08ab3fa3dfa65d01f89916ba25d37a4f5fbd8cd2202edaa58077",
+        "944133742ff741a182eb6514fc44150f259010038f4c37a76cad5f3c72214e67",
+        "4e9999dd8842dd71bbde8e6ff127af584e870ee8803287f976084e35c6a56fd9"
+      ],
+      "frame_hash_claim": "Pixel hashes vary with paint timing; they are evidence of real frames, not a deterministic snapshot contract."
+    },
+    "cleanup": {
+      "host_exit_code": 0,
+      "cef_shutdown_returned_marker_each_run": true,
+      "teardown_error_file_present": false,
+      "sampled_descendants_exited": true,
+      "scoped_listening_tcp": "zero listeners"
+    }
+  },
+  "agent_state_direction": {
+    "prior_art_result": "Userscript, Playwright/Puppeteer, extension, and browser-agent precedents favor host-owned semantic accessibility snapshots, content-derived stable refs, action-time re-resolution, bounded actionability checks, epochs and bounded diffs, and trusted embedder input. Arbitrary caller JavaScript, extension capability grants, debugger attachment, and page-dispatched input remain rejected for the future public surface.",
+    "w1_schema_direction": "lapis.web.page-state/1 should expose semantic roles, names and states, frame and shadow boundaries, geometry/visibility/affordance, content-derived refs, navigation/view epochs, bounded diffs, and explicit degraded/bootstrap health. Stale refs must reject rather than guess.",
+    "firefox_derived_model_concept": "Firefox's separate inference process, revision-pinned runtime and model records, verified downloads, allowlist and bounded cache are a useful future isolation pattern. Any local classifier must be advisory only: it may annotate a semantic snapshot, but cannot act, focus, navigate, approve, or replace deterministic state.",
+    "model_runtime_added": false
+  },
+  "non_claims": [
+    "No services/web directory, lapis web CLI, product GUI surface, multi-view engine tree, or public API was added.",
+    "Only a local fixture was loaded; no public website, authentication flow, credential store, download, upload, clipboard, or payment path was exercised.",
+    "The isolated host used no-sandbox for this local probe and is not a product sandbox or redistribution policy.",
+    "No CEF SDK/signing/redistribution inventory was completed; Developer ID signing is outside this W0 change.",
+    "One-view RSS and timings are observations, not an eight-view workload or latency budget.",
+    "The host was launched with --disable-gpu; this is a software-rendered windowless path, not GPU compositing or a BGRA-to-Qt upload measurement.",
+    "Accessibility, DOM, and Runtime DevTools methods were exercised on the fixture, but no cross-frame, SPA navigation, stale-ref, reconnect, or W1 diff behavior was tested.",
+    "No Firefox code, model file, inference runtime, or classifier was downloaded or executed."
+  ]
+}
