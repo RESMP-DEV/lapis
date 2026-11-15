@@ -1,9 +1,14 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-15T02:00:25Z",
+  "recorded_at": "2026-11-15T02:31:54Z",
+  "recorded_at_basis": "Assembly upper bound; all commands, the accepted worker audit, and review-repair checks completed before this timestamp.",
   "source_revision": "4ff9c96331f2c8c04564874201907af71218753f",
-  "source_dirty": false,
+  "source_dirty": true,
   "platform": "macOS Apple Silicon",
+  "placeholders": {
+    "<mounted-v0.5.0>": "read-only mount point of the digest-bound lapis-macos-arm64.dmg",
+    "<certificate-prefix>": "private ignored-build prefix passed to codesign --extract-certificates"
+  },
   "scope": "Architecture freshness audit: distinguish the proven Developer ID signature and notarization of the published v0.5.0 artifact from the current signing host's ability to produce another release, and remove the dead GitHub Actions publication surface.",
   "commands": [
     {
@@ -32,6 +37,31 @@
       "result": "Authority Developer ID Application: ELLIOT WILLIAM ARLEDGE (5FG68476XH); TeamIdentifier 5FG68476XH; timestamp 2026-09-28 21:34:34 -0700; Notarization Ticket stapled"
     },
     {
+      "command": "codesign --verify --deep --strict --verbose=2 <mounted-v0.5.0>/Lapis.app",
+      "exit_code": 0,
+      "result": "valid on disk and satisfies its Designated Requirement"
+    },
+    {
+      "command": "codesign -dv --verbose=4 lapis-macos-arm64.dmg",
+      "exit_code": 0,
+      "result": "Format disk image; Authority Developer ID Application: ELLIOT WILLIAM ARLEDGE (5FG68476XH); TeamIdentifier 5FG68476XH; timestamp 2026-09-28 21:34:52 -0700; Notarization Ticket stapled"
+    },
+    {
+      "command": "codesign --verify --deep --strict --verbose=2 lapis-macos-arm64.dmg",
+      "exit_code": 0,
+      "result": "valid on disk and satisfies its Designated Requirement"
+    },
+    {
+      "command": "spctl -a -vv -t open --context context:primary-signature lapis-macos-arm64.dmg",
+      "exit_code": 0,
+      "result": "accepted; source Notarized Developer ID; local assessment reports security override disabled"
+    },
+    {
+      "command": "xcrun stapler validate lapis-macos-arm64.dmg",
+      "exit_code": 0,
+      "result": "The validate action worked."
+    },
+    {
       "command": "spctl -a -vv -t execute <mounted-v0.5.0>/Lapis.app",
       "exit_code": 0,
       "result": "accepted; source Notarized Developer ID; local assessment reports security override disabled"
@@ -42,12 +72,12 @@
       "result": "The validate action worked."
     },
     {
-      "command": "codesign --extract-certificates and openssl x509 on the leaf certificate",
+      "command": "codesign -d --extract-certificates=<certificate-prefix> <mounted-v0.5.0>/Lapis.app && openssl x509 -inform DER -in <certificate-prefix>0 -noout -subject -issuer -serial -dates",
       "exit_code": 0,
       "result": "The Developer ID Application leaf is valid from 2026-07-22T06:14:34Z through 2027-02-01T22:12:15Z."
     }
   ],
-  "conclusion": "The project has a direct historical record of Developer ID signing and notarization, but the current signing keychain cannot produce a new Developer ID artifact until the matching identity/private key and a notarytool profile are restored or replaced.",
+  "conclusion": "The project has a direct historical record of strict Developer ID signature verification and stapled notarization on both the v0.5.0 app and DMG, but the current signing keychain cannot produce a new Developer ID artifact until the matching identity/private key and a notarytool profile are restored or replaced.",
   "publication_binding": {
     "change": "docs/install.md now scopes its Developer ID/notarization claim to exact v0.5.0, names the audited DMG digest, links this receipt, and says that artifact predates fixes on source main."
   },
