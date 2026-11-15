@@ -60,7 +60,7 @@ that uses `lapis_project_options`.
 | Claude route | Hook/terminal observation with explicit answers in Claude's terminal | No GUI response routing until a supported protocol is version-pinned and qualified |
 | Process birth | The window (or the windowless host) starts one detached session service per agent; agents survive window quitting only where the OS permits background execution, and the login helper restarts those whose services died with the Mac | Restart of a crashed session service is not implemented: the agent keeps its last screen until it is restarted or lapis next opens; macOS 27 also requires the Allow in the Background conditions in [install](install.md) |
 | Settings | Tracked `lapis.json` defaults plus private runtime workspace/window state | Machine-local state never becomes a portable credential or session transcript |
-| Native browser surfaces | CEF 8037 is a provisional engine candidate; no runtime is implemented | Run the isolated W0 probe first; product and service wiring wait for R1/R4 |
+| Native browser surfaces | CEF 156.0.30 / Chromium 156.0.8078.96 passed the isolated hidden W0 probe | Product and service wiring wait for R1/R4; each later W checkpoint needs its named receipt |
 
 The old terminal-engine comparison and pinned source receipts remain in
 [evidence](../evidence/). They justify the selected engine; they are not a
@@ -92,32 +92,43 @@ release qualification receipt.
 The next web objective is a native, service-owned browser surface: agents use
 bounded `lapis web` CLI operations against headless views and never require an
 external browser, an MCP transport, a visible GUI, or a caller-named browser
-profile. The research basis is
-[web-surface research](../evidence/web-surface-research.json). It is design
-evidence only: no CEF archive was fetched or executed for that receipt.
+profile. The September [web-surface research](../evidence/web-surface-research.json)
+selected the boundary; the current [W0 engine receipt](../evidence/web-engine-probe.json)
+exercised the pinned runtime. Research does not authorize W1 while R1/R4 remain open.
 
 The ladder below is ordered and non-collapsing. Passing one checkpoint does not
 promote the next, and no checkpoint makes lapis a general-purpose browser.
 
 | Checkpoint | Bounded slice | Exit evidence |
 | --- | --- | --- |
-| W0: engine probe | Resolve the current exact macOS arm64 stable artifact in CEF branch 8037, then fetch and digest it; inspect SDK, codesign, and redistribution inventory; run one isolated offscreen CEF host on fixture content. Exercise BGRA `OnPaint`, trusted input synthesis, and in-process DevTools with remote-debugging TCP disabled. Measure installed size, launch/frame cost, and one-view memory. A BGRA-to-Qt upload is the first qualified display path; IOSurface/Vulkan interop is optional follow-up evidence, not a prerequisite. | `evidence/web-engine-probe.json` records the resolved version, artifact digest, toolchain, real frames/input/replies, observed limits, and cleanup. A failed result selects the recorded fallback decision; it does not silently swap engines. |
-| W1: headless vertical slice | After R1 and R4 close, add `services/web/` with one service-owned engine tree and isolated per-view request contexts. Register the deterministic bootstrap host-side for new documents, with a heartbeat and explicit degraded state. Expose only `status`, `open`, `navigate`, `snapshot`, `click`, `wait`, and `close` over a private versioned socket; the CLI emits one bounded JSON envelope and meaningful exit codes. Snapshots carry content-derived refs that the service re-resolves at action time; a changed page returns a stale-ref diff. | Real local fixtures, including full navigation and SPA-style route change, pass through the CLI without a GUI. A deliberately broken bootstrap makes injection health explicit; malformed/stale actions never execute. |
+| W0: engine probe | Implemented as an explicit opt-in runner. It pins the exact macOS arm64 stable CEF artifact, verifies size and both digests, overlays a hidden lapis-owned Alloy windowless host, and exercises BGRA `OnPaint`, trusted host input, in-process Accessibility/DOM/Runtime DevTools methods, bounded process sampling, scoped listener checks, and contract-safe cleanup on a local fixture. | `evidence/web-engine-probe.json` records the resolved version, artifact digests, source digest, toolchain, twenty consecutive lifecycle-gated passes, semantic replies, frame observations, memory, and cleanup. It also records that SDK/codesign/redistribution inventory remains open and pixel hashes are not a determinism contract. |
+| W1: headless vertical slice | After R1 and R4 close, add `services/web/` with one service-owned engine tree and isolated per-view request contexts. Register the deterministic bootstrap host-side for new documents, with a heartbeat and explicit degraded state. Expose only `status`, `open`, `navigate`, `snapshot`, `click`, `wait`, and `close` over a private versioned socket; the CLI emits one bounded JSON envelope and meaningful exit codes. `lapis.web.page-state/1` snapshots carry semantic roles/names/states, frame and shadow boundaries, geometry, visibility and affordance, content-derived refs, navigation/view epochs, bounded diffs, and bootstrap health; refs are re-resolved at action time and stale refs reject rather than guess. | Real local fixtures, including full navigation and SPA-style route change, pass through the CLI without a GUI. A deliberately broken bootstrap makes injection health explicit; malformed/stale actions never execute. |
 | W2: GUI compositing | Add a `WebSurface` beside the terminal surface. Upload bounded dirty BGRA regions through public Qt scene-graph interfaces, use the same focus/IME ownership policy, and keep previews throttled, non-interactive, and never view-resizing. | Background Qt and native macOS input evidence cover typing, IME, selection, and refusal while the user owns input; terminal latency gates do not regress. |
 | W3: attention and approvals | Register `adapter_id` `web`; classify login/captcha, form submission, download, upload, clipboard, payment, and navigation-risk actions. Decision tokens bind the current view, navigation epoch, target, and arguments. | Risky fixture actions block for an explicit user decision and retire only that request. Page text can request attention but never act or redirect focus. |
 | W4: credential import and isolation | Permit explicit user-initiated import only. Start with a `storageState` interchange file; Chromium-family disk import requires a later reviewed probe under lapis' final code signing. Cookies and storage enter one in-memory isolated context before first navigation, are never exposed by a verb/event/receipt, and are never copied as a profile directory. | User-consented fixture login passes; fixture credential bytes appear in no CLI output, event, log, or receipt; cross-view isolation and revocation/destruction tests pass. |
 | W5: workload and publication | Exercise the assembled package with eight concurrent web views under controlled navigation/output load, then record memory, frame/action latency, and idle cost. Complete dependency notices, inventory/SBOM, and the pin/update policy. | One candidate-scoped receipt reports p50/p95/p99 and recovery on service/GUI restart. A 32-view workload is a later separate scale claim. |
 
-CEF is the only current W0 candidate because the research found its public
-offscreen paint, trusted input, and in-process DevTools surfaces in one
-out-of-process engine tree. The September survey artifact remains published, but
-the live index has a newer branch-8037 stable; W0 resolves that current exact
-version instead of inheriting the survey timestamp. WKWebView remains a display
-candidate without a qualified headless control path, and a separately supervised
-Qt WebEngine host is the recorded alternative if CEF fails its empirical gate.
-Neither is a
-silent substitution. External-browser CDP attachment remains a different
-capability and does not solve profile ownership or process cleanup.
+CEF is the current W0 engine because the pinned 156.0.30 / Chromium
+156.0.8078.96 standard artifact passed the hidden host probe. The runner never
+exposes remote DevTools, caller JavaScript, page-dispatched input, or a caller
+profile. WKWebView remains a display candidate without a qualified headless
+control path, and a separately supervised Qt WebEngine host is the recorded
+alternative if a later W checkpoint fails. Neither is a silent substitution.
+External-browser CDP attachment remains a different capability and does not
+solve profile ownership or process cleanup.
+
+The userscript and browser-agent prior art is deliberately narrowed to the
+deterministic parts lapis can own: host-registered per-document bootstrap,
+semantic state derived from accessibility and DOM boundaries, stable refs with
+action-time re-resolution, explicit stale-ref rejection, and trusted host input.
+Arbitrary caller scripts, extension capability grants, and debugger attachment
+do not become the public surface.
+
+Firefox supplies a future model-isolation pattern, not a W0 dependency: run
+advisory classification in a separate inference process, pin runtime and model
+revisions, verify downloads, enforce an allowlist and bounded cache, and never
+let an annotation act, focus, navigate, or approve. No model runtime is added in
+this milestone.
 
 ## Codex route
 

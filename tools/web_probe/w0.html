@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>W0 ready</title>
+</head>
+<body>
+  <main>
+    <button id="target" style="position:absolute;left:20px;top:20px;width:240px;height:64px">Trigger click</button>
+    <label style="position:absolute;left:20px;top:120px">Agent input
+      <input id="field" style="display:block;width:240px;height:32px" aria-label="Agent input">
+    </label>
+  </main>
+  <script>
+    document.title = 'W0 ready';
+    document.getElementById('target').addEventListener('click', () => {
+      document.title = 'W0 clicked';
+      console.log('lapis-w0:click');
+    });
+    document.getElementById('field').addEventListener('input', (event) => {
+      document.title = 'W0 typed:' + event.target.value;
+      console.log('lapis-w0:type:' + event.target.value);
+    });
+    console.log('lapis-w0:ready');
+  </script>
+</body>
+</html>
