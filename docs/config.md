@@ -77,8 +77,8 @@ Code, Codex and Antigravity agent on this Mac as a thread from the moment it
 opens (on unless the file says `false`), and `editor`, what Command-click on a file path opens
 it in (`vscode`, `cursor`, `zed`, `textedit`, `system`, or `auto` for the first
 of those installed). An unknown name falls back to the first choice.
-`"factory": true` opens the [factory view](workspace.md#factory-view); it is
-written only while the view is on.
+An old `"factory"` key, from the retired Factory view, is ignored and left as
+it is.
 
 ```json
 "visual": {"theme": "terminal", "font": "system", "codeFont": "system", "size": 0, "all": true, "editor": "auto"}

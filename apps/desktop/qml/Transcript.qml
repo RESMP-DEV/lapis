@@ -85,9 +85,6 @@ FocusScope {
     property var screen: null
     // A link clicked in the thread goes here first; true means it was handled.
     property var openLink: null
-    // Height kept above the composer for the host's own strip (accessory).
-    property real composerInset: 0
-    readonly property alias accessory: accessorySlot
     // The terminal's rows above its input box, read a few times a second
     // while a command or turn runs, to see when the screen goes quiet.
     property var liveRows: []
@@ -1363,7 +1360,7 @@ FocusScope {
                 event.accepted = true
             }
         }
-        // The host may take a link first (the factory view's agent links).
+        // The host may take a link first (links that name an agent).
         onLinkActivated: link => {
             if (root.openLink && root.openLink(link))
                 return
@@ -3580,17 +3577,7 @@ FocusScope {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: root.composerInset + composerBox.height + Math.round(root.fontSize * 0.8) + hints.height + 6
-
-        // Room the host keeps above the composer (the factory view's gate
-        // strip); what it puts in `accessory` is laid over it.
-        Item {
-            id: accessorySlot
-            objectName: "visualComposerAccessory"
-            x: composerBox.x
-            width: composerBox.width
-            height: Math.max(0, root.composerInset - 6)
-        }
+        height: composerBox.height + Math.round(root.fontSize * 0.8) + hints.height + 6
 
         // The slash commands that best match what is typed, three at most.
         Rectangle {
@@ -3655,7 +3642,7 @@ FocusScope {
             id: composerBox
             width: Math.min(root.columnWidth, parent.width - 56)
             x: (parent.width - width) / 2
-            y: root.composerInset
+            y: 0
             height: chips.height + inputScroll.height + toolbar.height + 30
             radius: Math.round(root.fontSize * 0.9)
             color: root.raisedColor

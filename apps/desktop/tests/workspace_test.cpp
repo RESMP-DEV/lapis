@@ -1826,6 +1826,61 @@ void unknownRegistryVersionsAreRejected() {
     require(readRegistry(options.storagePath) == bytes, "unknown versions remain for migration");
 }
 
+// A link in a thread names an agent by id or conversation, or a unique
+// prefix of either. A registry saved while the retired Factory view pinned
+// an orchestrator ("homeAgent") still restores, and the next save drops it.
+void agentLinksNameOpenAgents() {
+    {
+        Workspace workspace(WorkspaceMode::fixture);
+        require(workspace.resolveAgentLink("lapis://agent/rend") == "renderer" &&
+                    workspace.resolveAgentLink("lapis://agent/CHECKS") == "checks" &&
+                    workspace.resolveAgentLink("lapis://agent/notes/") == "notes" &&
+                    workspace.resolveAgentLink("lapis://agent/s").isEmpty() &&
+                    workspace.resolveAgentLink("lapis://agent/missing").isEmpty() &&
+                    workspace.resolveAgentLink("https://example.com").isEmpty(),
+                "agent links resolve by id or unique prefix");
+    }
+    QTemporaryDir directory;
+    require(directory.isValid(), "link directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString first = QStringLiteral("0b6f1a4e-7d55-4c35-9a53-1f3f27b8c1a1");
+    const QString second = QStringLiteral("1c7e2b5f-8e66-4d46-8b64-2a4038c9d2b2");
+    const QString thread = QStringLiteral("5d0c2a9e-3b1f-4c6a-8e7d-9f0a1b2c3d4e");
+    const auto record = [&](const QString& id, const char* harness) {
+        return QJsonObject{{"id", id},
+                           {"title", id.left(8)},
+                           {"category", "general"},
+                           {"endpoint", QDir(canonical).filePath(id + ".sock")},
+                           {"program", "/usr/bin/true"},
+                           {"harness", harness},
+                           {"directory", canonical}};
+    };
+    auto agy = record(second, "agy");
+    agy.insert("conversation", thread);
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    options.headless = true;
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", QJsonArray{record(first, "codex"), agy}},
+                    {"homeAgent", second}});
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty() && workspace.agent(first) != nullptr &&
+                workspace.agent(second) != nullptr,
+            "a registry with homeAgent restores both agents");
+    require(workspace.resolveAgentLink("conversation://" + thread) == second &&
+                workspace.resolveAgentLink("conversation://5d0c2a9e") == second &&
+                workspace.resolveAgentLink("lapis://agent/0b6f") == first,
+            "conversation and agent links resolve");
+    require(workspace.renameAgent(first, QStringLiteral("Renamed")), "a change saves the registry");
+    const auto saved = QJsonDocument::fromJson(readRegistry(options.storagePath)).object();
+    require(!saved.contains("homeAgent") && saved.value("agents").toArray().size() == 2,
+            "the next save drops homeAgent and keeps the agents");
+}
+
 // Harnesses without an observer get an output-timing estimate that
 // says so; reattaching does not count as activity.
 void outputEstimate() {
@@ -7565,6 +7620,7 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("chimes") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("attention") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("sidebar") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("agent-links") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("visual-files") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("closing")),
@@ -7572,7 +7628,7 @@ int main(int argc, char** argv) {
                     "adapter-status|remote-options|remote-hooks|local-codex|retired-plans|reload|"
                     "updater|"
                     "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|attention|"
-                    "sidebar|"
+                    "sidebar|agent-links|"
                     "stage-size|visual-files|closing]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("adapter-status")) {
@@ -7635,6 +7691,8 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("sidebar")) {
                 nextAgentWalksTheSidebar();
                 categoryColorsPersist();
+            } else if (selected == QStringLiteral("agent-links")) {
+                agentLinksNameOpenAgents();
             } else {
                 reloadStartsAgentsAgain();
                 reloadFailuresRemainRetryable();
@@ -7663,6 +7721,7 @@ int main(int argc, char** argv) {
         failedWritesPreserveState();
         malformedAgentRegistry();
         unknownRegistryVersionsAreRejected();
+        agentLinksNameOpenAgents();
         unseenFollowsTurnsAndSelection();
         attentionMarksFollowLooking();
         tabSkipsTurnsAlreadySeen();

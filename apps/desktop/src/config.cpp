@@ -771,7 +771,6 @@ void Config::load_visual(const QJsonObject& root) {
     // Every agent shows as a thread unless the file says false.
     const auto all = visual.value(QStringLiteral("all"));
     visual_all_ = all.isBool() ? all.toBool() : true;
-    visual_factory_ = visual.value(QStringLiteral("factory")).toBool();
     visual_editor_ = name("editor", "auto");
     // A missing or out-of-range number keeps the default.
     const auto number = [&visual](const char* key, int fallback, int most) {
@@ -886,7 +885,6 @@ QVariantMap Config::visual() const {
             {QStringLiteral("codeFont"), visual_code_font_},
             {QStringLiteral("size"), visual_size_},
             {QStringLiteral("all"), visual_all_},
-            {QStringLiteral("factory"), visual_factory_},
             {QStringLiteral("editor"), visual_editor_},
             {QStringLiteral("appearance"), appearance_},
             {QStringLiteral("light"), lightShown()},
@@ -934,10 +932,6 @@ bool Config::setVisual(const QString& key, const QVariant& value) {
         if (visual_all_ == value.toBool())
             return true;
         visual_all_ = value.toBool();
-    } else if (key == QLatin1String("factory")) {
-        if (visual_factory_ == value.toBool())
-            return true;
-        visual_factory_ = value.toBool();
     } else {
         return false;
     }
@@ -1422,11 +1416,6 @@ bool Config::persist() {
     visual.insert(QStringLiteral("codeFont"), visual_code_font_);
     visual.insert(QStringLiteral("size"), visual_size_);
     visual.insert(QStringLiteral("all"), visual_all_);
-    // Written only while it is on, so files without it stay as they were.
-    if (visual_factory_)
-        visual.insert(QStringLiteral("factory"), true);
-    else
-        visual.remove(QStringLiteral("factory"));
     visual.insert(QStringLiteral("editor"), visual_editor_);
     if (appearance_chosen_)
         visual.insert(QStringLiteral("appearance"), appearance_);

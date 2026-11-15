@@ -1,14 +1,13 @@
-// The factory view in the production window, always offscreen with the
-// software renderer: the visual bar's Factory toggle, the orchestrator's
-// thread beside the four-stage pipeline board seeded from a judge's
-// factory_state.json, the gate strip, drilling into a worker from an agent
-// link or a card and back, and the way back to categories. It never shows a
-// window, takes focus or touches the person's files.
+// The visual view in the production window, always offscreen with the
+// software renderer: the sidebar's bottom block, the sidebar's slide and
+// agent links in a thread (run). It never shows a window, takes focus or
+// touches the person's files.
 //
-//   lapis_factory_ui_tests --background [--new-session | --tab-flow] [--capture DIR]
+//   lapis_visual_ui_tests --background [--new-session | --tab-flow] [--capture DIR]
 //
-// With --capture it saves factory_mode_overview.png, factory_drilldown_view.png
-// and classic_toggle_restored.png (1440x920) in DIR. --new-session checks a
+// With --capture it saves sidebar_bottom_comfortable.png,
+// sidebar_bottom_compact.png and sidebar_bottom_minimal.png (1200x800, dark)
+// in DIR. --new-session checks a
 // new session opening on its thread instead (run_new_session), and saves
 // new_session_empty.png, new_session_first_send.png and
 // new_session_trust_screen.png (1200x800). --tab-flow checks Tab, Tab, Tab
@@ -21,7 +20,6 @@
 #include "transcript.hpp"
 #include "workspace.hpp"
 
-#include <QColor>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -36,7 +34,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
-#include <QMouseEvent>
+#include <QKeySequence>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
@@ -95,25 +93,6 @@ bool shown(QQuickWindow& window, const QString& name) {
     auto* found = find(window.contentItem(), name);
     return found != nullptr && found->isVisible() && found->width() > 0 && found->height() > 0;
 }
-void click(QQuickWindow& window, QQuickItem& target) {
-    const auto position = target.mapToScene(QPointF(target.width() / 2, target.height() / 2));
-    require(position.x() >= 0 && position.y() >= 0 && position.x() <= window.width() &&
-                position.y() <= window.height(),
-            "a control is outside the window: " + target.objectName().toStdString());
-    const auto global = window.mapToGlobal(position);
-    QMouseEvent press(QEvent::MouseButtonPress, position, global, Qt::LeftButton, Qt::LeftButton,
-                      Qt::NoModifier);
-    QMouseEvent release(QEvent::MouseButtonRelease, position, global, Qt::LeftButton, Qt::NoButton,
-                        Qt::NoModifier);
-    QCoreApplication::sendEvent(&window, &press);
-    QCoreApplication::sendEvent(&window, &release);
-    pump(60);
-}
-void click(QQuickWindow& window, const QString& name) {
-    auto* target = item(window, name);
-    require(target->isVisible(), name.toStdString() + " is not visible");
-    click(window, *target);
-}
 // The first text item under `root` whose text holds `needle`.
 QQuickItem* text_with(QQuickItem* root, const QString& needle) {
     const auto text = root->property("text");
@@ -138,11 +117,6 @@ void write(const QString& path, const QByteArray& bytes) {
     require(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "write " + path.toStdString());
     require(file.write(bytes) == bytes.size(), "write all of " + path.toStdString());
 }
-QJsonObject verdict(const char* stage, bool keep, const char* headline, const char* reason,
-                    const char* receipt, qint64 at) {
-    return {{"stage", stage},   {"keepNeeded", keep}, {"headline", headline},
-            {"reason", reason}, {"receipt", receipt}, {"judgedAtMs", at}};
-}
 QJsonObject step(int index, const char* type, const char* field, const QString& text) {
     return {{"step_index", index},
             {"source", type == QLatin1String("USER_INPUT") ? "USER_EXPLICIT" : "MODEL"},
@@ -153,116 +127,69 @@ QJsonObject step(int index, const char* type, const char* field, const QString& 
             {field, text}};
 }
 
-// Eight sample workers in three categories, judged by a separate model, and
-// an Antigravity orchestrator whose thread cites them.
-void seed(Workspace& workspace, const QTemporaryDir& directory) {
-    const auto kernels = workspace.createCategory(QStringLiteral("Kernels"));
-    const auto product = workspace.createCategory(QStringLiteral("Product"));
-    require(!kernels.isEmpty() && !product.isEmpty(), "sample categories");
-    require(workspace.addFixtureAgent("carbon", "Gemini 4 Carbon · night shift", "general", "agy",
-                                      "orchestrator\r\n") &&
-                workspace.addFixtureAgent("fp8", "FP8 GEMM tuning", kernels, "codex",
-                                          "\x1b[34msweep\x1b[0m 3/5  best 1.31x\r\n") &&
-                workspace.addFixtureAgent("triage", "Issue triage", product, "claude",
-                                          "14 stale issues found\r\n"),
-            "sample agents");
-    const QList<std::array<const char*, 3>> names{{"renderer", "Renderer · glyph cache", "codex"},
-                                                  {"agent", "Adapter bridge", "claude"},
-                                                  {"service", "Session service fix", "codex"},
-                                                  {"checks", "Release checks", "claude"},
-                                                  {"notes", "Docs sweep", "agy"},
-                                                  {"shell", "Bench harness", "codex"}};
-    for (const auto& [id, title, harness] : names) {
-        require(workspace.renameAgent(id, title), std::string("rename ") + id);
-        workspace.agent(id)->setHarnessId(QString::fromLatin1(harness));
+// The bound sequences of every Shortcut in the window.
+QList<QKeySequence> shortcut_sequences(QQuickWindow& window) {
+    QList<QKeySequence> found;
+    const auto add = [&found](const QVariant& value) {
+        if (value.metaType().id() == QMetaType::QKeySequence)
+            found.append(value.value<QKeySequence>());
+        else if (!value.toString().isEmpty())
+            found.append(QKeySequence::fromString(value.toString(), QKeySequence::PortableText));
+    };
+    for (auto* object : window.findChildren<QObject*>()) {
+        if (object->metaObject()->indexOfProperty("sequences") < 0 ||
+            object->metaObject()->indexOfProperty("autoRepeat") < 0)
+            continue;
+        for (const auto& value : object->property("sequences").toList())
+            add(value);
+        add(object->property("sequence"));
     }
-    require(workspace.moveAgent("renderer", kernels) && workspace.moveAgent("shell", kernels) &&
-                workspace.moveAgent("checks", product) && workspace.moveAgent("notes", product),
-            "sample categories filled");
-
-    // The orchestrator's conversation, as Antigravity saves it.
-    QDir(directory.path()).mkpath("carbon");
-    const auto thread = QDir(directory.path()).filePath("carbon/transcript_full.jsonl");
-    const QString summary = QStringLiteral(
-        "Here is where tonight's lanes stand.\n\n"
-        "**2 gates need you**\n\n"
-        "- [Adapter bridge](lapis://agent/agent) wants approval to run `migrate` on staging.\n"
-        "- [Issue triage](lapis://agent/triage) asks whether to close 14 stale issues.\n\n"
-        "**In progress**\n\n"
-        "- [Renderer](lapis://agent/renderer): batching glyph uploads, 41/46 tests green.\n"
-        "- [FP8 GEMM](lapis://agent/fp8): sweep 3 of 5, best 1.31x over baseline.\n\n"
-        "**Landed**\n\n"
-        "- [Session service fix](lapis://agent/service) merged as `225b30d`, 9/9 checks.\n"
-        "- [Release checks](lapis://agent/checks) notarized v0.9.4.\n\n"
-        "**Idle**: the judge marks [Docs sweep](lapis://agent/notes) safe to close; keep "
-        "[Bench harness](lapis://agent/shell) parked for the profiling rerun.");
-    QByteArray lines;
-    for (const auto& value :
-         {step(0, "USER_INPUT", "content",
-               "<USER_REQUEST>\nSummarize tonight's lanes and tell me what needs "
-               "me.\n</USER_REQUEST>"),
-          step(1, "PLANNER_RESPONSE", "content", summary),
-          step(2, "USER_INPUT", "content",
-               "<USER_REQUEST>\nWhich ones can I close?\n</USER_REQUEST>"),
-          step(3, "PLANNER_RESPONSE", "content",
-               "Close [Docs sweep](lapis://agent/notes): its PR merged two hours ago and nothing "
-               "depends on it. Keep the others; the board marks each one.")})
-        lines += QJsonDocument(value).toJson(QJsonDocument::Compact) + '\n';
-    write(thread, lines);
-    require(workspace.setFixtureConversation("carbon", thread), "the orchestrator's thread");
-
-    // Live state: two at work, two finished, two quiet, two waiting on you.
-    report(*workspace.agent("renderer"), Activity::working);
-    report(*workspace.agent("fp8"), Activity::working);
-    report(*workspace.agent("service"), Activity::turn_completed);
-    report(*workspace.agent("checks"), Activity::turn_completed);
-    report(*workspace.agent("notes"), Activity::idle);
-    report(*workspace.agent("shell"), Activity::idle);
-    require(workspace.requestAttention({"agent", "gate-1", "Approve: run migrate on staging"}) &&
-                workspace.requestAttention({"triage", "gate-2", "Close 14 stale issues?"}),
-            "sample requests");
-
-    // The judge's verdicts, after that live state.
-    pump(20);
-    const auto now = QDateTime::currentMSecsSinceEpoch() + 1000;
-    const QJsonObject agents{
-        {"renderer", verdict("in_progress", true, "Batching glyph uploads · 41/46 tests green",
-                             "Actively editing", "", now)},
-        {"fp8", verdict("in_progress", true, "Sweep 3/5 · best 1.31x over cuBLAS baseline",
-                        "Running", "", now)},
-        {"service", verdict("landed", true, "Merged #81 on main with 9/9 checks passing",
-                            "Merged 40m ago", "225b30d · 9/9 checks", now)},
-        {"checks", verdict("landed", true, "v0.9.4 notarized and stapled", "Release done",
-                           "v0.9.4 · notarized", now)},
-        {"notes", verdict("idle_cull", false, "Docs sweep merged", "Merged 2h ago, safe to close",
-                          "a41c9e2 · docs", now)},
-        {"shell", verdict("idle_cull", true, "Profiling baseline captured",
-                          "Holds tonight's profiling baseline for the rerun", "", now)},
-        {"agent", verdict("needs_you", true, "Migration ready", "Waiting on approval", "", now)}};
-    const auto state = QDir(directory.path()).filePath("factory_state.json");
-    write(state, QJsonDocument(QJsonObject{{"version", 1},
-                                           {"updatedAtMs", now},
-                                           {"judgeModel", "claude-haiku-5-5"},
-                                           {"agents", agents}})
-                     .toJson());
-    workspace.setFactoryStatePath(state);
+    return found;
 }
 
-// Cohesive parser/test flow; branching stays local.
+// The window at rest now that the Factory view is gone: a lapis.json that
+// still says "visual": {"factory": true} loads without a complaint and keeps
+// the key as written, nothing in the window offers the view (no control, no
+// Commands entry, no Command-Shift-F), the sidebar's bottom block (Visual
+// view, This agent and All agents, Commands) lays out inside the sidebar in
+// every density, the sidebar still slides, and an agent link in a thread
+// opens that agent. With --capture it saves sidebar_bottom_<density>.png
+// (1200x800, dark) in DIR.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run(const QString& captures) {
     QTemporaryDir directory;
     require(directory.isValid(), "temporary directory");
     Workspace workspace(WorkspaceMode::fixture);
-    seed(workspace, directory);
-    require(workspace.factorySummary().value("judged").toBool(), "the judge's file loaded");
+    require(workspace.addFixtureAgent("lead", "Lead", "general", "claude", ""), "a thread agent");
+    const auto thread = QDir(directory.path()).filePath("lead.jsonl");
+    write(thread, QByteArray(R"({"type":"user","uuid":"u","message":{"content":"Who renders?"}})"
+                             "\n"
+                             R"({"type":"assistant","uuid":"a","message":{"content":[{"type":)"
+                             R"("text","text":"Ask [Renderer](lapis://agent/renderer)."}]}})"
+                             "\n"));
+    require(workspace.setFixtureConversation("lead", thread), "the lead's thread");
+    report(*workspace.agent("lead"), Activity::turn_completed);
 
+    // A file written while the view existed: it loads cleanly and the key is
+    // ignored, and saving another setting leaves it as the person wrote it.
     const auto config_path = QDir(directory.path()).filePath("lapis.json");
-    write(config_path, R"({"version": 1})");
+    write(config_path, R"({"version": 1, "visual": {"factory": true}})");
     Config config;
     config.setSourcePathForTesting(config_path);
-    require(config.load() && !config.visualFactory(), "Factory starts off");
-    require(workspace.selectAgent("renderer"), "a worker on the stage in the classic view");
+    require(config.load(), "a config with visual.factory loads");
+    require(config.diagnostic().isEmpty(),
+            "no complaint about visual.factory: " + config.diagnostic().toStdString());
+    require(!config.visual().contains(QStringLiteral("factory")), "visual.factory is ignored");
+    require(config.setAppearance(QStringLiteral("dark")), "dark appearance");
+    {
+        QFile file(config_path);
+        require(file.open(QIODevice::ReadOnly), "read lapis.json");
+        const auto visual =
+            QJsonDocument::fromJson(file.readAll()).object().value("visual").toObject();
+        require(visual.value("factory").toBool() && visual.value("appearance") == "dark",
+                "a save keeps the old key untouched beside the new setting");
+    }
+    require(workspace.selectAgent("renderer"), "a sample agent on the stage");
 
     AppWindow preview(workspace, {.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
                                   .compact = false,
@@ -271,250 +198,145 @@ int run(const QString& captures) {
     require(preview.load(), "the production window loads");
     auto* window = preview.window();
     require(window != nullptr, "the window exists");
-    window->resize(1440, 920);
+    window->resize(1200, 800);
     window->show();
     window->requestActivate();
     pump(200);
-    const auto save = [&](const char* name) {
+    const auto save = [&](const QString& name) {
         if (captures.isEmpty())
             return;
         pump(250);
-        const auto path = QDir(captures).filePath(QString::fromLatin1(name));
+        const auto path = QDir(captures).filePath(name);
         require(window->grabWindow().save(path), "save " + path.toStdString());
-        std::cout << "factory_ui_test: saved " << name << '\n';
+        std::cout << "visual_ui_test: saved " << name.toStdString() << '\n';
     };
 
-    // Classic: categories and the stage agent; no factory chrome.
-    require(!shown(*window, "factoryBoard") && !shown(*window, "factoryHeader") &&
-                !shown(*window, "backToFactoryBar"),
-            "the classic view has no factory chrome");
-    require(shown(*window, "visualFactoryMode") && shown(*window, "visualThisAgent") &&
-                shown(*window, "visualAllAgents"),
-            "the visual bar offers This agent, All agents and Factory");
-    const auto classic_stage = item(*window, "focusedPane")->width();
-
-    // The Factory toggle in the visual bar.
-    click(*window, "visualFactoryMode");
-    until([&] { return window->property("factoryMode").toBool(); }, "Factory turns on");
-    require(config.visualFactory(), "visual.factory is saved on");
-    until([&] { return shown(*window, "factoryBoard") && shown(*window, "factoryHeader"); },
-          "the board and the orchestrator's bar show");
-    until([&] { return workspace.focusedAgent() == workspace.agent("carbon"); },
-          "the orchestrator is on the stage");
-    until([&] { return shown(*window, "visualView"); }, "the orchestrator shows as its thread");
-    require(item(*window, "focusedPane")->width() < classic_stage * 0.75,
-            "the thread shares the width with the board");
-    const auto board_width = item(*window, "factoryBoard")->width();
-    require(board_width > 1440 * 0.3 && board_width < 1440 * 0.45,
-            "the board takes about 40% of the window");
-
-    // Every stage, from the seeded verdicts and live state.
-    const auto in_stage = [&](const char* stage, const char* agent) {
-        auto* card = find(item(*window, QStringLiteral("factoryStage_") + stage),
-                          QStringLiteral("factoryCard_") + agent);
-        return card != nullptr && card->isVisible();
-    };
-    until(
-        [&] {
-            return in_stage("needs_you", "agent") && in_stage("needs_you", "triage") &&
-                   in_stage("in_progress", "renderer") && in_stage("in_progress", "fp8") &&
-                   in_stage("landed", "service") && in_stage("landed", "checks") &&
-                   in_stage("idle_cull", "notes") && in_stage("idle_cull", "shell");
-        },
-        "the eight workers sit in their four stages");
-    require(find(window->contentItem(), "factoryCard_carbon") == nullptr,
-            "the orchestrator is not on its own board");
-    require(item(*window, "factoryBadge_notes")->property("label").toString() == "Safe to close" &&
-                item(*window, "factoryBadge_shell")->property("label").toString() == "Keep parked",
-            "idle agents carry the judge's badge");
-    require(item(*window, "factoryReceipt_service")->property("label").toString() ==
-                "225b30d · 9/9 checks",
-            "a landed agent shows its receipt");
-    require(shown(*window, "factoryOpen_agent") && shown(*window, "factoryDetails_agent") &&
-                shown(*window, "factoryInspect_service") &&
-                shown(*window, "factoryClose_service") && shown(*window, "factoryClose_notes") &&
-                !shown(*window, "factoryClose_renderer"),
-            "each stage offers its own actions");
-    require(
-        item(*window, "factoryJudgeLine")->property("text").toString().contains("claude-haiku-5-5"),
-        "the board names the judge");
-    until([&] { return shown(*window, "homeAttentionInbox"); },
-          "the gate strip shows above the orchestrator's composer");
-    require(shown(*window, "homeAttentionChip_agent") && shown(*window, "homeAttentionChip_triage"),
-            "the strip lists both requests");
-    // At 1440x920 the header reads in full and all eight cards fit.
-    require(item(*window, "factoryHomeTitle")->property("text").toString() ==
-                    "Gemini 4 Carbon · night shift" &&
-                !item(*window, "factoryHomeTitle")->property("truncated").toBool(),
-            "the orchestrator's title is not elided: width " +
-                std::to_string(item(*window, "factoryHomeTitle")->width()) + " of " +
-                std::to_string(item(*window, "factoryHomeTitle")->implicitWidth()) + ", header " +
-                std::to_string(item(*window, "factoryHeader")->width()) + ", selector " +
-                std::to_string(item(*window, "factoryHomeSelector")->width()) + ", summary " +
-                std::to_string(item(*window, "factoryHeaderSummary")->width()) + " of " +
-                std::to_string(item(*window, "factoryHeaderSummary")->implicitWidth()) + ", pin " +
-                std::to_string(item(*window, "factoryHomePin")->implicitWidth()) + ", exit " +
-                std::to_string(item(*window, "exitFactory")->width()));
-    require(item(*window, "factoryHeaderSummary")->property("text").toString() ==
-                    "2 need you · 2 running · 2 landed · 2 idle" &&
-                !item(*window, "factoryHeaderSummary")->property("truncated").toBool(),
-            "the header's counts are not elided");
-    {
-        auto* scroller = item(*window, "factoryScroller");
-        for (const char* name :
-             {"factoryBadge_shell", "factoryInspect_shell", "factoryClose_shell"}) {
-            auto* control = item(*window, QString::fromLatin1(name));
-            const auto bottom = control->mapToItem(scroller, QPointF(0, control->height())).y();
-            require(control->isVisible() && bottom <= scroller->height(),
-                    std::string(name) + " is clipped at the board's bottom");
-        }
-    }
-    save("factory_mode_overview.png");
-
-    // An agent link in the orchestrator's thread drills into that worker.
-    auto* view = item(*window, "visualView");
-    QQuickItem* reply = nullptr;
-    until([&] { return (reply = text_with(view, "lapis://agent/renderer")) != nullptr; },
-          "the thread renders the agent links");
-    require(QMetaObject::invokeMethod(reply, "linkActivated",
-                                      Q_ARG(QString, QStringLiteral("lapis://agent/rend"))),
-            "activate the link");
-    until([&] { return workspace.focusedAgent() == workspace.agent("renderer"); },
-          "the link shows the worker");
-    require(window->property("factoryInspectAgentId").toString() == "renderer",
-            "the link inspects the worker");
-    until([&] { return shown(*window, "backToFactoryBar"); }, "the bar back to the factory shows");
-    until([&] { return !shown(*window, "factoryBoard") && !shown(*window, "factoryHeader"); },
-          "the board and the orchestrator's bar hide while inspecting");
-    click(*window, "backToFactoryBar");
-    until([&] { return workspace.focusedAgent() == workspace.agent("carbon"); },
-          "Back to Factory returns to the orchestrator");
-    require(shown(*window, "factoryBoard") && !shown(*window, "backToFactoryBar") &&
-                window->property("factoryInspectAgentId").toString().isEmpty(),
-            "the split view is back");
-
-    // A card's Inspect does the same, with the stage and receipt in the bar.
-    until([&] { return shown(*window, "factoryInspect_service"); }, "the card's Inspect shows");
-    click(*window, "factoryInspect_service");
-    until([&] { return workspace.focusedAgent() == workspace.agent("service"); },
-          "Inspect shows the worker");
-    require(shown(*window, "backToFactoryBar") && shown(*window, "backToFactoryStage") &&
-                item(*window, "backToFactoryStage")->property("stageId").toString() == "landed" &&
-                item(*window, "backToFactoryStage")->property("accent").value<QColor>() ==
-                    window->property("plentyColor").value<QColor>(),
-            "the bar carries the worker's stage");
-    save("factory_drilldown_view.png");
-    click(*window, "backToFactoryBar");
-    until([&] { return shown(*window, "factoryBoard"); }, "back from the card");
-
-    // Choosing the orchestrator elsewhere, or an agent elsewhere, follows.
-    require(workspace.selectAgent("checks"), "choose a worker from the sidebar");
-    until([&] { return shown(*window, "backToFactoryBar"); }, "the sidebar inspects too");
-    require(workspace.selectAgent("carbon"), "choose the orchestrator");
-    until([&] { return shown(*window, "factoryBoard"); }, "choosing the orchestrator goes back");
-
-    // The board collapses and expands in one click.
-    click(*window, "factoryBoardCollapse");
-    until([&] { return item(*window, "factoryBoard")->width() < 80; }, "the board collapses");
-    require(item(*window, "focusedPane")->width() > classic_stage * 0.8,
-            "the thread takes the room");
-    click(*window, "factoryBoardExpand");
-    until([&] { return item(*window, "factoryBoard")->width() > 300; }, "the board expands");
-
-    // A request answered leaves the strip.
-    require(workspace.resolveAttention({"triage", "gate-2", {}}), "resolve a request");
-    until([&] { return find(window->contentItem(), "homeAttentionChip_triage") == nullptr; },
-          "the strip drops the resolved request");
-
-    // The command palette lists the toggle.
+    // Nothing offers the Factory view.
+    for (const char* name : {"visualFactoryMode", "factoryBoard", "factoryHeader",
+                             "backToFactoryBar", "homeAttentionInbox", "factoryShortcut"})
+        require(find(window->contentItem(), QString::fromLatin1(name)) == nullptr &&
+                    window->findChild<QObject*>(QString::fromLatin1(name)) == nullptr,
+                std::string("no ") + name);
+    require(!window->property("factoryMode").isValid(), "no factoryMode property");
+    QVariant bound;
+    require(QMetaObject::invokeMethod(window, "bindings", Q_RETURN_ARG(QVariant, bound),
+                                      Q_ARG(QVariant, QStringLiteral("toggleFactory"))) &&
+                bound.toList().isEmpty(),
+            "toggleFactory has no binding");
+    const auto sequences = shortcut_sequences(*window);
+    require(sequences.size() > 10, "the window's shortcuts are found");
+    const QKeySequence command_shift_f(Qt::META | Qt::SHIFT | Qt::Key_F);
+    const QKeySequence control_shift_f(Qt::CTRL | Qt::SHIFT | Qt::Key_F);
+    for (const auto& sequence : sequences)
+        require(sequence != command_shift_f && sequence != control_shift_f,
+                "Command-Shift-F is bound: " + sequence.toString().toStdString());
     QVariant entries;
     require(QMetaObject::invokeMethod(window, "commandEntries", Q_RETURN_ARG(QVariant, entries)),
-            "read the palette");
-    bool listed = false;
+            "read the Commands palette");
+    require(entries.toList().size() > 10, "the palette has its commands");
     for (const auto& value : entries.toList()) {
         const auto entry = value.toMap();
-        listed = listed || (entry.value("id").toString() == "toggleFactory" &&
-                            entry.value("label").toString() == "Toggle Factory view" &&
-                            entry.value("enabled").toBool());
+        for (const char* field : {"id", "label", "shortcut", "reason", "keywords"})
+            require(!entry.value(QString::fromLatin1(field))
+                         .toString()
+                         .contains(QStringLiteral("factory"), Qt::CaseInsensitive),
+                    "a Factory command: " + entry.value("label").toString().toStdString());
     }
-    require(listed, "the palette offers Toggle Factory view");
-
-    // Classic view from the factory bar restores the categories.
-    click(*window, "exitFactory");
-    until([&] { return !window->property("factoryMode").toBool(); }, "Classic view turns it off");
-    require(!config.visualFactory(), "visual.factory is saved off");
-    until([&] { return !shown(*window, "factoryBoard") && !shown(*window, "factoryHeader"); },
-          "the factory chrome goes");
-    require(workspace.selectAgent("renderer"), "a worker on the classic stage");
-    // A sample card (no CLI behind it) keeps its terminal.
-    until(
-        [&] {
-            return std::abs(item(*window, "focusedPane")->width() - classic_stage) < 2 &&
-                   !shown(*window, "visualView");
-        },
-        "the classic stage fills its width with the terminal");
-    save("classic_toggle_restored.png");
-
-    // The shortcut and the palette command toggle it too.
-    require(QMetaObject::invokeMethod(window, "runCommand",
-                                      Q_ARG(QVariant, QStringLiteral("toggleFactory"))),
-            "run the palette command");
-    until([&] { return window->property("factoryMode").toBool(); }, "the palette turns it on");
-    if (window->isActive()) {
+    // Command-Shift-F does nothing: the stage, the view and lapis.json stay.
+    {
 #ifdef Q_OS_MACOS
         const Qt::KeyboardModifiers command = Qt::MetaModifier;
 #else
         const Qt::KeyboardModifiers command = Qt::ControlModifier;
 #endif
-        const Qt::KeyboardModifiers chord = command | Qt::ShiftModifier;
-        QKeyEvent press(QEvent::KeyPress, Qt::Key_F, chord);
-        QKeyEvent release(QEvent::KeyRelease, Qt::Key_F, chord);
+        const QVariantMap visual_before = config.visual();
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_F, command | Qt::ShiftModifier);
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_F, command | Qt::ShiftModifier);
         QCoreApplication::sendEvent(window, &press);
         QCoreApplication::sendEvent(window, &release);
-        until([&] { return !window->property("factoryMode").toBool(); },
-              "Command-Shift-F turns it off");
-    } else {
-        std::cout << "factory_ui_test: window not active offscreen; shortcut not exercised\n";
-        require(QMetaObject::invokeMethod(window, "toggleFactory"), "toggle back");
+        pump(100);
+        require(workspace.focusedAgent() == workspace.agent("renderer") &&
+                    config.visual() == visual_before,
+                "Command-Shift-F changes nothing");
     }
 
-    // Both themes render the board without QML errors.
-    require(QMetaObject::invokeMethod(window, "toggleFactory"), "the factory again");
-    until([&] { return shown(*window, "factoryBoard"); }, "the board for the theme pass");
-    require(config.setAppearance(QStringLiteral("light")), "light appearance");
-    pump(150);
-    require(preview.diagnostics().isEmpty(),
-            "QML diagnostics in light: " + preview.diagnostics().toStdString());
-    require(config.setAppearance(QStringLiteral("dark")), "dark appearance");
+    // The sidebar's bottom block, in each density: the Visual view title and
+    // appearance toggle, This agent beside All agents, then Commands, in that
+    // order and all inside the sidebar.
+    for (const char* density : {"comfortable", "compact", "minimal"}) {
+        require(config.setDensity(QString::fromLatin1(density)), std::string("density ") + density);
+        pump(150);
+        const std::string where = std::string(" (") + density + ")";
+        auto* rail = item(*window, "categoryRail");
+        const auto box = [&](const char* name) {
+            auto* control = item(*window, QString::fromLatin1(name));
+            require(control->isVisible() && control->width() > 0 && control->height() > 0,
+                    std::string(name) + " is shown" + where);
+            return control->mapRectToItem(rail, QRectF(0, 0, control->width(), control->height()));
+        };
+        const QRectF inside(-0.5, -0.5, rail->width() + 1, rail->height() + 1);
+        const auto appearance = box("appearanceToggle");
+        const auto this_agent = box("visualThisAgent");
+        const auto all_agents = box("visualAllAgents");
+        const auto commands = box("commandsButton");
+        for (const auto& [name, rect] :
+             std::array<std::pair<const char*, QRectF>, 4>{{{"appearanceToggle", appearance},
+                                                            {"visualThisAgent", this_agent},
+                                                            {"visualAllAgents", all_agents},
+                                                            {"commandsButton", commands}}})
+            require(inside.contains(rect), std::string(name) + " is inside the sidebar" + where);
+        require(std::abs(this_agent.top() - all_agents.top()) < 1 &&
+                    this_agent.right() <= all_agents.left(),
+                "This agent sits beside All agents" + where);
+        require(appearance.bottom() <= this_agent.top() && this_agent.bottom() <= commands.top(),
+                "the block reads top to bottom" + where);
+        require(commands.top() - this_agent.bottom() < 16,
+                "Commands follows the visual row with no gap left behind" + where);
+        require(std::abs(commands.left() - this_agent.left()) < 1 &&
+                    std::abs(commands.right() - all_agents.right()) < 1,
+                "Commands spans the row above" + where);
+        save(QStringLiteral("sidebar_bottom_%1.png").arg(QString::fromLatin1(density)));
+    }
+    require(config.setDensity(QStringLiteral("comfortable")), "back to comfortable");
     pump(150);
 
-    // Close from a card: Safe to close goes in one click; a parked agent asks.
-    auto* close_dialog = window->findChild<QObject*>(QStringLiteral("closeAgentDialog"));
-    require(close_dialog != nullptr, "the close dialog exists");
-    until([&] { return shown(*window, "factoryClose_shell"); }, "the parked card's Close");
-    click(*window, "factoryClose_shell");
-    until([&] { return close_dialog->property("visible").toBool(); },
-          "Close on a parked agent asks first");
-    require(workspace.agent("shell") != nullptr &&
-                close_dialog->property("agentId").toString() == "shell" &&
-                close_dialog->property("agentName").toString() == "Codex",
-            "the dialog names the harness and nothing closed yet");
-    require(QMetaObject::invokeMethod(close_dialog, "close"), "cancel");
-    until([&] { return !close_dialog->property("visible").toBool(); }, "the dialog closes");
-    pump(100);
-    require(workspace.agent("shell") != nullptr, "cancelling keeps the agent");
-    click(*window, "factoryClose_shell");
-    until([&] { return close_dialog->property("visible").toBool(); }, "asks again");
-    require(QMetaObject::invokeMethod(close_dialog, "confirm"), "confirm");
-    until([&] { return workspace.agent("shell") == nullptr; }, "confirming closes the agent");
-    until([&] { return shown(*window, "factoryClose_notes"); }, "the safe card's Close");
-    click(*window, "factoryClose_notes");
-    until([&] { return workspace.agent("notes") == nullptr; }, "Safe to close closes at once");
-    require(!close_dialog->property("visible").toBool(), "and asks nothing");
+    // The sidebar still slides out and back, and the stage takes its room.
+    const auto rail_width = window->property("railWidth").toReal();
+    const auto stage_width = item(*window, "focusedPane")->width();
+    require(std::abs(item(*window, "sidebarSlot")->width() - (rail_width + 8)) < 1,
+            "the sidebar's slot holds it and its gap");
+    require(QMetaObject::invokeMethod(window, "toggleSidebar"), "hide the sidebar");
+    until([&] { return !item(*window, "sidebarSlot")->isVisible(); }, "the sidebar slides out");
+    until([&] { return item(*window, "focusedPane")->width() >= stage_width + rail_width + 7; },
+          "the stage takes the sidebar's room");
+    require(QMetaObject::invokeMethod(window, "toggleSidebar"), "show the sidebar");
+    until(
+        [&] {
+            return std::abs(item(*window, "sidebarSlot")->width() - (rail_width + 8)) < 1 &&
+                   std::abs(item(*window, "focusedPane")->width() - stage_width) < 1;
+        },
+        "the sidebar slides back to where it was");
+
+    // An agent link in a thread opens that agent.
+    require(workspace.selectAgent("lead"), "the lead on the stage");
+    until([&] { return window->property("visualCovers").toBool() && shown(*window, "visualView"); },
+          "the lead shows as its thread");
+    QQuickItem* reply = nullptr;
+    until(
+        [&] {
+            return (reply = text_with(item(*window, "visualView"), "lapis://agent/renderer")) !=
+                   nullptr;
+        },
+        "the thread renders the agent link");
+    require(QMetaObject::invokeMethod(reply, "linkActivated",
+                                      Q_ARG(QString, QStringLiteral("lapis://agent/rend"))),
+            "activate the link");
+    until([&] { return workspace.focusedAgent() == workspace.agent("renderer"); },
+          "the link opens the agent it names");
 
     require(preview.diagnostics().isEmpty(),
             "QML diagnostics: " + preview.diagnostics().toStdString());
-    std::cout << "factory_ui_test: PASS (offscreen/software; not native input or GPU acceptance)\n";
+    std::cout << "visual_ui_test: PASS (offscreen/software; not native input or GPU acceptance)\n";
     return EXIT_SUCCESS;
 }
 
@@ -704,7 +526,7 @@ int run_new_session(const QString& captures) {
         pump(250);
         const auto path = QDir(captures).filePath(QString::fromLatin1(name));
         require(window->grabWindow().save(path), "save " + path.toStdString());
-        std::cout << "factory_ui_test: saved " << name << '\n';
+        std::cout << "visual_ui_test: saved " << name << '\n';
     };
     save("new_session_empty.png");
 
@@ -848,7 +670,7 @@ int run_new_session(const QString& captures) {
 
     require(preview.diagnostics().isEmpty(),
             "QML diagnostics: " + preview.diagnostics().toStdString());
-    std::cout << "factory_ui_test: new sessions PASS (offscreen/software fixture screens; not a "
+    std::cout << "visual_ui_test: new sessions PASS (offscreen/software fixture screens; not a "
                  "real CLI's startup, native input or GPU acceptance)\n";
     return EXIT_SUCCESS;
 }
@@ -933,7 +755,7 @@ int run_tab_flow(const QString& captures) {
         pump(250);
         const auto path = QDir(captures).filePath(QString::fromLatin1(name));
         require(window->grabWindow().save(path), "save " + path.toStdString());
-        std::cout << "factory_ui_test: saved " << name << '\n';
+        std::cout << "visual_ui_test: saved " << name << '\n';
     };
     auto* view = item(*window, "visualView");
     auto* input = qvariant_cast<QQuickItem*>(view->property("composer"));
@@ -1080,7 +902,7 @@ int run_tab_flow(const QString& captures) {
 
     require(preview.diagnostics().isEmpty(),
             "QML diagnostics: " + preview.diagnostics().toStdString());
-    std::cout << "factory_ui_test: tab flow PASS (offscreen/software; stand-in predictor and "
+    std::cout << "visual_ui_test: tab flow PASS (offscreen/software; stand-in predictor and "
                  "terminal; not native input, IME or GPU acceptance)\n";
     return EXIT_SUCCESS;
 }
@@ -1106,7 +928,7 @@ int main(int argc, char** argv) {
             tab_chain = true;
             continue;
         }
-        std::cerr << "Usage: lapis_factory_ui_tests [--background] [--new-session | --tab-flow] "
+        std::cerr << "Usage: lapis_visual_ui_tests [--background] [--new-session | --tab-flow] "
                      "[--capture DIR]\n";
         return EXIT_FAILURE;
     }
@@ -1116,7 +938,7 @@ int main(int argc, char** argv) {
     QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta);
     QGuiApplication application(argc, argv);
     application.setQuitOnLastWindowClosed(false);
-    QCoreApplication::setApplicationName(QStringLiteral("lapis-factory-ui-tests"));
+    QCoreApplication::setApplicationName(QStringLiteral("lapis-visual-ui-tests"));
     QCoreApplication::setOrganizationName(QStringLiteral("lapis"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
     qmlRegisterUncreatableType<Agent>("Lapis", 1, 0, "Agent", "Owned by workspace");
@@ -1132,7 +954,7 @@ int main(int argc, char** argv) {
                : new_session ? run_new_session(captures)
                              : run(captures);
     } catch (const std::exception& error) {
-        std::cerr << "factory_ui_test: " << error.what() << '\n';
+        std::cerr << "visual_ui_test: " << error.what() << '\n';
         return EXIT_FAILURE;
     }
 }

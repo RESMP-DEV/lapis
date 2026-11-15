@@ -1,7 +1,7 @@
 #ifndef LAPIS_DESKTOP_TESTS_TAB_FLOW_GUESSES_HPP
 #define LAPIS_DESKTOP_TESTS_TAB_FLOW_GUESSES_HPP
 
-// The visual-tab-flow check's stand-in predictor (factory_ui_test.cpp). It
+// The visual-tab-flow check's stand-in predictor (visual_ui_test.cpp). It
 // lives in a header so moc writes its own translation unit, which the
 // project's static analysis leaves to the compiler as generated code.
 #include <QHash>

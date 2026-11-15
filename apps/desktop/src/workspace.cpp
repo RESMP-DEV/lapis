@@ -31,6 +31,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QUrl>
 #include <QUuid>
 #include <algorithm>
 #include <array>
@@ -816,7 +817,6 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
       headless_(options.headless), update_timeout_ms_(std::max(qint64{1}, options.updateTimeoutMs)),
       fixture_mode_(mode == WorkspaceMode::fixture) {
     transcript_ = new TranscriptModel(this);
-    setupFactory();
     // Before selecting clears the arriving agent's unseen mark, so a choice
     // is recorded with the state the person chose from.
     choice_settle_.setSingleShot(true);
@@ -865,9 +865,6 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
                 ? QDir(rootDirectory()).filePath(QStringLiteral("runtime/workspace.json"))
                 : QFileInfo(options.storagePath).absoluteFilePath();
         restore();
-        // The factory judge writes its verdicts beside the registry.
-        setFactoryStatePath(QDir(QFileInfo(storage_path_).absolutePath())
-                                .filePath(QStringLiteral("factory_state.json")));
         // Tab's move log lives beside the registry, owner-only.
         tab_ranker_ = std::make_unique<TabRanker>(QFileInfo(storage_path_).absolutePath());
         restoreSelection();
@@ -1161,6 +1158,78 @@ Agent* Workspace::agent(const QString& id) const {
             return item.get();
     return nullptr;
 }
+QString Workspace::resolveAgentLink(const QString& link) const {
+    const auto text = link.trimmed();
+    QString key;
+    bool conversation = false;
+    for (const auto* prefix : {"lapis://agent/", "conversation://", "lapis://conversation/"}) {
+        const auto scheme = QLatin1String(prefix);
+        if (text.startsWith(scheme, Qt::CaseInsensitive)) {
+            key = text.mid(scheme.size());
+            conversation = !scheme.endsWith(QLatin1String("agent/"));
+            break;
+        }
+    }
+    // Only the identifier: no trailing slash, query or fragment.
+    key = QUrl::fromPercentEncoding(key.toUtf8());
+    key = key.section(QLatin1Char('/'), 0, 0).section(QLatin1Char('?'), 0, 0);
+    key = key.section(QLatin1Char('#'), 0, 0).trimmed();
+    if (key.isEmpty() || key.size() > 64)
+        return {};
+    QString found;
+    for (const auto& item : items_) {
+        const auto& id = item->agentId();
+        const auto name = conversation ? agentConversation(id) : id;
+        if (name.isEmpty())
+            continue;
+        if (name.compare(key, Qt::CaseInsensitive) == 0)
+            return id;
+        if (name.startsWith(key, Qt::CaseInsensitive)) {
+            if (!found.isEmpty() && found != id)
+                return {}; // a prefix two agents share names neither
+            found = id;
+        }
+    }
+    return found;
+}
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+bool Workspace::addFixtureAgent(const QString& id, const QString& title, const QString& category,
+                                const QString& harness, const QString& content) {
+    if (!fixture_mode_ || id.isEmpty() || agents_.contains(id) ||
+        this->category(category) == nullptr)
+        return false;
+    const auto bytes = content.toUtf8();
+    auto item = std::make_unique<Agent>(
+        title, QStringLiteral("lapis"), QString{}, QColor(QStringLiteral("#87cbac")),
+        std::string_view(bytes.constData(), static_cast<std::size_t>(bytes.size())));
+    item->setAgentId(id);
+    item->setHarnessId(harness);
+    AgentRecord record{category, {}, {}};
+    record.harness = harness;
+    agents_.insert(id, record);
+    items_.push_back(std::move(item));
+    watch(items_.back().get());
+    changed();
+    return true;
+}
+bool Workspace::setFixtureConversation(const QString& id, const QString& file) {
+    if (!fixture_mode_ || !agents_.contains(id))
+        return false;
+    fixture_files_.insert(id, file);
+    return true;
+}
+// Positional contract; callers and tests pin the order.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+bool Workspace::setFixtureLaunch(const QString& id, const QString& program,
+                                 const QStringList& arguments) {
+    if (!fixture_mode_ || !agents_.contains(id))
+        return false;
+    auto& launch = agents_[id].launch;
+    launch.program = program;
+    launch.arguments = arguments;
+    return true;
+}
 bool Workspace::requestAttention(const FixtureRequest& request) {
     auto* target = agent(request.agent_id);
     return fixture_mode_ && target && target->addFixtureRequest(request.request_id, request.reason);
@@ -1239,7 +1308,6 @@ void Workspace::noteStructuralFocus() {
 // Cohesive parser/test flow; branching stays local.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void Workspace::watch(Agent* item) {
-    watchFactory(item);
     // Its unseen mark and whether it is at work outlive a window (GuiState).
     connect(item, &Agent::unseenChanged, this, &Workspace::marksChanged);
     connect(item, &Agent::statusChanged, this, &Workspace::marksChanged);
@@ -2261,9 +2329,6 @@ bool Workspace::save(const QString& renamedId, const QString& renamedTitle) {
                      {"activeCategory", active_category_},
                      {"categories", groups},
                      {"agents", agents}};
-    // The factory view's pinned orchestrator; earlier builds ignore it.
-    if (!home_agent_id_.isEmpty())
-        root.insert(QStringLiteral("homeAgent"), home_agent_id_);
     // Agents closed whose processes have not yet ended (closeAgent); earlier
     // builds and the phone gateway ignore the list.
     QJsonArray closing;
@@ -3390,9 +3455,6 @@ void Workspace::restore() {
         if (std::none_of(categories_.begin(), categories_.end(),
                          [&](const auto& category) { return category.id == active_category_; }))
             active_category_ = categories_.front().id;
-        if (const auto home = root.value(QStringLiteral("homeAgent")).toString();
-            agents_.contains(home))
-            home_agent_id_ = home;
         connectRestoredAgents();
     } catch (const std::exception& error) {
         items_.clear();

@@ -426,27 +426,15 @@ running there. Measured on a LAN earlier: an append reaches an open channel in
 transcripts reach 444 MB, hence the tail first. Codex and Antigravity agents
 over ssh still show their terminal.
 
-### Factory view
+### Agent links
 
-The factory view is a window mode over the same workspace, not a second
-workspace: the stage shows the orchestrator agent's thread, and every other
-agent sits in one of four stages on a board beside it. `Workspace` owns the
-model (`workspace_factory.cpp`); the stage rules are a pure function
-(`factory_state.hpp`). A separate judge model may write
-`factory_state.json` beside the registry; lapis only reads it (bounded, a
-symlink refused) and watches the folder so an atomic replace reloads.
-Live state wins over a verdict: a pending request or a waiting agent always
-means Needs You and a working or connecting one In Progress; an `in_progress`
-verdict on a turn no longer running is stale; a settled verdict holds only until the agent's settled status changes after
-`judgedAtMs` (the first status after connecting is not a change, so a restart
-does not discard verdicts). Unjudged agents get a deterministic stage, and
-only an explicit `keepNeeded: false` marks one safe to close. Nothing is
-closed automatically. The orchestrator is a registry pin (`homeAgent`), else
-a sticky automatic choice of the most recently active local agy agent, so it
-never follows the stage. Inspecting a worker selects it on the one stage;
-keyboard ownership follows the existing focus rules, and agent links in the
-thread are resolved by `resolveAgentLink` without touching the transcript
-model.
+A link in a thread that names an agent (`lapis://agent/<id or prefix>` or
+`conversation://<id or prefix>`) is resolved by `Workspace::resolveAgentLink`
+and selects that agent on the stage; keyboard ownership follows the existing
+focus rules and the transcript model is not touched. The Factory view (an
+orchestrator thread beside a judged pipeline board) was removed on
+2026-11-15; a leftover `visual.factory` in lapis.json is ignored and kept as
+written, and a leftover registry `homeAgent` is dropped on the next save.
 
 ### Storage, credentials, and diagnostics
 
