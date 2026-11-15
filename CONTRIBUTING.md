@@ -772,9 +772,10 @@ when either version changes. After the DMG is stapled, run
 (add `--draft` to review first) refuses a DMG without a stapled ticket, a
 pre-existing qualified appcast, complete candidate gates, or a commit not yet
 pushed, then creates the GitHub release with the DMG, `appcast.xml` and the
-Qt source archives. The
-download page in `site/` is published to GitHub Pages by
-`.github/workflows/site.yml` when it changes on `main`.
+Qt source archives. The download page source in `site/` is repository content;
+GitHub Actions are disabled, no Pages site is configured for this repository,
+and any future publication needs its own reviewed and locally qualified
+procedure rather than a workflow.
 
 ## Checks
 

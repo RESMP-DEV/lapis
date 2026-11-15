@@ -4,8 +4,11 @@
 
 The Mac app is on the [releases page](https://github.com/RESMP-DEV/lapis/releases/latest):
 open `lapis-macos-arm64.dmg` and drag lapis to Applications. It needs an Apple
-silicon Mac with macOS 14 or later. It is signed with a Developer ID and
-notarized, and built and checked on macOS 26.5.
+silicon Mac with macOS 14 or later. The current v0.5.0 DMG, SHA-256
+`4992b7cb0aa8936523a49462c067101d4047056569f713d26afa73cbabeee9d1`, is
+Developer ID signed and stapled/notarized; the [signing readiness
+receipt](../evidence/developer-id-release-readiness-20261115.json) binds that
+artifact audit. That artifact predates fixes now on source main.
 
 lapis uses the agent CLIs you already have installed. Opened from Finder or the
 Dock, it starts agents with your login shell's environment, so they find the
