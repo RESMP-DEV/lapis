@@ -30,6 +30,8 @@ ARCHIVE_URL = f"https://cef-builds.spotifycdn.com/{ARCHIVE_NAME}"
 ARCHIVE_SHA1 = "269bb579ada39eefab3c13baf82b3fd46dd42581"
 ARCHIVE_SHA256 = "22a510e5d348a907953278b618e1e9e442ccf78773b9fee0e09eaf154eef53b0"
 ARCHIVE_SIZE = 312_211_060
+ARCHIVE_CONNECT_TIMEOUT_SECONDS = 15
+ARCHIVE_TOTAL_TIMEOUT_SECONDS = 3600
 SOURCE_PATHS = (
     "scripts/check_web_engine.py",
     "tools/web_probe/cefsimple_mac.mm",
@@ -99,6 +101,10 @@ def archive_path(cache: Path) -> Path:
                 "--progress-bar",
                 "--retry",
                 "3",
+                "--connect-timeout",
+                str(ARCHIVE_CONNECT_TIMEOUT_SECONDS),
+                "--max-time",
+                str(ARCHIVE_TOTAL_TIMEOUT_SECONDS),
                 "--output",
                 str(partial),
                 ARCHIVE_URL,
@@ -125,14 +131,11 @@ def verify_archive(path: Path) -> None:
 
 def extract_archive(cache: Path, archive: Path) -> Path:
     root = cache / f"cef-{CEF_VERSION}"
-    marker = root / "README.txt"
+    extracted = root / ARCHIVE_NAME.removesuffix(".tar.bz2")
+    marker = extracted / "README.txt"
     if not marker.exists():
         root.mkdir(parents=True, exist_ok=True)
         run(["tar", "-xjf", str(archive), "-C", str(root)], timeout=600)
-    candidates = [item for item in root.iterdir() if item.is_dir()]
-    if len(candidates) != 1:
-        raise CheckError(f"expected one extracted CEF root, found {candidates}")
-    extracted = candidates[0]
     if CEF_VERSION not in extracted.name:
         raise CheckError(f"unexpected extracted CEF root: {extracted}")
     return extracted
@@ -256,6 +259,42 @@ def wait_for_descendant_exit(pids: list[int], timeout: float = 10.0) -> None:
         raise CheckError(f"W0 descendant processes survived: {survivors}")
 
 
+def signal_processes(pids: list[int], sig: signal.Signals) -> None:
+    for pid in pids:
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            continue
+
+
+def terminate_family(
+    process: subprocess.Popen[bytes], sampled_pids: list[int] | None = None
+) -> None:
+    """Bound failure paths; successful runs must exit naturally."""
+    children = [
+        sample.pid
+        for sample in family_samples(process.pid)
+        if sample.pid != process.pid
+    ]
+    if sampled_pids is not None:
+        children = list(dict.fromkeys([*sampled_pids, *children]))
+    signal_processes(children, signal.SIGTERM)
+    if process.poll() is None:
+        process.terminate()
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and process.poll() is None:
+        time.sleep(0.1)
+    if process.poll() is None:
+        process.kill()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    alive = {sample.pid for sample in process_samples()}
+    survivors = [pid for pid in children if pid in alive]
+    signal_processes(survivors, signal.SIGKILL)
+
+
 def listening_tcp_report(pids: list[int]) -> str:
     if not pids:
         return "no live processes to inspect"
@@ -335,6 +374,11 @@ def parse_frame(path: Path) -> dict[str, Any]:
 
 
 def validate_outputs(run_dir: Path) -> dict[str, Any]:
+    if (run_dir / "load-error.txt").exists():
+        raise CheckError(
+            "W0 fixture load error: "
+            + (run_dir / "load-error.txt").read_text(encoding="utf-8").strip()
+        )
     result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
     required = (
         "trusted_mouse_click",
@@ -350,8 +394,6 @@ def validate_outputs(run_dir: Path) -> dict[str, Any]:
             raise CheckError(f"W0 field is not true: {field}")
     if result.get("load_error") is not False:
         raise CheckError("W0 fixture reported a load error")
-    if (run_dir / "load-error.txt").exists():
-        raise CheckError("W0 load-error file exists")
     if not (run_dir / "teardown-complete").is_file():
         raise CheckError("W0 teardown did not complete through CefShutdown")
 
@@ -476,6 +518,7 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
     report.unlink(missing_ok=True)
     archive = archive_path(cache)
     extracted = extract_archive(cache, archive)
+    source_before_overlay = source_state()
     overlay_host(extracted)
     app = build_host(extracted)
     executable = app / "Contents/MacOS/lapis_w0"
@@ -499,10 +542,17 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
             stderr=stderr,
             env=environment,
         )
-        samples, listeners = read_processes(process, run_dir)
-        exit_code, elapsed = wait_for_exit(process, arguments.timeout)
+        try:
+            samples, listeners = read_processes(process, run_dir)
+            exit_code, elapsed = wait_for_exit(process, arguments.timeout)
+        except BaseException:
+            terminate_family(process)
+            raise
 
     sampled_pids = [sample.pid for sample in samples if sample.pid != process.pid]
+    if exit_code == 124:
+        terminate_family(process, sampled_pids)
+        raise CheckError(f"W0 host timed out after {arguments.timeout} seconds")
     wait_for_descendant_exit(sampled_pids)
     if exit_code != 0:
         if exit_code == 75 and (run_dir / "teardown-error.txt").exists():
@@ -516,6 +566,9 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
     installed_size = sum(
         path.stat().st_size for path in app.rglob("*") if path.is_file()
     )
+    source_after_run = source_state()
+    if source_after_run != source_before_overlay:
+        raise CheckError("W0 source changed during the build or run")
     receipt = {
         "schema_version": 1,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -523,7 +576,7 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
             "Isolated CEF W0 probe on a local fixture; no product web service, "
             "credentials, remote debugging, native GUI, or W1 wiring."
         ),
-        "source": source_state(),
+        "source": source_before_overlay,
         "toolchain": toolchain_versions(),
         "passed": True,
         "artifact": {

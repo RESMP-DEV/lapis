@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-15T04:51:00Z",
+  "recorded_at": "2026-11-15T05:09:00Z",
   "agent": "Codex",
   "scope": "Isolated native-browser W0 engine probe on macOS arm64. This records a hidden CEF host against a local fixture; it does not add product web-service wiring, a GUI surface, credentials, remote debugging, external-browser attachment, or a local-model runtime.",
   "sanitization": "Public URLs, repository-relative paths, artifact digests, tool versions, and bounded observations only. No user account, host name, private path, credential, raw page payload, or model output is embedded.",
@@ -17,7 +17,7 @@
     ],
     "source_digest": {
       "algorithm": "sha256 over repository-relative path, NUL, bytes, and NUL for each listed source, in sorted order",
-      "value": "d2432b027c4683e6126aadc24aa01fda3a914c2830adcfe40300ea9834308e44"
+      "value": "fc3eeb6b86ca4254008318ebc409582538c59a03aa2b458866d0e1abe2aa09c1"
     }
   },
   "artifact_resolution": {
@@ -51,7 +51,7 @@
       "tools/web_probe/w0.html"
     ],
     "download_policy": "The runner is explicit and opt-in; normal quality does not download CEF.",
-    "hidden_runtime": "The host sets NSApplicationActivationPolicyProhibited and creates an Alloy windowless browser.",
+    "hidden_runtime": "The host sets NSApplicationActivationPolicyProhibited, creates an Alloy windowless browser, and is launched with --disable-gpu for this software-rendered probe.",
     "input_path": "Host-to-browser CefBrowserHost mouse and key APIs; no page-dispatched synthetic input.",
     "inspection_path": "In-process CEF DevTools observer and ExecuteDevToolsMethod; no remote-debugging TCP endpoint.",
     "teardown_contract": "CloseBrowser(true), then OnBeforeClose releases browser and DevTools references and quits. A bounded check retries forced close and, if close never completes, exits nonzero before CefShutdown rather than quitting with a live browser. The host writes a completion marker only after CefShutdown returns, and the runner requires that marker plus natural exit of every already-sampled descendant PID.",
@@ -79,21 +79,21 @@
     "runtime_command": "python3 scripts/check_web_engine.py --cache-dir build/web-engine --report build/reports/web-engine/receipt-N.json",
     "consecutive_passes": 20,
     "stability_series": {
-      "first_recorded_at": "2026-11-15T04:45:29.811294Z",
-      "last_recorded_at": "2026-11-15T04:50:35.394751Z",
-      "ignored_receipts_aggregate_sha256": "8a4a3c2884f1848964d0a2a625ec66b18efae066f0b5e2b167fd69210b9b13b4",
+      "first_recorded_at": "2026-11-15T05:08:24.264062Z",
+      "last_recorded_at": "2026-11-15T05:08:55.909907Z",
+      "ignored_receipts_aggregate_sha256": "5cbb599ef766ad25355ab50f769567271c54ec8114f75f4049ce5e2938b7cea7",
       "process_count_each_run": 6,
       "family_rss_mb_range": [
-        567.109375,
-        571.3125
+        567.015625,
+        572.015625
       ],
       "created_to_first_paint_ms_range": [
-        105.575916,
-        157.353875
+        105.211542,
+        154.969167
       ],
       "first_paint_to_interaction_ms_range": [
-        160.730667,
-        215.796917
+        161.482167,
+        213.126334
       ],
       "paint_count_each_run": 3,
       "accessibility_node_count_each_run": 14
@@ -154,6 +154,7 @@
     "The isolated host used no-sandbox for this local probe and is not a product sandbox or redistribution policy.",
     "No CEF SDK/signing/redistribution inventory was completed; Developer ID signing is outside this W0 change.",
     "One-view RSS and timings are observations, not an eight-view workload or latency budget.",
+    "The host was launched with --disable-gpu; this is a software-rendered windowless path, not GPU compositing or a BGRA-to-Qt upload measurement.",
     "Accessibility, DOM, and Runtime DevTools methods were exercised on the fixture, but no cross-frame, SPA navigation, stale-ref, reconnect, or W1 diff behavior was tested.",
     "No Firefox code, model file, inference runtime, or classifier was downloaded or executed."
   ]
