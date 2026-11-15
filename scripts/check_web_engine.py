@@ -263,17 +263,19 @@ def signal_processes(pids: list[int], sig: signal.Signals) -> None:
     for pid in pids:
         try:
             os.kill(pid, sig)
-        except ProcessLookupError:
+        except OSError:
             continue
 
 
 def terminate_family(
-    process: subprocess.Popen[bytes], sampled_pids: list[int] | None = None
+    process: subprocess.Popen[bytes],
+    process_group_id: int,
+    sampled_pids: list[int] | None = None,
 ) -> None:
     """Bound failure paths; successful runs must exit naturally."""
     try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
+        os.killpg(process_group_id, signal.SIGTERM)
+    except OSError:
         pass
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline and process.poll() is None:
@@ -285,8 +287,8 @@ def terminate_family(
     except subprocess.TimeoutExpired:
         pass
     try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
+        os.killpg(process_group_id, signal.SIGKILL)
+    except OSError:
         pass
     if sampled_pids is not None:
         signal_processes(sampled_pids, signal.SIGKILL)
@@ -541,23 +543,27 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
             start_new_session=True,
         )
         try:
+            process_group_id = os.getpgid(process.pid)
+        except ProcessLookupError:
+            process_group_id = process.pid
+        try:
             samples, listeners = read_processes(process, run_dir)
             exit_code, elapsed = wait_for_exit(process, arguments.timeout)
         except BaseException:
-            terminate_family(process)
+            terminate_family(process, process_group_id)
             raise
 
     sampled_pids = [sample.pid for sample in samples if sample.pid != process.pid]
     if exit_code == 124:
-        terminate_family(process, sampled_pids)
+        terminate_family(process, process_group_id, sampled_pids)
         raise CheckError(f"W0 host timed out after {arguments.timeout} seconds")
     try:
         wait_for_descendant_exit(sampled_pids)
     except BaseException:
-        terminate_family(process, sampled_pids)
+        terminate_family(process, process_group_id, sampled_pids)
         raise
     if exit_code != 0:
-        terminate_family(process, sampled_pids)
+        terminate_family(process, process_group_id, sampled_pids)
         if exit_code == 75 and (run_dir / "teardown-error.txt").exists():
             raise CheckError(
                 "W0 browser close stalled; host aborted before CefShutdown"

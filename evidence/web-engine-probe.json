@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-15T05:19:00Z",
+  "recorded_at": "2026-11-15T05:21:00Z",
   "agent": "Codex",
   "scope": "Isolated native-browser W0 engine probe on macOS arm64. This records a hidden CEF host against a local fixture; it does not add product web-service wiring, a GUI surface, credentials, remote debugging, external-browser attachment, or a local-model runtime.",
   "sanitization": "Public URLs, repository-relative paths, artifact digests, tool versions, and bounded observations only. No user account, host name, private path, credential, raw page payload, or model output is embedded.",
@@ -17,7 +17,7 @@
     ],
     "source_digest": {
       "algorithm": "sha256 over repository-relative path, NUL, bytes, and NUL for each listed source, in sorted order",
-      "value": "571e7e6b4a7766f491a1edda1baa75cee1649b74028404663ef203294fb52a53"
+      "value": "c80cab3091638e433488733232565a1f460f255c8f4f93d6f0202ab550c34a6b"
     }
   },
   "artifact_resolution": {
@@ -79,21 +79,21 @@
     "runtime_command": "python3 scripts/check_web_engine.py --cache-dir build/web-engine --report build/reports/web-engine/receipt-N.json",
     "consecutive_passes": 20,
     "stability_series": {
-      "first_recorded_at": "2026-11-15T05:17:33.692998Z",
-      "last_recorded_at": "2026-11-15T05:18:05.931853Z",
-      "ignored_receipts_aggregate_sha256": "191e2b8563807c3c1ba567010ca71bbbbd0b80a0d534b2bb03d6bba86b566722",
+      "first_recorded_at": "2026-11-15T05:20:00.330848Z",
+      "last_recorded_at": "2026-11-15T05:20:32.411138Z",
+      "ignored_receipts_aggregate_sha256": "29ba68f1341c92531b9cfea8764c96f42e9e1f4f188ac2986b6f33af75e5776e",
       "process_count_each_run": 6,
       "family_rss_mb_range": [
-        567.109375,
-        571.953125
+        566.859375,
+        572.8125
       ],
       "created_to_first_paint_ms_range": [
-        105.527833,
-        159.425791
+        105.715458,
+        158.564125
       ],
       "first_paint_to_interaction_ms_range": [
-        156.511875,
-        212.049208
+        161.670417,
+        211.611375
       ],
       "paint_count_each_run": 3,
       "accessibility_node_count_each_run": 14
