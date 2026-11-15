@@ -557,6 +557,7 @@ def execute(arguments: argparse.Namespace) -> dict[str, Any]:
         terminate_family(process, sampled_pids)
         raise
     if exit_code != 0:
+        terminate_family(process, sampled_pids)
         if exit_code == 75 and (run_dir / "teardown-error.txt").exists():
             raise CheckError(
                 "W0 browser close stalled; host aborted before CefShutdown"
