@@ -526,6 +526,21 @@ int run_new_session(const QString& captures) {
     };
     until([&] { return bar() == "Opus 5.5 / Extra High"; },
           "a new session shows its launch model and level: " + bar().toStdString());
+    // A model the list names by its raw id, or does not have, reads as
+    // its short name; another CLI's model stays as reported.
+    const auto short_name = [&](const char* id) {
+        QVariant label;
+        require(QMetaObject::invokeMethod(thread_view, "modelLabel", Q_RETURN_ARG(QVariant, label),
+                                          Q_ARG(QVariant, QString::fromLatin1(id))),
+                "ask for a model's label");
+        return label.toString();
+    };
+    require(short_name("claude-fable-5-2[1m]") == "Fable 5.2 (1M)" &&
+                short_name("claude-fable-5-2") == "Fable 5.2" &&
+                short_name("claude-opus-4-20250514") == "Opus 4" &&
+                short_name("gpt-6-astra") == "gpt-6-astra",
+            "raw model ids read as short names: " +
+                short_name("claude-fable-5-2[1m]").toStdString());
     require(ticked() == "opus" &&
                 thread_view->property("currentEfforts").toStringList() ==
                     QStringList({"low", "high", "xhigh", "max"}) &&

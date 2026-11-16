@@ -794,16 +794,26 @@ FocusScope {
         }
         return true
     }
-    // Short model names, as the apps show them: "Opus 5.5", "Fable 5.1". A
-    // model the picker does not know shows as its CLI reported it.
+    // Short model names, as the apps show them: "Opus 5.5", "Fable 5.2 (1M)".
+    // A CLI lists a model named at launch under its raw id
+    // ("claude-fable-5-2[1m]"); that reads as its short name too. A model
+    // the picker does not know shows as its CLI reported it.
+    function tidyModel(id) {
+        const m = /^(?:claude-([a-z]+)-(\d+)(?:-(\d{1,2})(?!\d))?|(opus|sonnet|haiku|fable)(?=\[|$))/.exec(id || "")
+        if (!m)
+            return ""
+        const family = m[1] || m[4]
+        return family.charAt(0).toUpperCase() + family.slice(1) + (m[2] ? " " + m[2] : "")
+               + (m[3] ? "." + m[3] : "") + (/\[1m\]$/i.test(id) ? " (1M)" : "")
+    }
+    function entryLabel(entry) {
+        return tidyModel(entry.name || entry.id) || entry.name || entry.id
+    }
     function modelLabel(id) {
         const entry = modelEntry(id)
         if (entry && entry.name && entry.id !== "default" && (names(entry, id)))
-            return entry.name
-        const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?/.exec(id || "")
-        if (m)
-            return m[1].charAt(0).toUpperCase() + m[1].slice(1) + " " + m[2] + (m[3] ? "." + m[3] : "")
-        return id || qsTr("Model")
+            return entryLabel(entry)
+        return tidyModel(id) || id || qsTr("Model")
     }
     // An effort level as the Codex app names it: "xhigh" is "Extra High".
     function effortLabel(level) {
@@ -3933,7 +3943,7 @@ FocusScope {
                     // The CLI's own default entry carries a sentence for a
                     // name; it is just "Default" here.
                     choices: root.models.map(m => ({ id: m.id, label: m.id === "default" ? qsTr("Default")
-                                                                                         : (m.name || m.id) }))
+                                                                                         : root.entryLabel(m) }))
                     current: root.currentEntry ? root.currentEntry.id : ""
                     onChosen: id => root.chooseModel(id)
                 }
