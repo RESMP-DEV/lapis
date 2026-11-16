@@ -150,8 +150,8 @@ agent at work or one raising a request.
 Switching agents shows each thread at once. Threads stay read in memory while
 they fit a budget (`visual.keepMB` and `visual.keepThreads` in
 [config](config.md#visual-view)), so going back to one shows it where you left
-it, scrolled place and opened work included; with **all agents** shown as
-threads, lapis reads every local agent's thread ahead a few seconds after it
+it, scrolled place and opened work included; with every agent shown as a
+thread (`visual.all`, the default), lapis reads every local agent's thread ahead a few seconds after it
 opens. A thread not read yet shows its newest turns at once and the earlier
 history fills in above them a moment later without moving what is on screen.
 
@@ -295,14 +295,20 @@ prompt, Worked for and its steps, steering prompt, Worked for and its steps,
 reply, each prompt shown once. A prompt the
 CLI holds until the turn ends becomes the next turn's prompt, with no mark.
 
-Above **Commands** in the sidebar, **This agent** switches the selected agent
-between its terminal and the thread, and **All agents** shows every Claude
-Code, Codex and Antigravity agent on this Mac, and every Claude Code agent over
-ssh, as a thread (on by default, and
-saved, so it survives a restart). A per-agent choice wins over **All agents** until lapis
-restarts or **All agents** is switched again. Both are also in Commands. The
-terminal keeps running underneath but takes no input while covered; Escape
-brings it back.
+Every Claude Code, Codex and Antigravity agent on this Mac, and every Claude
+Code agent over ssh, shows as a thread by default. To send one agent back to
+its terminal, turn off the small **Thread** switch in its text box, just right
+of the model and effort pickers; other agents keep their threads. While that
+agent shows its terminal, the same switch, off, sits in the terminal's
+bottom-right corner; turn it on to bring the thread back. Neither switch takes
+the keyboard: it stays with whichever view shows. Commands has the same as
+**Show terminal for this agent** and **Show thread for this agent**, and Escape
+in the thread shows the terminal too. The choice is saved with the agent, so it
+survives a restart. Settings' **Show every agent as a thread** (`visual.all` in
+[config](config.md#visual-view)) sets the default for agents without a choice
+of their own. The terminal keeps running underneath but takes no input while
+covered. A plain shell, or an agent whose CLI lapis cannot read, shows its
+terminal with no switch.
 
 What differs by CLI:
 
@@ -541,10 +547,9 @@ block or output) and, on a prompt, **Edit**: a new agent that continues from
 just before it, with the prompt waiting unsent in its input. The original
 conversation is never changed.
 
-Light mode reads the thread as dark text on an off-white page. The sun beside
-**Visual view** in the sidebar (a moon in light mode), or **Switch to light
-mode** in Commands, flips it; Settings' Appearance section also has **Match
-macOS**, which follows the Mac's appearance as it changes, and a preview. It
+Light mode reads the thread as dark text on an off-white page. **Switch to
+light mode** in Commands (**Switch to dark mode** in light mode) flips it, as
+does Settings' Appearance section, which also has **Match macOS**, which follows the Mac's appearance as it changes, and a preview. It
 switches the thread (its replies, code,
 its steps, the bar and the menus) and the window around it (sidebar,
 strip frames, dialogs) to your last light theme of each, and back to your last
@@ -591,8 +596,8 @@ arrive within milliseconds.
 - **When it cannot.** With nothing copied yet, a failure shows the terminal
   and a note says why: **python3 is not installed on buildbox**, **ssh to
   buildbox needs a password or a key it cannot use without asking**, or **Lost
-  the connection to buildbox (retrying)**; **This agent** in the sidebar says
-  the same. With a copy, the thread stays and reads **Reconnecting to buildbox
+  the connection to buildbox (retrying)**; **Show thread for this agent** in
+  Commands says the same. With a copy, the thread stays and reads **Reconnecting to buildbox
   · the thread may be behind**. lapis retries after 2, 5, 10, 20, 30 and
   60 seconds while the thread is wanted, resuming at the copy's size.
 - **Paths are that machine's.** The folder the thread names is the agent's

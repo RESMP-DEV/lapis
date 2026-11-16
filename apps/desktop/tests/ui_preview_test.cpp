@@ -1452,8 +1452,7 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
         workspace.categories()[1].toMap().value(QStringLiteral("id")).toString();
     for (const auto& name :
          {QStringLiteral("agentTab_shell"), QStringLiteral("category_") + other_category,
-          QStringLiteral("newAgentButton"), QStringLiteral("newCategoryButton"),
-          QStringLiteral("commandsButton")}) {
+          QStringLiteral("newAgentButton"), QStringLiteral("newCategoryButton")}) {
         if (auto* strip = find_visual(preview.window()->contentItem(), QStringLiteral("agentTabs")))
             CHECK(QMetaObject::invokeMethod(strip, name == QStringLiteral("newAgentButton")
                                                        ? "positionViewAtEnd"
@@ -1483,8 +1482,8 @@ void check_composition_navigation(lapis::desktop::Workspace& workspace,
     // does nothing to the keyboard, the agent or the category.
     auto* title = find_visual(preview.window()->contentItem(), QStringLiteral("stageTitle"));
     CHECK(title != nullptr && title->isVisible());
-    auto* commands = find_visual(preview.window()->contentItem(), QStringLiteral("commandsButton"));
-    CHECK(commands == nullptr || !commands->isVisible());
+    CHECK(find_visual(preview.window()->contentItem(), QStringLiteral("commandsButton")) ==
+          nullptr);
     click_visual(*preview.window(), *title);
     CHECK(workspace.focusedAgent() == document);
     CHECK(workspace.activeCategoryId() == category);
@@ -1957,10 +1956,9 @@ int run_attention_ui_tests() {
     QGuiApplication::setFont(larger_font);
     pump(80);
     check_stage_bounds(*window, *terminal);
-    // The narrow window has no Commands button over its stage; the shortcut
-    // still opens Commands, inside the window.
-    auto* menu_button = find_visual(window->contentItem(), QStringLiteral("commandsButton"));
-    CHECK(menu_button == nullptr || !menu_button->isVisible());
+    // The window has no Commands button anywhere; the shortcut still opens
+    // Commands, inside the window.
+    CHECK(find_visual(window->contentItem(), QStringLiteral("commandsButton")) == nullptr);
     const auto open_commands = lapis::desktop::Config().sequences(QStringLiteral("openCommands"));
     CHECK(!open_commands.isEmpty());
     send_binding(*window, open_commands.front());
@@ -3239,14 +3237,14 @@ const char* const kSettingsThread[] = {
     R"({"type":"system","subtype":"turn_duration","durationMs":20000})",
 };
 
-// Light mode: the sun and moon beside the visual view and the Commands entry
-// switch the window and the thread together, terminals untouched.
+// Light mode: the Commands entry switches the window and the thread
+// together, terminals untouched. The sidebar has no sun and moon of its own
+// any more; Settings keeps its light and dark switch (check_settings_window).
 void check_appearance_toggle(QQuickWindow& window, lapis::desktop::Workspace& workspace,
                              lapis::desktop::Config& config_model, const QTemporaryDir& directory,
                              const QString& captures) {
     using namespace lapis::desktop;
-    auto* toggle = find_visual(window.contentItem(), QStringLiteral("appearanceToggle"));
-    CHECK(toggle != nullptr && toggle->isVisible());
+    CHECK(find_visual(window.contentItem(), QStringLiteral("appearanceToggle")) == nullptr);
     const auto terminal_background = [&window] {
         return qobject_cast<TerminalSurface*>(
                    find_visual(window.contentItem(), QStringLiteral("liveTerminal")))
@@ -3256,7 +3254,26 @@ void check_appearance_toggle(QQuickWindow& window, lapis::desktop::Workspace& wo
     const QColor terminal_before = terminal_background();
     CHECK(config_model.appearance() == QStringLiteral("dark") &&
           config_model.themeName() == QStringLiteral("oled"));
-    click_visual(window, *toggle);
+    // The Commands entry names the way it switches, and is found by
+    // "appearance".
+    const auto entry_label = [&window] {
+        QVariant entries;
+        CHECK(
+            QMetaObject::invokeMethod(&window, "commandEntries", Q_RETURN_ARG(QVariant, entries)));
+        for (const auto& value : entries.toList())
+            if (value.toMap().value(QStringLiteral("id")).toString() ==
+                QStringLiteral("toggleAppearance")) {
+                CHECK(value.toMap()
+                          .value(QStringLiteral("keywords"))
+                          .toString()
+                          .contains(QStringLiteral("appearance")));
+                return value.toMap().value(QStringLiteral("label")).toString();
+            }
+        return QString();
+    };
+    CHECK(entry_label() == QStringLiteral("Switch to light mode"));
+    CHECK(QMetaObject::invokeMethod(&window, "runCommand",
+                                    Q_ARG(QVariant, QStringLiteral("toggleAppearance"))));
     pump(50);
     CHECK(config_model.appearance() == QStringLiteral("light"));
     CHECK(config_model.themeName() == QStringLiteral("daylight"));
@@ -3267,7 +3284,7 @@ void check_appearance_toggle(QQuickWindow& window, lapis::desktop::Workspace& wo
     CHECK(view->property("themeName").toString() == QStringLiteral("claude-light"));
     CHECK(view->property("lightPage").toBool());
 
-    // The Commands entry names the way it switches.
+    // The palette itself lists it, named for the way back.
     CHECK(QMetaObject::invokeMethod(&window, "openCommandsDialog"));
     auto* commands = window.findChild<QObject*>(QStringLiteral("commandsDialog"));
     CHECK(commands != nullptr);
@@ -3599,8 +3616,7 @@ void check_hidden_sidebar_title(QQuickWindow& window, lapis::desktop::Workspace&
     CHECK(color(mark, "color") == category_hue());
     CHECK(color(text, "color") == window.property("mutedTextColor").value<QColor>());
     CHECK(find_visual(window.contentItem(), QStringLiteral("categorySelector")) == nullptr);
-    auto* commands = find_visual(window.contentItem(), QStringLiteral("commandsButton"));
-    CHECK(commands == nullptr || !commands->isVisible());
+    CHECK(find_visual(window.contentItem(), QStringLiteral("commandsButton")) == nullptr);
     // One quiet line: no taller than about two lines of chrome text, and the
     // stage starts under it.
     const int chrome_font = window.property("chromeFont").toInt();

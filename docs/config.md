@@ -74,9 +74,14 @@ Settings writes the [visual view](workspace.md#visual-view)'s choices under
 `helvetica`), `codeFont` (`system`, `terminal`, `menlo`), `size` in pixels
 (10 to 40; 0 follows the terminal font), `all`, which shows every Claude
 Code, Codex and Antigravity agent on this Mac as a thread from the moment it
-opens (on unless the file says `false`), and `editor`, what Command-click on a file path opens
+opens (on unless the file says `false`; with `false`, agents without a choice
+of their own show their terminals, and each one's **Thread** switch over its
+terminal still turns its thread on), and `editor`, what Command-click on a file path opens
 it in (`vscode`, `cursor`, `zed`, `textedit`, `system`, or `auto` for the first
-of those installed). An unknown name falls back to the first choice.
+of those installed). An unknown name falls back to the first choice. An
+agent's own **Thread** switch is not in this file: it is saved with the agent
+in lapis's workspace registry (`"view": "thread"` or `"terminal"`) and wins
+over `all` for that agent.
 An old `"factory"` key, from the retired Factory view, is ignored and left as
 it is.
 

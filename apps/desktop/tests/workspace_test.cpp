@@ -1881,6 +1881,81 @@ void agentLinksNameOpenAgents() {
             "the next save drops homeAgent and keeps the agents");
 }
 
+// An agent's own view (its Thread switch) is saved with it in the registry
+// and read back by the next workspace; an unknown view is ignored and
+// dropped; forgetting it writes nothing. No process or window.
+void agentViewChoicesPersist() {
+    QTemporaryDir directory;
+    require(directory.isValid(), "view directory");
+    const auto canonical = QFileInfo(directory.path()).canonicalFilePath();
+    const QString first = QStringLiteral("2d8f3c6a-9f77-4e57-9c75-3b5149dae3c3");
+    const QString second = QStringLiteral("3e9a4d7b-a088-4f68-ad86-4c625aebf4d4");
+    const auto record = [&](const QString& id) {
+        return QJsonObject{{"id", id},
+                           {"title", id.left(8)},
+                           {"category", "general"},
+                           {"endpoint", QDir(canonical).filePath(id + ".sock")},
+                           {"program", "/usr/bin/true"},
+                           {"harness", "claude"},
+                           {"directory", canonical}};
+    };
+    auto odd = record(second);
+    odd.insert("view", "sideways");
+    WorkspaceOptions options;
+    options.storagePath = QDir(canonical).filePath(QStringLiteral("workspace.json"));
+    options.headless = true;
+    writeRegistry(
+        options.storagePath,
+        QJsonObject{{"version", 2},
+                    {"activeCategory", "general"},
+                    {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                    {"agents", QJsonArray{record(first), odd}}});
+    const auto saved_view = [&](const QString& id) {
+        const auto agents = QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                .object()
+                                .value("agents")
+                                .toArray();
+        for (const auto& entry : agents)
+            if (entry[QStringLiteral("id")] == id)
+                return entry.toObject();
+        return QJsonObject{};
+    };
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.workspaceError().isEmpty() && workspace.agent(first) != nullptr &&
+                    workspace.agent(second) != nullptr,
+                "both agents restore");
+        require(workspace.agentView(first).isEmpty() && workspace.agentView(second).isEmpty(),
+                "no choice, and an unknown view is ignored");
+        require(!workspace.setAgentView(first, QStringLiteral("sideways")) &&
+                    !workspace.setAgentView(QStringLiteral("missing"), QStringLiteral("thread")),
+                "an unknown view or agent is refused");
+        QStringList changed;
+        QObject::connect(&workspace, &Workspace::viewChanged,
+                         [&](const QString& id) { changed.append(id); });
+        require(workspace.setAgentView(first, QStringLiteral("terminal")) &&
+                    workspace.agentView(first) == QStringLiteral("terminal") &&
+                    changed == QStringList{first},
+                "turning one agent's thread off is reported for it alone");
+        require(saved_view(first).value("view") == QStringLiteral("terminal") &&
+                    !saved_view(second).contains("view"),
+                "saved with that agent; the unknown view is dropped on save");
+        require(workspace.setAgentView(first, QStringLiteral("terminal")) && changed.size() == 1,
+                "the same choice again changes nothing");
+    }
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        require(workspace.agentView(first) == QStringLiteral("terminal") &&
+                    workspace.agentView(second).isEmpty(),
+                "the next workspace reads the choice back");
+        require(workspace.setAgentView(first, QStringLiteral("thread")) &&
+                    saved_view(first).value("view") == QStringLiteral("thread"),
+                "turned back on, it is saved as a thread");
+        require(workspace.setAgentView(first, QString()) && !saved_view(first).contains("view"),
+                "forgotten, it follows visual.all and writes nothing");
+    }
+}
+
 // Harnesses without an observer get an output-timing estimate that
 // says so; reattaching does not count as activity.
 void outputEstimate() {
@@ -7621,6 +7696,7 @@ int main(int argc, char** argv) {
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("attention") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("sidebar") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("agent-links") ||
+                         QString::fromLocal8Bit(argv[2]) == QStringLiteral("agent-view") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("stage-size") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("visual-files") ||
                          QString::fromLocal8Bit(argv[2]) == QStringLiteral("closing")),
@@ -7628,7 +7704,7 @@ int main(int argc, char** argv) {
                     "adapter-status|remote-options|remote-hooks|local-codex|retired-plans|reload|"
                     "updater|"
                     "updates-off|startup-defaults|launch-policy|omp-overlay|chimes|attention|"
-                    "sidebar|agent-links|"
+                    "sidebar|agent-links|agent-view|"
                     "stage-size|visual-files|closing]");
             const auto selected = QString::fromLocal8Bit(argv[2]);
             if (selected == QStringLiteral("adapter-status")) {
@@ -7693,6 +7769,8 @@ int main(int argc, char** argv) {
                 categoryColorsPersist();
             } else if (selected == QStringLiteral("agent-links")) {
                 agentLinksNameOpenAgents();
+            } else if (selected == QStringLiteral("agent-view")) {
+                agentViewChoicesPersist();
             } else {
                 reloadStartsAgentsAgain();
                 reloadFailuresRemainRetryable();
@@ -7722,6 +7800,7 @@ int main(int argc, char** argv) {
         malformedAgentRegistry();
         unknownRegistryVersionsAreRejected();
         agentLinksNameOpenAgents();
+        agentViewChoicesPersist();
         unseenFollowsTurnsAndSelection();
         attentionMarksFollowLooking();
         tabSkipsTurnsAlreadySeen();

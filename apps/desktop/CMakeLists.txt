@@ -101,7 +101,7 @@ if(APPLE)
     target_link_libraries(lapis_desktop PRIVATE "-framework AppKit")
 endif()
 target_link_libraries(lapis_desktop PRIVATE lapis_project_options lapis_desktop_core Qt6::QuickControls2)
-qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml qml/SettingsPreview.qml)
+qt_add_resources(lapis_desktop desktop_qml PREFIX "/" FILES qml/Main.qml qml/Settings.qml qml/AttentionDialog.qml qml/Commands.qml qml/AgentMark.qml qml/Resume.qml qml/Tools.qml qml/Transcript.qml qml/MediaPlayback.qml qml/SettingsPreview.qml qml/ViewKnob.qml)
 # A development bundle has its own identity, so macOS never mistakes it for
 # the installed app: `open` would otherwise bring the installed lapis forward,
 # and the two would share notification and preference state.
@@ -266,6 +266,10 @@ if(BUILD_TESTING)
     add_test(NAME workspace-agent-links COMMAND lapis_workspace_tests --case agent-links)
     set_tests_properties(workspace-agent-links PROPERTIES TIMEOUT 30
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    # An agent's own view (its Thread switch) saved with it and read back.
+    add_test(NAME workspace-agent-view COMMAND lapis_workspace_tests --case agent-view)
+    set_tests_properties(workspace-agent-view PROPERTIES TIMEOUT 30
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     # The visual view's files, with stand-in processes and a restore through
     # the real session service; windowless.
     add_test(NAME workspace-visual-files COMMAND lapis_workspace_tests --case visual-files)
@@ -317,8 +321,9 @@ if(BUILD_TESTING)
     set_tests_properties(config PROPERTIES TIMEOUT 20)
 
     # The production window's visual view, always offscreen and software: the
-    # sidebar's bottom block and agent links, a new session opening on its
-    # thread, and Tab, Tab, Tab in the thread's bar.
+    # sidebar with no bottom block and agent links, a new session opening on
+    # its thread, Tab, Tab, Tab in the thread's bar, and the per-agent Thread
+    # switch.
     add_executable(lapis_visual_ui_tests tests/visual_ui_test.cpp tests/tab_flow_guesses.hpp)
     target_link_libraries(lapis_visual_ui_tests PRIVATE lapis_project_options lapis_desktop_core
         Qt6::QuickControls2)
@@ -327,7 +332,8 @@ if(BUILD_TESTING)
     add_test(NAME visual-ui COMMAND lapis_visual_ui_tests --background)
     add_test(NAME visual-new-session COMMAND lapis_visual_ui_tests --background --new-session)
     add_test(NAME visual-tab-flow COMMAND lapis_visual_ui_tests --background --tab-flow)
-    set_tests_properties(visual-ui visual-new-session visual-tab-flow PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui"
+    add_test(NAME visual-view-knob COMMAND lapis_visual_ui_tests --background --view-knob)
+    set_tests_properties(visual-ui visual-new-session visual-tab-flow visual-view-knob PROPERTIES TIMEOUT 60 RESOURCE_LOCK "qt_gui"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_CONTROLS_STYLE=Basic")
 
     add_executable(lapis_tool_status_tests tests/tool_status_test.cpp)

@@ -1,13 +1,16 @@
 // The visual view in the production window, always offscreen with the
-// software renderer: the sidebar's bottom block, the sidebar's slide and
+// software renderer: a sidebar with no bottom block, the sidebar's slide and
 // agent links in a thread (run). It never shows a window, takes focus or
 // touches the person's files.
 //
-//   lapis_visual_ui_tests --background [--new-session | --tab-flow] [--capture DIR]
+//   lapis_visual_ui_tests --background [--new-session | --tab-flow | --view-knob]
+//                         [--capture DIR]
 //
-// With --capture it saves sidebar_bottom_comfortable.png,
-// sidebar_bottom_compact.png and sidebar_bottom_minimal.png (1200x800, dark)
-// in DIR. --new-session checks a
+// With --capture it saves sidebar_comfortable.png, sidebar_compact.png and
+// sidebar_minimal.png (1200x800, dark) in DIR. --view-knob checks the
+// per-agent Thread switch in the bar and over the terminal (run_view_knob),
+// and saves view_knob_composer.png, view_knob_terminal.png (close-ups, 2x)
+// and view_knob_terminal_window.png. --new-session checks a
 // new session opening on its thread instead (run_new_session), and saves
 // new_session_empty.png, new_session_first_send.png and
 // new_session_trust_screen.png (1200x800). --tab-flow checks Tab, Tab, Tab
@@ -28,6 +31,7 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHash>
+#include <QImage>
 #include <QInputMethodEvent>
 #include <QJSEngine>
 #include <QJSValue>
@@ -35,6 +39,7 @@
 #include <QJsonObject>
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QMouseEvent>
 #include <QQmlEngine>
 #include <QQuickItem>
 #include <QQuickStyle>
@@ -43,10 +48,10 @@
 #include <QTemporaryDir>
 #include <QThread>
 
-#include <array>
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -104,6 +109,33 @@ QQuickItem* text_with(QQuickItem* root, const QString& needle) {
             return found;
     return nullptr;
 }
+// The first item under `root` whose text is exactly `needle`.
+QQuickItem* text_of_any(QQuickItem* root, const QString& needle) {
+    if (root->property("text").toString() == needle)
+        return root;
+    for (auto* child : root->childItems())
+        if (auto* found = text_of_any(child, needle))
+            return found;
+    return nullptr;
+}
+// A left click in the middle of `target`, as the window receives it.
+void click(QQuickWindow& window, QQuickItem& target) {
+    const auto position = target.mapToScene(QPointF(target.width() / 2, target.height() / 2));
+    require(position.x() >= 0 && position.x() <= window.width() && position.y() >= 0 &&
+                position.y() <= window.height(),
+            "the click lands inside the window");
+    const auto global = window.mapToGlobal(position);
+    QMouseEvent press(QEvent::MouseButtonPress, position, global, Qt::LeftButton, Qt::LeftButton,
+                      Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, position, global, Qt::LeftButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &press);
+    QCoreApplication::sendEvent(&window, &release);
+}
+// `target`'s rectangle in the window.
+QRectF scene_box(QQuickItem& target) {
+    return target.mapRectToScene(QRectF(0, 0, target.width(), target.height()));
+}
 void report(Agent& agent, Activity activity) {
     wire::AttentionSnapshot snapshot;
     snapshot.available = true;
@@ -150,11 +182,11 @@ QList<QKeySequence> shortcut_sequences(QQuickWindow& window) {
 // The window at rest now that the Factory view is gone: a lapis.json that
 // still says "visual": {"factory": true} loads without a complaint and keeps
 // the key as written, nothing in the window offers the view (no control, no
-// Commands entry, no Command-Shift-F), the sidebar's bottom block (Visual
-// view, This agent and All agents, Commands) lays out inside the sidebar in
-// every density, the sidebar still slides, and an agent link in a thread
-// opens that agent. With --capture it saves sidebar_bottom_<density>.png
-// (1200x800, dark) in DIR.
+// Commands entry, no Command-Shift-F), the sidebar has no bottom block (no
+// Visual view title or light and dark toggle, no This agent or All agents,
+// no Commands button) and its list takes the full height in every density,
+// the sidebar still slides, and an agent link in a thread opens that agent.
+// With --capture it saves sidebar_<density>.png (1200x800, dark) in DIR.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 int run(const QString& captures) {
     QTemporaryDir directory;
@@ -260,42 +292,27 @@ int run(const QString& captures) {
                 "Command-Shift-F changes nothing");
     }
 
-    // The sidebar's bottom block, in each density: the Visual view title and
-    // appearance toggle, This agent beside All agents, then Commands, in that
-    // order and all inside the sidebar.
+    // No bottom block, in each density: no Visual view title or light and
+    // dark toggle, no This agent or All agents, no Commands button, and the
+    // sidebar's list runs to the sidebar's bottom margin.
     for (const char* density : {"comfortable", "compact", "minimal"}) {
         require(config.setDensity(QString::fromLatin1(density)), std::string("density ") + density);
         pump(150);
         const std::string where = std::string(" (") + density + ")";
+        for (const char* name :
+             {"appearanceToggle", "visualThisAgent", "visualAllAgents", "commandsButton"})
+            require(find(window->contentItem(), QString::fromLatin1(name)) == nullptr,
+                    std::string("no ") + name + where);
         auto* rail = item(*window, "categoryRail");
-        const auto box = [&](const char* name) {
-            auto* control = item(*window, QString::fromLatin1(name));
-            require(control->isVisible() && control->width() > 0 && control->height() > 0,
-                    std::string(name) + " is shown" + where);
-            return control->mapRectToItem(rail, QRectF(0, 0, control->width(), control->height()));
-        };
-        const QRectF inside(-0.5, -0.5, rail->width() + 1, rail->height() + 1);
-        const auto appearance = box("appearanceToggle");
-        const auto this_agent = box("visualThisAgent");
-        const auto all_agents = box("visualAllAgents");
-        const auto commands = box("commandsButton");
-        for (const auto& [name, rect] :
-             std::array<std::pair<const char*, QRectF>, 4>{{{"appearanceToggle", appearance},
-                                                            {"visualThisAgent", this_agent},
-                                                            {"visualAllAgents", all_agents},
-                                                            {"commandsButton", commands}}})
-            require(inside.contains(rect), std::string(name) + " is inside the sidebar" + where);
-        require(std::abs(this_agent.top() - all_agents.top()) < 1 &&
-                    this_agent.right() <= all_agents.left(),
-                "This agent sits beside All agents" + where);
-        require(appearance.bottom() <= this_agent.top() && this_agent.bottom() <= commands.top(),
-                "the block reads top to bottom" + where);
-        require(commands.top() - this_agent.bottom() < 16,
-                "Commands follows the visual row with no gap left behind" + where);
-        require(std::abs(commands.left() - this_agent.left()) < 1 &&
-                    std::abs(commands.right() - all_agents.right()) < 1,
-                "Commands spans the row above" + where);
-        save(QStringLiteral("sidebar_bottom_%1.png").arg(QString::fromLatin1(density)));
+        require(text_of_any(rail, QStringLiteral("Visual view")) == nullptr,
+                "no Visual view title in the sidebar" + where);
+        auto* list = item(*window, "sidebarList");
+        const auto box = list->mapRectToItem(rail, QRectF(0, 0, list->width(), list->height()));
+        const auto inset = std::round(window->property("sidebarInset").toReal() * 0.7);
+        require(box.top() <= 1 && std::abs(rail->height() - inset - box.bottom()) < 1,
+                "the list uses the sidebar's full height" + where + ": " +
+                    std::to_string(box.bottom()) + " of " + std::to_string(rail->height()));
+        save(QStringLiteral("sidebar_%1.png").arg(QString::fromLatin1(density)));
     }
     require(config.setDensity(QStringLiteral("comfortable")), "back to comfortable");
     pump(150);
@@ -363,6 +380,23 @@ QString claude_trust() {
                                  " ❯ 1. Yes, I trust this folder\r\n   2. No, exit\r\n\r\n"
                                  " Enter to confirm · Esc to cancel\r\n");
 }
+// Claude Code's model list from a stand-in CLI under `folder`: its default
+// entry names Fable 5.2, and "opus" is an alias for claude-opus-5-5. Returns
+// the stand-in's path.
+QString claude_model_stand_in(const QString& folder) {
+    const auto stand_in = QDir(folder).filePath("bin/claude");
+    QDir().mkpath(QFileInfo(stand_in).absolutePath());
+    write(
+        stand_in,
+        "#!/bin/sh\nread -r line\n"
+        R"sh(echo '{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":[)sh"
+        R"sh({"value":"default","displayName":"Default (recommended)","description":"Fable 5.2 · Best for everyday tasks","resolvedModel":"claude-fable-5-2","supportedEffortLevels":["low","medium","high"]},)sh"
+        R"sh({"value":"opus","displayName":"Opus 5.5","resolvedModel":"claude-opus-5-5","supportedEffortLevels":["low","high","xhigh","max"]}]}}}')sh"
+        "\ncat >/dev/null\n");
+    QFile::setPermissions(stand_in,
+                          QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    return stand_in;
+}
 void show_screen(Agent& agent, const QString& content) {
     lapis::session::Terminal terminal({100, 30});
     terminal.feed(content.toStdString());
@@ -416,19 +450,7 @@ int run_new_session(const QString& captures) {
                                     R"(o=--session-id && { exec "${SHELL:-/bin/sh}" -lic )"
                                     R"('claude --model opus --effort high '"$o $s"; })")}),
             "launch commands");
-    // Claude Code's model list from a stand-in CLI: its default entry names
-    // Fable 5.2, and "opus" is an alias for claude-opus-5-5.
-    const auto stand_in = QDir(directory.path()).filePath("bin/claude");
-    QDir().mkpath(QFileInfo(stand_in).absolutePath());
-    write(
-        stand_in,
-        "#!/bin/sh\nread -r line\n"
-        R"sh(echo '{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":[)sh"
-        R"sh({"value":"default","displayName":"Default (recommended)","description":"Fable 5.2 · Best for everyday tasks","resolvedModel":"claude-fable-5-2","supportedEffortLevels":["low","medium","high"]},)sh"
-        R"sh({"value":"opus","displayName":"Opus 5.5","resolvedModel":"claude-opus-5-5","supportedEffortLevels":["low","high","xhigh","max"]}]}}}')sh"
-        "\ncat >/dev/null\n");
-    QFile::setPermissions(stand_in,
-                          QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    const auto stand_in = claude_model_stand_in(directory.path());
     HarnessModels models(
         [&](const QString& id) { return id == QLatin1String("claude") ? stand_in : QString(); },
         QDir(directory.path()).filePath("home"));
@@ -516,7 +538,7 @@ int run_new_session(const QString& captures) {
     for (const auto& value : entries.toList()) {
         const auto entry = value.toMap();
         offered = offered || (entry.value("id").toString() == "toggleVisual" &&
-                              entry.value("label").toString() == "Show terminal" &&
+                              entry.value("label").toString() == "Show terminal for this agent" &&
                               entry.value("enabled").toBool());
     }
     require(offered, "Commands offers its terminal");
@@ -666,12 +688,265 @@ int run_new_session(const QString& captures) {
             "an agent with no CLI the view reads shows its terminal");
     require(workspace.selectAgent("plain"), "back to the kept terminal");
     pump(300);
-    require(!flag("visualActive"), "the choice holds for this run");
+    require(!flag("visualActive") && workspace.agentView("plain") == QStringLiteral("terminal"),
+            "the choice holds, kept with the agent");
 
     require(preview.diagnostics().isEmpty(),
             "QML diagnostics: " + preview.diagnostics().toStdString());
     std::cout << "visual_ui_test: new sessions PASS (offscreen/software fixture screens; not a "
                  "real CLI's startup, native input or GPU acceptance)\n";
+    return EXIT_SUCCESS;
+}
+
+// The per-agent Thread switch: every thread-capable agent opens on its
+// thread by default; the switch sits just right of the model and effort
+// pickers, as tall as they are; turning it off shows that agent's terminal
+// alone, kept with the agent through a window reload; the same switch, off,
+// sits in the terminal's bottom-right corner and brings the thread back;
+// neither switch ever holds the keyboard, which follows the shown view as
+// the Commands entry does; Commands names both ways plainly; a plain shell
+// has neither; visual.all false leaves agents without a choice on their
+// terminals; Command-Shift-P still opens Commands. Offscreen and software;
+// fixture agents and a stand-in model list.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+int run_view_knob(const QString& captures) {
+    QTemporaryDir directory;
+    require(directory.isValid(), "temporary directory");
+    Workspace workspace(WorkspaceMode::fixture);
+    require(workspace.addFixtureAgent("alpha", "Alpha", "general", "claude", claude_ready()) &&
+                workspace.addFixtureAgent("beta", "Beta", "general", "claude", claude_ready()),
+            "two Claude Code agents");
+    for (const char* id : {"alpha", "beta"}) {
+        report(*workspace.agent(id), Activity::idle);
+        const auto path = QDir(directory.path()).filePath(QString::fromLatin1(id) + ".jsonl");
+        write(
+            path,
+            R"({"type":"user","uuid":"u","message":{"content":"Why is the warm switch slow?"}})"
+            "\n"
+            R"({"type":"assistant","uuid":"a","message":{"content":[{"type":"text","text":"Each switch measured the whole screen again."}]}})"
+            "\n");
+        require(workspace.setFixtureConversation(QString::fromLatin1(id), path),
+                std::string("a thread for ") + id);
+        require(workspace.setFixtureLaunch(QString::fromLatin1(id), QStringLiteral("claude"),
+                                           {QStringLiteral("--model"), QStringLiteral("opus"),
+                                            QStringLiteral("--effort"), QStringLiteral("xhigh")}),
+                std::string("a launch for ") + id);
+    }
+    const auto stand_in = claude_model_stand_in(directory.path());
+    HarnessModels models(
+        [&](const QString& id) { return id == QLatin1String("claude") ? stand_in : QString(); },
+        QDir(directory.path()).filePath("home"));
+    models.refresh();
+    until([&] { return !models.models(QStringLiteral("claude")).empty(); },
+          "the stand-in's model list");
+    workspace.setHarnessModels(&models);
+
+    const auto config_path = QDir(directory.path()).filePath("lapis.json");
+    write(config_path, R"({"version": 1})");
+    Config config;
+    config.setSourcePathForTesting(config_path);
+    require(config.load() && config.visualAll(), "visual.all is on for a config without it");
+    require(config.setAppearance(QStringLiteral("dark")), "dark appearance");
+    require(workspace.selectAgent("alpha"), "alpha first");
+
+    std::unique_ptr<AppWindow> preview;
+    QQuickWindow* window = nullptr;
+    const auto open = [&] {
+        preview.reset();
+        pump(50);
+        preview = std::make_unique<AppWindow>(
+            workspace,
+            AppWindowOptions{.source = QUrl::fromLocalFile(QStringLiteral(LAPIS_QML_SOURCE)),
+                             .compact = false,
+                             .screen = QString(),
+                             .config = &config});
+        require(preview->load(), "the production window loads");
+        window = preview->window();
+        require(window != nullptr, "the window exists");
+        window->resize(1200, 800);
+        window->show();
+        window->requestActivate();
+        pump(200);
+    };
+    open();
+    const auto flag = [&](const char* name) { return window->property(name).toBool(); };
+    const auto covers = [&] { return flag("visualCovers") && shown(*window, "visualView"); };
+    const auto command_label = [&] {
+        QVariant entries;
+        require(
+            QMetaObject::invokeMethod(window, "commandEntries", Q_RETURN_ARG(QVariant, entries)),
+            "read the palette");
+        for (const auto& value : entries.toList())
+            if (value.toMap().value("id").toString() == "toggleVisual")
+                return value.toMap().value("label").toString();
+        return QString();
+    };
+    // A close-up of `area` (window coordinates), twice the size.
+    const auto save_area = [&](const char* name, const QRectF& area) {
+        if (captures.isEmpty())
+            return;
+        pump(250);
+        const auto image = window->grabWindow();
+        const auto scale = image.width() / static_cast<double>(window->width());
+        const QRect pixels(static_cast<int>(area.x() * scale), static_cast<int>(area.y() * scale),
+                           static_cast<int>(area.width() * scale),
+                           static_cast<int>(area.height() * scale));
+        const auto path = QDir(captures).filePath(QString::fromLatin1(name));
+        require(image.copy(pixels.intersected(image.rect()))
+                    .scaled(pixels.size() * 2, Qt::KeepAspectRatio, Qt::SmoothTransformation)
+                    .save(path),
+                "save " + path.toStdString());
+        std::cout << "visual_ui_test: saved " << name << '\n';
+    };
+    const auto save = [&](const char* name) {
+        if (captures.isEmpty())
+            return;
+        pump(250);
+        const auto path = QDir(captures).filePath(QString::fromLatin1(name));
+        require(window->grabWindow().save(path), "save " + path.toStdString());
+        std::cout << "visual_ui_test: saved " << name << '\n';
+    };
+
+    // On by default for every agent that can show a thread.
+    until(covers, "alpha opens on its thread");
+    require(workspace.selectAgent("beta"), "beta");
+    until(covers, "beta opens on its thread too");
+    require(workspace.agentView("alpha").isEmpty() && workspace.agentView("beta").isEmpty(),
+            "no agent has a choice of its own yet");
+    require(command_label() == QStringLiteral("Show terminal for this agent"),
+            "Commands names the way to the terminal: " + command_label().toStdString());
+    require(workspace.selectAgent("alpha"), "back to alpha");
+    until(covers, "alpha on its thread");
+
+    // The bar's switch: right of the model and effort pickers, as tall.
+    until(
+        [&] {
+            return shown(*window, "visualModel") && shown(*window, "visualEffort") &&
+                   shown(*window, "visualViewKnob");
+        },
+        "the bar shows model, effort and the Thread switch");
+    auto* bar_knob = item(*window, "visualViewKnob");
+    const auto model_box = scene_box(*item(*window, "visualModel"));
+    const auto effort_box = scene_box(*item(*window, "visualEffort"));
+    const auto knob_box = scene_box(*bar_knob);
+    require(effort_box.left() >= model_box.right() - 0.5 &&
+                knob_box.left() >= effort_box.right() - 0.5 &&
+                knob_box.left() - effort_box.right() < 8,
+            "the switch sits immediately right of Model and Effort");
+    require(std::abs(knob_box.center().y() - effort_box.center().y()) < 1 &&
+                std::abs(knob_box.height() - effort_box.height()) < 0.5,
+            "and is as tall as the pickers, on their line");
+    require(bar_knob->property("on").toBool(), "it reads on while the thread shows");
+    save_area("view_knob_composer.png",
+              QRectF(model_box.left() - 24, model_box.top() - 18,
+                     knob_box.right() - model_box.left() + 120, model_box.height() + 36));
+
+    // Off: alpha's terminal, and only alpha's. The bar had the keyboard; the
+    // switch never takes it, and the keyboard follows the terminal shown.
+    auto* view = item(*window, "visualView");
+    auto* input = qvariant_cast<QQuickItem*>(view->property("composer"));
+    require(input != nullptr, "the bar's text field");
+    require(QMetaObject::invokeMethod(window, "visualFocus"), "the bar takes the keyboard");
+    until([&] { return input->hasActiveFocus(); }, "the bar has the keyboard");
+    click(*window, *bar_knob);
+    until([&] { return !flag("visualCovers") && shown(*window, "terminalViewKnob"); },
+          "turned off, alpha shows its terminal with the switch over it");
+    require(!bar_knob->hasActiveFocus() && !bar_knob->activeFocusOnTab(),
+            "the bar's switch never holds the keyboard");
+    auto* terminal = item(*window, "liveTerminal");
+    until([&] { return terminal->hasActiveFocus(); }, "the keyboard follows the terminal shown");
+    require(workspace.agentView("alpha") == QStringLiteral("terminal"), "kept with alpha");
+    require(command_label() == QStringLiteral("Show thread for this agent"),
+            "Commands names the way back: " + command_label().toStdString());
+
+    // The return switch: off, bottom-right over the terminal, the same size.
+    auto* terminal_knob = item(*window, "terminalViewKnob");
+    const auto corner = scene_box(*terminal_knob);
+    const auto screen = scene_box(*terminal);
+    require(screen.contains(corner) && screen.right() - corner.right() < 8 &&
+                screen.bottom() - corner.bottom() < 8,
+            "the return switch sits in the terminal's bottom-right corner");
+    require(std::abs(corner.height() - knob_box.height()) < 0.5 &&
+                !terminal_knob->property("on").toBool() && !terminal_knob->hasActiveFocus() &&
+                !terminal_knob->activeFocusOnTab(),
+            "as tall as the bar's, reading off, never a keyboard target");
+    require(corner.height() < screen.height() / 10, "it covers little of the terminal");
+    save("view_knob_terminal_window.png");
+    save_area("view_knob_terminal.png",
+              QRectF(screen.right() - 360, screen.bottom() - 110, 360, 110));
+
+    // Beta is untouched.
+    require(workspace.selectAgent("beta"), "beta");
+    until(covers, "beta still shows its thread");
+    require(workspace.agentView("beta").isEmpty() && !shown(*window, "terminalViewKnob"),
+            "beta has no choice and no return switch");
+
+    // A reloaded window: alpha still shows its terminal, beta its thread.
+    require(workspace.selectAgent("alpha"), "alpha");
+    open();
+    pump(300);
+    require(!flag("visualCovers") && shown(*window, "terminalViewKnob"),
+            "after a reload alpha keeps its terminal");
+    require(workspace.selectAgent("beta"), "beta");
+    until(covers, "and beta its thread");
+
+    // The return switch brings the thread back, with the bar's keyboard;
+    // it never took the terminal's.
+    require(workspace.selectAgent("alpha"), "alpha");
+    until([&] { return !flag("visualCovers") && shown(*window, "terminalViewKnob"); },
+          "alpha's terminal");
+    terminal = item(*window, "liveTerminal");
+    require(QMetaObject::invokeMethod(window, "visualFocus"), "the terminal takes the keyboard");
+    until([&] { return terminal->hasActiveFocus(); }, "the terminal has the keyboard");
+    terminal_knob = item(*window, "terminalViewKnob");
+    click(*window, *terminal_knob);
+    until(covers, "the return switch shows alpha's thread");
+    require(!terminal_knob->hasActiveFocus() && !shown(*window, "terminalViewKnob"),
+            "the return switch is gone and never held the keyboard");
+    view = item(*window, "visualView");
+    input = qvariant_cast<QQuickItem*>(view->property("composer"));
+    until([&] { return input != nullptr && input->hasActiveFocus(); },
+          "the keyboard follows the thread's bar");
+    require(workspace.agentView("alpha") == QStringLiteral("thread"), "kept as a thread");
+
+    // A plain shell has no thread: neither switch.
+    require(workspace.selectAgent("shell"), "a sample shell");
+    pump(300);
+    require(!flag("visualActive") && !shown(*window, "visualViewKnob") &&
+                !shown(*window, "terminalViewKnob"),
+            "a shell shows its terminal with no switch");
+
+    // visual.all false: an agent with no choice shows its terminal and offers
+    // its thread; alpha's own choice still wins.
+    require(config.setVisual(QStringLiteral("all"), false), "visual.all off");
+    require(workspace.selectAgent("beta"), "beta");
+    until([&] { return !flag("visualCovers") && shown(*window, "terminalViewKnob"); },
+          "beta follows visual.all to its terminal, with the switch to its thread");
+    require(workspace.selectAgent("alpha"), "alpha");
+    until(covers, "alpha's own choice wins over visual.all");
+    require(config.setVisual(QStringLiteral("all"), true), "visual.all back on");
+
+    // Command-Shift-P still opens Commands.
+    const auto open_commands = config.sequences(QStringLiteral("openCommands"));
+    require(!open_commands.isEmpty(), "Commands has a shortcut");
+    {
+        const auto combination = QKeySequence(open_commands.front())[0];
+        QKeyEvent press(QEvent::KeyPress, combination.key(), combination.keyboardModifiers());
+        QKeyEvent release(QEvent::KeyRelease, combination.key(), combination.keyboardModifiers());
+        QCoreApplication::sendEvent(window, &press);
+        QCoreApplication::sendEvent(window, &release);
+    }
+    auto* commands = window->findChild<QObject*>(QStringLiteral("commandsDialog"));
+    require(commands != nullptr, "the Commands palette exists");
+    until([&] { return commands->property("opened").toBool(); },
+          open_commands.front().toStdString() + " opens Commands");
+    require(QMetaObject::invokeMethod(commands, "close"), "close Commands");
+    until([&] { return !commands->property("visible").toBool(); }, "Commands closes");
+
+    require(preview->diagnostics().isEmpty(),
+            "QML diagnostics: " + preview->diagnostics().toStdString());
+    std::cout << "visual_ui_test: view knob PASS (offscreen/software fixture agents; not native "
+                 "input or GPU acceptance)\n";
     return EXIT_SUCCESS;
 }
 
@@ -912,6 +1187,7 @@ int main(int argc, char** argv) {
     QString captures;
     bool new_session = false;
     bool tab_chain = false;
+    bool view_knob = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--background")
@@ -928,8 +1204,12 @@ int main(int argc, char** argv) {
             tab_chain = true;
             continue;
         }
-        std::cerr << "Usage: lapis_visual_ui_tests [--background] [--new-session | --tab-flow] "
-                     "[--capture DIR]\n";
+        if (argument == "--view-knob") {
+            view_knob = true;
+            continue;
+        }
+        std::cerr << "Usage: lapis_visual_ui_tests [--background] [--new-session | --tab-flow | "
+                     "--view-knob] [--capture DIR]\n";
         return EXIT_FAILURE;
     }
     qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -952,6 +1232,7 @@ int main(int argc, char** argv) {
                 "offscreen platform only");
         return tab_chain     ? tab_flow::run_tab_flow(captures)
                : new_session ? run_new_session(captures)
+               : view_knob   ? run_view_knob(captures)
                              : run(captures);
     } catch (const std::exception& error) {
         std::cerr << "visual_ui_test: " << error.what() << '\n';

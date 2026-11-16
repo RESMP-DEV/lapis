@@ -591,6 +591,14 @@ class Workspace final : public QObject {
     // no python3 there, ssh needs a password, no conversation file there yet,
     // the connection was lost. Empty when nothing is wrong or not known.
     Q_INVOKABLE [[nodiscard]] QString visualUnavailable(const QString& id) const;
+    // The person's own view for one agent: "thread" or "terminal" (the
+    // thread's Thread switch, the one over its terminal, Commands, Escape in
+    // the thread), or "" to follow visual.all. Saved with the agent in the
+    // registry, so it holds across restarts; viewChanged reports a change.
+    Q_INVOKABLE [[nodiscard]] QString agentView(const QString& id) const;
+    // Records `view` ("thread", "terminal" or "" to forget) for an agent;
+    // false for an unknown agent or view, or when the registry cannot save.
+    Q_INVOKABLE bool setAgentView(const QString& id, const QString& view);
     // A remote agent's mirror for the view (RemoteThreads::state); empty for
     // an agent on this Mac.
     Q_INVOKABLE [[nodiscard]] QVariantMap remoteThreadState(const QString& id) const;
@@ -742,6 +750,8 @@ class Workspace final : public QObject {
     void finishedWhileAway(lapis::desktop::Agent* item);
     // A remote agent's thread changed: its file, support or state.
     void remoteThreadChanged(const QString& agentId);
+    // An agent's own view choice changed (setAgentView).
+    void viewChanged(const QString& agentId);
     // An attachment upload (uploadAttachment) moved on or ended: `remote`
     // is its path on the agent's machine, or empty with `error`.
     void attachmentProgress(const QString& token, double fraction);
@@ -815,6 +825,9 @@ class Workspace final : public QObject {
         // CLI has not named it (agy never does; Codex before its first turn
         // ends): kept, and resumed on restart, until the process holds another.
         QString conversation{};
+        // "thread" or "terminal" when the person chose one for this agent
+        // (agentView); empty follows visual.all.
+        QString view{};
     };
     std::vector<Category> categories_;
     QMap<QString, AgentRecord> agents_;

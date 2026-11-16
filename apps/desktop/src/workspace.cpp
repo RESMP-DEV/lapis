@@ -2284,6 +2284,9 @@ QJsonObject Workspace::agentRecord(const AgentRecord& agent, const QString& id,
         serialized.insert(QStringLiteral("autoTitle"), true);
     if (!agent.conversation.isEmpty())
         serialized.insert(QStringLiteral("conversation"), agent.conversation);
+    // Only a chosen view is written; earlier builds ignore the field.
+    if (!agent.view.isEmpty())
+        serialized.insert(QStringLiteral("view"), agent.view);
     const auto resume_option = resumeOption(agent.harness);
     if (agent.managed_resume_index >= 0 &&
         agent.managed_resume_index + 1 < agent.launch.arguments.size() &&
@@ -2514,6 +2517,29 @@ bool Workspace::visualSupported(const QString& id) const {
         return entry->harness == QLatin1String("claude") && remote_threads_ != nullptr &&
                remote_threads_->supported(id);
     return entry->harness == QLatin1String("claude") || pinnedHarness(entry->harness);
+}
+QString Workspace::agentView(const QString& id) const {
+    const auto entry = agents_.constFind(id);
+    return entry == agents_.cend() ? QString() : entry->view;
+}
+bool Workspace::setAgentView(const QString& id, const QString& view) {
+    const auto entry = agents_.find(id);
+    if (entry == agents_.end() ||
+        !(view.isEmpty() || view == QLatin1String("thread") || view == QLatin1String("terminal")))
+        return false;
+    if (entry->view == view)
+        return true;
+    if (!mutableRegistry())
+        return false;
+    const auto was = entry->view;
+    entry->view = view;
+    if (!save()) {
+        entry->view = was;
+        emit errorChanged();
+        return false;
+    }
+    emit viewChanged(id);
+    return true;
 }
 bool Workspace::remoteAgent(const QString& id) const {
     const auto entry = agents_.constFind(id);
@@ -3368,6 +3394,11 @@ Workspace::readAgent(const QJsonObject& object, const QSet<QString>& taken) cons
     if (const auto pinned = object.value(QStringLiteral("conversation")).toString();
         !QUuid::fromString(pinned).isNull())
         agent.conversation = pinned;
+    // A view this build does not know follows visual.all and is dropped on
+    // the next save.
+    if (const auto view = object.value(QStringLiteral("view")).toString();
+        view == QLatin1String("thread") || view == QLatin1String("terminal"))
+        agent.view = view;
     // "account" named a retired lapis-managed plan; it is ignored and
     // dropped on the next save, and the agent uses its machine's own
     // sign-in from its next start (see prepareStart).

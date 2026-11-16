@@ -542,16 +542,14 @@ ApplicationWindow {
         add("chooseTerminal", qsTr("Terminal on another machine"), "chooseTerminal", terminalsAvailable, qsTr("Not available here"), () => window.chooseTerminal())
         const conversationFile = hasAgent && !window.visualActive && !window.visualSupported
                                  ? workspace.conversationFile(agent.agentId) : ""
-        add("toggleVisual", window.visualActive ? qsTr("Show terminal") : qsTr("Show visual view"), "",
+        add("toggleVisual", window.visualActive ? qsTr("Show terminal for this agent") : qsTr("Show thread for this agent"), "",
             window.visualActive || window.visualSupported || conversationFile.length > 0,
             hasAgent ? (workspace.visualUnavailable(agent.agentId)
                         || qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac, or Claude Code over ssh"))
                      : needAgent,
-            () => window.toggleVisual())
-        add("toggleVisualAll", window.visualAll ? qsTr("Show terminals for all agents") : qsTr("Show visual view for all agents"), "",
-            true, "", () => window.toggleVisualAll())
+            () => window.toggleVisual(), qsTr("visual view TUI"))
         add("toggleAppearance", window.visualSettings.light ? qsTr("Switch to dark mode") : qsTr("Switch to light mode"), "",
-            true, "", () => window.toggleAppearance())
+            true, "", () => window.toggleAppearance(), qsTr("appearance theme light dark"))
         add("textBigger", qsTr("Bigger text"), "textBigger", true, "", () => window.changeTextSize(1))
         add("textSmaller", qsTr("Smaller text"), "textSmaller", true, "", () => window.changeTextSize(-1))
         add("textReset", qsTr("Default text size"), "textReset", true, "", () => window.changeTextSize(0))
@@ -1036,21 +1034,41 @@ ApplicationWindow {
     // Agents shown as a readable thread (the visual view) instead of their
     // terminal, by id. The terminal keeps running under it, takes no input
     // while it is covered, and gets the keyboard back on Escape.
-    // "All agents" (saved in lapis.json) shows every Claude Code, Codex and
-    // Antigravity agent on this Mac as a thread; visualAgents holds this run's per-agent choices,
-    // which win over it until lapis restarts or "all" is switched again.
+    // visual.all (lapis.json, on by default; Settings switches it) shows
+    // every Claude Code, Codex and Antigravity agent as a thread. An agent's
+    // own choice (the Thread switch in its bar, the one over its terminal,
+    // Commands, Escape) wins over it and is saved with the agent
+    // (Workspace.agentView), so it holds across restarts. visualAgents keeps
+    // this run's choices as well, so a registry that cannot save still flips.
     property var visualAgents: ({})
+    property int viewRevision: 0
+    Connections {
+        target: workspace
+        function onViewChanged(agentId) { window.viewRevision += 1 }
+    }
     readonly property var visualSettings: config.visual
     readonly property bool visualAll: visualSettings.all === true
+    function visualChoice(id) {
+        const choice = visualAgents[id]
+        if (choice !== undefined)
+            return choice
+        const saved = viewRevision >= 0 ? workspace.agentView(id) : ""
+        return saved === "thread" ? true : saved === "terminal" ? false : undefined
+    }
     readonly property bool visualWanted: {
         const agent = workspace.focusedAgent
         if (agent === null)
             return false
-        const choice = visualAgents[agent.agentId]
+        const choice = visualChoice(agent.agentId)
         if (choice !== undefined)
             return choice
         return visualAll
     }
+    // The focused agent can show a thread but shows its terminal by the
+    // person's choice: the switch over its terminal brings the thread back.
+    readonly property bool visualOffered: workspace.focusedAgent !== null && !visualWanted
+                                          && (visualSupported || visualProbe >= 0
+                                              && workspace.conversationFile(workspace.focusedAgent.agentId).length > 0)
     // A Claude Code, Codex or Antigravity agent on this Mac can show as a
     // thread (Workspace::visualSupported), from the moment it opens.
     // A Claude Code agent over ssh shows its conversation mirrored from that
@@ -1205,9 +1223,11 @@ ApplicationWindow {
         const agent = workspace.focusedAgent
         if (!agent)
             return
+        const show = !visualActive
         const next = Object.assign({}, visualAgents)
-        next[agent.agentId] = !visualActive
+        next[agent.agentId] = show
         visualAgents = next
+        workspace.setAgentView(agent.agentId, show ? "thread" : "terminal")
         endVisualDialog()
         visualFocus()
     }
@@ -1215,11 +1235,6 @@ ApplicationWindow {
     // terminals. From "Match macOS" it switches to the other kind for good.
     function toggleAppearance() {
         config.setAppearance(visualSettings.light === true ? "dark" : "light")
-    }
-    function toggleVisualAll() {
-        visualAgents = ({})
-        config.setVisual("all", !visualAll)
-        visualFocus()
     }
     // A link in the thread that names an agent opens it; true when handled.
     function openAgentLink(link) {
@@ -1854,14 +1869,6 @@ ApplicationWindow {
     component ColorEase: Behavior {
         enabled: window.colorMotion
         ColorAnimation { duration: window.colorDuration; easing.type: Easing.OutCubic }
-    }
-
-    // Pending requests for the selected agent stay one click away.
-    component CommandsButton: CommandButton {
-        text: qsTr("Commands")
-        hint: window.shortcutText("openCommands")
-        enabled: window.interactionArmed
-        onClicked: window.openCommandsDialog()
     }
 
     component StatusMark: Item {
@@ -3394,124 +3401,6 @@ ApplicationWindow {
                         }
                     }
                 }
-                // The visual view for the selected agent, or for every agent,
-                // and light or dark reading beside its title.
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.topMargin: 4
-                    spacing: 6
-                    PlainText {
-                        text: qsTr("Visual view")
-                        color: window.chrome.muted
-                        font.pixelSize: window.readoutFont
-                        Layout.fillWidth: true
-                    }
-                    Rectangle {
-                        id: appearanceToggle
-                        objectName: "appearanceToggle"
-                        readonly property bool light: window.visualSettings.light === true
-                        implicitWidth: Math.round(window.chromeFont * 1.9)
-                        implicitHeight: implicitWidth
-                        radius: window.chromeRadius
-                        color: appearanceHover.hovered ? window.chrome.hover : Qt.alpha(window.chrome.hover, 0)
-                        border.width: 1
-                        border.color: appearanceHover.hovered ? window.chrome.muted : window.chrome.border
-                        ColorEase on color {}
-                        ColorEase on border.color {}
-                        Accessible.role: Accessible.Button
-                        Accessible.name: light ? qsTr("Switch to dark mode") : qsTr("Switch to light mode")
-                        // The mode it switches to: a moon in light mode, a sun in dark.
-                        Canvas {
-                            id: appearanceGlyph
-                            anchors.centerIn: parent
-                            width: Math.round(parent.width * 0.56)
-                            height: width
-                            readonly property color ink: appearanceHover.hovered ? window.chrome.text : window.chrome.muted
-                            readonly property bool moon: appearanceToggle.light
-                            onInkChanged: requestPaint()
-                            onMoonChanged: requestPaint()
-                            onWidthChanged: requestPaint()
-                            onPaint: {
-                                const g = getContext("2d")
-                                g.reset()
-                                const s = width, c = s / 2
-                                g.fillStyle = ink
-                                g.strokeStyle = ink
-                                if (moon) {
-                                    g.beginPath()
-                                    g.arc(c, c, s * 0.42, 0, Math.PI * 2)
-                                    g.fill()
-                                    g.globalCompositeOperation = "destination-out"
-                                    g.beginPath()
-                                    g.arc(c + s * 0.22, c - s * 0.16, s * 0.36, 0, Math.PI * 2)
-                                    g.fill()
-                                } else {
-                                    g.beginPath()
-                                    g.arc(c, c, s * 0.2, 0, Math.PI * 2)
-                                    g.fill()
-                                    g.lineWidth = Math.max(1.2, s / 11)
-                                    g.lineCap = "round"
-                                    for (let i = 0; i < 8; ++i) {
-                                        const a = i * Math.PI / 4
-                                        g.beginPath()
-                                        g.moveTo(c + Math.cos(a) * s * 0.32, c + Math.sin(a) * s * 0.32)
-                                        g.lineTo(c + Math.cos(a) * s * 0.46, c + Math.sin(a) * s * 0.46)
-                                        g.stroke()
-                                    }
-                                }
-                            }
-                        }
-                        HoverHandler { id: appearanceHover; cursorShape: Qt.PointingHandCursor }
-                        TapHandler {
-                            enabled: window.interactionArmed
-                            onTapped: window.toggleAppearance()
-                        }
-                        ToolTip.visible: appearanceHover.hovered
-                        ToolTip.delay: 600
-                        ToolTip.text: Accessible.name
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 6
-                    CommandButton {
-                        objectName: "visualThisAgent"
-                        tones: window.chrome
-                        text: qsTr("This agent")
-                        selected: window.visualActive
-                        enabled: window.interactionArmed && workspace.focusedAgent !== null
-                                 && (window.visualActive || window.visualSupported || window.visualProbe >= 0
-                                     && workspace.conversationFile(workspace.focusedAgent.agentId).length > 0)
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 1
-                        onClicked: window.toggleVisual()
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 600
-                        ToolTip.text: enabled ? qsTr("Switch this agent between its terminal and the thread")
-                                              : (workspace.focusedAgent !== null && window.visualProbe >= 0
-                                                 && workspace.visualUnavailable(workspace.focusedAgent.agentId))
-                                                || qsTr("Only for a Claude Code, Codex or Antigravity agent on this Mac, or Claude Code over ssh")
-                    }
-                    CommandButton {
-                        objectName: "visualAllAgents"
-                        tones: window.chrome
-                        text: qsTr("All agents")
-                        selected: window.visualAll
-                        enabled: window.interactionArmed
-                        Layout.fillWidth: true
-                        Layout.preferredWidth: 1
-                        onClicked: window.toggleVisualAll()
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 600
-                        ToolTip.text: qsTr("Show every Claude Code, Codex and Antigravity agent on this Mac as a thread")
-                    }
-                }
-                CommandsButton {
-                    objectName: "commandsButton"
-                    tones: window.chrome
-                    Layout.fillWidth: true
-                    Layout.bottomMargin: 0
-                }
             }
         }
 
@@ -3670,6 +3559,10 @@ ApplicationWindow {
                     onDialogFound: window.watchVisualDialog(true)
                     onTerminalNeeded: window.toggleVisual()
                     onDismissed: window.toggleVisual()
+                    // The bar's Thread switch: off shows this agent's terminal.
+                    viewKnob: true
+                    reducedMotion: !window.motionEnabled
+                    onThreadOff: if (window.interactionArmed) window.toggleVisual()
                     onEditRequested: function(record, text) { window.forkVisual(record, true, text) }
                     openLink: link => window.openAgentLink(link)
                 }
@@ -3740,6 +3633,28 @@ ApplicationWindow {
                         color: window.mutedTextColor
                         font.pixelSize: 12
                     }
+                }
+                // The way back to the thread for an agent whose thread the
+                // person turned off: the bar's Thread switch, off, tucked in
+                // the terminal's bottom-right corner. It takes no keyboard,
+                // so typing stays the terminal's.
+                ViewKnob {
+                    id: terminalViewKnob
+                    objectName: "terminalViewKnob"
+                    z: 4
+                    visible: window.visualOffered && liveTerminal.visible
+                    x: liveTerminal.x + liveTerminal.width - width - 4
+                    y: liveTerminal.y + liveTerminal.height - height - 4
+                    on: false
+                    textColor: window.chrome.text
+                    mutedColor: window.chrome.muted
+                    restColor: window.chrome.card
+                    edgeColor: window.chrome.border
+                    fontFamily: visualView.sansFamily
+                    pixelSize: visualView.codeSize
+                    barHeight: Math.round(visualView.fontSize * 1.6)
+                    motion: window.motionEnabled ? 120 : 0
+                    onToggled: if (window.interactionArmed) window.toggleVisual()
                 }
 
                 TerminalSurface {

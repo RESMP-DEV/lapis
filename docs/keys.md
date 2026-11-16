@@ -45,7 +45,7 @@ These are the thread's own keys and are not configurable. See
 | Return | Send; while the agent works, queue (Claude Code, agy) or steer (Codex) |
 | Command-Return | While the agent works, send now: Claude Code reads it within the turn, agy at its next step, and Codex interrupts and sends it as a new turn; with nothing typed, the same for the prompts already waiting; when the agent is idle, send |
 | Shift-Return | New line |
-| Escape | With nothing typed while the agent works, stop the turn; otherwise show the terminal |
+| Escape | With nothing typed while the agent works, stop the turn; otherwise show this agent's terminal (as turning off its **Thread** switch does; the switch in the terminal's corner, or **Show thread for this agent** in Commands, brings the thread back) |
 | Tab | Take lapis's suggestion; again, with it unchanged, send it; on an empty bar, the next agent that needs you, its bar ready for Tab again. A held Tab repeats nothing |
 
 ## Window

@@ -139,6 +139,13 @@ FocusScope {
     // The bar sent a slash command to a CLI whose dialogs the view cannot
     // see; the window shows that agent's terminal.
     signal terminalNeeded()
+    // The bar's Thread switch (ViewKnob), right of the model and effort
+    // pickers: shown where the window keeps a per-agent view choice, and
+    // threadOff asks it to show this agent's terminal instead.
+    property bool viewKnob: false
+    signal threadOff()
+    // Instant state changes for the switch's dot (the system setting).
+    property bool reducedMotion: false
     Timer {
         interval: 150
         repeat: true
@@ -3889,6 +3896,21 @@ FocusScope {
                         menu: root.currentEfforts.length > 0
                         menuOpen: effortMenu.opened
                         onTriggered: if (root.currentEfforts.length > 0) effortMenu.openAbove(this)
+                    }
+                    // This agent's thread, on: turning it off shows this
+                    // agent's terminal (the window's choice, per agent).
+                    ViewKnob {
+                        objectName: "visualViewKnob"
+                        visible: root.viewKnob
+                        anchors.verticalCenter: parent.verticalCenter
+                        on: true
+                        textColor: root.textColor
+                        mutedColor: root.mutedTextColor
+                        fontFamily: root.sansFamily
+                        pixelSize: root.codeSize
+                        barHeight: Math.round(root.fontSize * 1.6)
+                        motion: root.reducedMotion ? 0 : 120
+                        onToggled: root.threadOff()
                     }
                     // Why the CLI refused the last choice, in its own words.
                     Text {

@@ -918,7 +918,7 @@ Dialog {
                     SettingRow {
                         section: "reading"
                         label: qsTr("Show every agent as a thread")
-                        help: qsTr("Each Claude Code, Codex and Antigravity agent on this Mac opens in the reading view, from the moment it starts. On by default.")
+                        help: qsTr("Each Claude Code, Codex and Antigravity agent on this Mac opens in the reading view, from the moment it starts. On by default; an agent's own Thread switch wins for that agent.")
                         keywords: "visual all agents"
                         modified: (settings.visual.all === true) !== settings.defaults["visual.all"]
                         onReset: settings.visualChosen("all", settings.defaults["visual.all"])
