@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-11-15T23:53:36.296497+00:00",
+  "recorded_at": "2026-11-16T00:00:01.639172+00:00",
   "agent": "Codex",
   "scope": "Replace real overlay network identities in remote-gateway test fixtures and an iOS ATS comment with synthetic documentation addresses. Test and comment hygiene only; no gateway behavior changed.",
   "source": {
@@ -9,20 +9,20 @@
       "apps/ios/LapisTests/ATSTests.swift",
       "scripts/tests/test_lapis_remote.py"
     ],
-    "source_digest": "22d93bfff320a838ae35dd8ab0a4aaf12a37b1cea877eeb88fa1d3ab972a1a94"
+    "source_digest": "4e7d0e03fbd0dad487977884d65d197a2c5cd6d87c45f33b221dbeae29e4e873"
   },
   "fixture_contract": {
     "ipv4_route": "192.0.2.0/24",
     "ipv4_own_address": "192.0.2.10",
     "ipv4_member_address": "192.0.2.7",
     "ipv4_outside_address": "198.51.100.1",
-    "basis": "RFC 5737 documentation address blocks; the gateway logic tests route membership and assigned addresses, not private-address classification.",
+    "basis": "RFC 5737 IPv4 documentation blocks and an RFC 4193 IPv6 unique-local prefix; the gateway logic tests route membership and assigned addresses, not private-address classification.",
     "network_id": "deadbeefdeadbeef",
     "ipv6_own_address": "fd00:dead:beef::99",
     "ipv6_route": "fd00:dead:beef::/64",
     "ipv6_member_address": "fd00:dead:beef::1",
     "ios_comment_example": "192.168.1.20",
-    "ios_runtime_log": "The discovered local interface address is no longer printed; the log records only that a private IPv4 interface answered."
+    "ios_runtime_log": "The test skips when no RFC 1918 interface is available and no discovered interface address is printed on the success, ATS-failure, or expectation path."
   },
   "checks": [
     {
@@ -43,7 +43,7 @@
       "result": "pass"
     },
     {
-      "command": "rg for removed live overlay literals and the prior runtime address interpolation in the changed files",
+      "command": "rg for removed live overlay literals and discovered-interface interpolation in the changed files",
       "result": "no matches"
     },
     {

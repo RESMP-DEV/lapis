@@ -3,16 +3,20 @@ import Network
 
 // Answers, empirically, whether the app's ATS keys allow cleartext HTTP to a
 // raw private-range IP address, which is how a ZeroTier or LAN address (for
-// example, 192.168.1.20) reaches the Mac. In Xcode the bundle is hosted in the Lapis
-// app (project.yml TEST_HOST), so the app's Info.plist governs the load;
+// example, 192.168.1.20) reaches the Mac. In Xcode the bundle is hosted in
+// the Lapis app (project.yml TEST_HOST), so the app's Info.plist governs the load;
 // scripts/check_ios_remote.py runs it in a runner copy carrying the app's
 // exact NSAppTransportSecurity dict, because that toolchain cannot inject
 // XCTest into an ad-hoc app host. Its result is the evidence recorded in
 // apps/ios/project.yml next to NSAppTransportSecurity.
 final class ATSTests: XCTestCase {
     func testCleartextHTTPToRawPrivateIPAnswers() throws {
-        let address = try XCTUnwrap(Self.nonLoopbackIPv4(),
+        let selected = try XCTUnwrap(Self.nonLoopbackIPv4(),
                                     "this Mac has no usable non-loopback IPv4 address")
+        guard selected.isPrivate else {
+            throw XCTSkip("this Mac has no usable RFC 1918 IPv4 address")
+        }
+        let address = selected
         let server = try StubHTTPServer(address: address.text)
         server.start()
         defer { server.stop() }
@@ -20,7 +24,7 @@ final class ATSTests: XCTestCase {
                        "the stub listener never started: \(server.state)")
         XCTAssertNotEqual(server.port, 0, "the stub listener got no port")
 
-        let answered = expectation(description: "GET http://\(address.text):\(server.port)/")
+        let answered = expectation(description: "cleartext HTTP to the selected private IPv4")
         var body: Data?
         var failure: Error?
         // An ephemeral session, like Gateway.swift's; ATS applies the same.
@@ -37,13 +41,13 @@ final class ATSTests: XCTestCase {
         // (-1022): the cleartext load never reached the network.
         if let failure {
             let error = try XCTUnwrap(failure as? URLError, "unexpected failure: \(failure)")
-            XCTFail("cleartext HTTP to \(address.text) was blocked by ATS: "
+            XCTFail("cleartext HTTP to the selected private IPv4 interface was blocked by ATS: "
                 + "code \(error.code.rawValue), \(error.localizedDescription)")
             return
         }
         XCTAssertEqual(String(data: body ?? Data(), encoding: .utf8), "ok",
                        "the request reached the stub but not as the stub's answer")
-        // The recorded ATS evidence: which address answered in cleartext.
+        // The recorded ATS evidence: that a private interface answered in cleartext.
         print("ATS probe: cleartext HTTP to a private IPv4 interface "
             + "answered under the app's NSAppTransportSecurity keys.")
     }

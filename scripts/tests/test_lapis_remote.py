@@ -406,8 +406,8 @@ def missing_cli(command):
     raise FileNotFoundError(2, "No such file or directory", command[0])
 
 
-# A representative private `zerotier-cli -j listnetworks` answer, using
-# synthetic identifiers and RFC 5737 documentation addresses.
+# A representative private `zerotier-cli -j listnetworks` answer using synthetic
+# identifiers, RFC 5737 IPv4 documentation blocks, and an RFC 4193 IPv6 ULA.
 ZT_ROUTE = "192.0.2.0/24"
 ZT_OWN_ADDRESS = "192.0.2.10"
 ZT_MEMBER_ADDRESS = "192.0.2.7"
