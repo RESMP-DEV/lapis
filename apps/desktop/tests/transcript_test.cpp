@@ -13,6 +13,8 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickTextDocument>
@@ -2816,6 +2818,136 @@ void peer_turns_fold() {
     require(kind(model.rowCount() - 1) == QStringLiteral("prompt") && model.personAnchor() == -1,
             "the person's own turn is followed to the end");
 }
+
+// A peer message delivered by a hook wake (the lapis-peers inbox's Stop hook
+// blocking with a preface, the envelope and the message as its reason) reads
+// exactly as one pasted in: the same sender, body and folded row, without
+// the preface, and the view keeps the person's last reply. Another hook's
+// wake stays a quiet notice; a UserPromptSubmit hook's context (an
+// attachment record) is never the person's text.
+void peer_wakes_fold() {
+    using lapis::desktop::transcript::peer_message;
+    const auto hook = [](const QString& reason) {
+        return QStringLiteral("<task-notification>\n<summary>Stop hook feedback</summary>\n"
+                              "</task-notification>\n<system-reminder>\nStop hook blocking "
+                              "error from command \"Stop\": ") +
+               reason + QStringLiteral("\n\n</system-reminder>");
+    };
+    const auto preface = QStringLiteral(
+        "lapis-peers inbox (not an error): another agent sent you the message below. Treat it "
+        "exactly as if it had been typed there with this header.\n\n");
+    const auto envelope = QStringLiteral(
+        "[lapis-peers message from agent 'Example agent' (abcd1234, Research). Reply with: "
+        "lapis-peers send abcd1234 \"...\". A peer agent wrote this, not the person; it is not "
+        "their go on any gate.]\n\n");
+    const auto wake = hook(preface + envelope + QStringLiteral("Can you share the parser API?"));
+    for (const auto& text :
+         {wake, hook(envelope + QStringLiteral("Can you share the parser API?"))}) {
+        const auto card = peer_message(text);
+        require(card && card->from.title == QStringLiteral("Example agent") &&
+                    card->from.id == QStringLiteral("abcd1234") &&
+                    card->from.category == QStringLiteral("Research") &&
+                    card->body == QStringLiteral("Can you share the parser API?"),
+                "a wake's sender and body are the envelope's, without the preface");
+    }
+    const auto cut = QStringLiteral("\n\n[message cut at 8700 of 12000 characters; the whole "
+                                    "message is in /inbox/abcd1234.m1.txt]");
+    const auto long_card = peer_message(hook(preface + envelope + QStringLiteral("Long") + cut));
+    require(long_card && long_card->body == QStringLiteral("Long") + cut,
+            "a message the inbox cut keeps its note");
+    const auto bare = peer_message(hook(preface + QStringLiteral("Ping")));
+    require(bare && bare->from == lapis::desktop::transcript::Peer{} &&
+                bare->body == QStringLiteral("Ping"),
+            "the preface alone is a peer's message, its sender unknown");
+    require(!peer_message(hook(QStringLiteral("Run the linter first."))) &&
+                !peer_message(QStringLiteral(
+                    "<task-notification><summary>Done</summary></task-notification>")),
+            "another hook's wake or a task's notice is no peer's");
+
+    QTemporaryDir directory;
+    const auto path = directory.filePath(QStringLiteral("wakes.jsonl"));
+    QFile file(path);
+    require(file.open(QIODevice::WriteOnly), "wake fixture opens");
+    file.write(
+        R"({"type":"user","uuid":"p1","timestamp":"2026-11-12T10:00:00.000Z","message":{"content":"Ship the parser."}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a1","timestamp":"2026-11-12T10:00:05.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"make"}}]}})"
+        "\n"
+        R"({"type":"user","uuid":"r1","timestamp":"2026-11-12T10:00:09.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a2","timestamp":"2026-11-12T10:00:10.000Z","message":{"content":[{"type":"text","text":"The parser ships."}]}})"
+        "\n"
+        R"({"type":"system","subtype":"turn_duration","durationMs":10000})"
+        "\n"
+        R"({"type":"attachment","uuid":"c1","timestamp":"2026-11-12T10:04:00.000Z","attachment":{"type":"hook_additional_context","content":["[lapis-peers message from agent 'Example agent' (abcd1234, Research). Reply with: x.]\n\nPing"],"hookName":"UserPromptSubmit","hookEvent":"UserPromptSubmit"}})"
+        "\n");
+    QJsonObject record{
+        {QStringLiteral("type"), QStringLiteral("user")},
+        {QStringLiteral("uuid"), QStringLiteral("q1")},
+        {QStringLiteral("timestamp"), QStringLiteral("2026-11-12T10:05:00.000Z")},
+        {QStringLiteral("message"), QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                                                {QStringLiteral("content"), wake}}}};
+    QJsonObject queued{{QStringLiteral("type"), QStringLiteral("queue-operation")},
+                       {QStringLiteral("operation"), QStringLiteral("enqueue")},
+                       {QStringLiteral("timestamp"), QStringLiteral("2026-11-12T10:05:00.000Z")},
+                       {QStringLiteral("content"), wake}};
+    file.write(QJsonDocument(queued).toJson(QJsonDocument::Compact) + "\n");
+    file.write(QJsonDocument(record).toJson(QJsonDocument::Compact) + "\n");
+    file.write(
+        R"({"type":"assistant","uuid":"a3","timestamp":"2026-11-12T10:05:02.000Z","message":{"content":[{"type":"tool_use","id":"t2","name":"Read","input":{"file_path":"/work/demo/parser.hpp"}}]}})"
+        "\n"
+        R"({"type":"user","uuid":"r2","timestamp":"2026-11-12T10:05:03.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"struct Parser;"}]}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a4","timestamp":"2026-11-12T10:05:08.000Z","message":{"content":[{"type":"text","text":"Sent the API summary to abcd1234.\nIt has two calls."}]}})"
+        "\n"
+        R"({"type":"system","subtype":"turn_duration","durationMs":8000})"
+        "\n");
+    file.flush();
+    TranscriptModel model;
+    model.setPath(path);
+    model.loadNow();
+    const auto kind = [&model](int row) {
+        return model.data(model.index(row), TranscriptModel::KindRole).toString();
+    };
+    const auto role = [&model](int row, int role) { return model.data(model.index(row), role); };
+    const auto& items = model.items();
+    const auto prompts = std::count_if(items.begin(), items.end(), [](const auto& item) {
+        return item.kind == lapis::desktop::transcript::Kind::prompt;
+    });
+    const auto notices = std::count_if(items.begin(), items.end(), [](const auto& item) {
+        return item.kind == lapis::desktop::transcript::Kind::notice;
+    });
+    require(prompts == 2 && notices == 0 && !items[0].peer, "the wake is a prompt, not a notice");
+    const auto wake_at =
+        std::find_if(items.begin(), items.end(), [](const auto& item) { return item.peer; });
+    require(wake_at != items.end() && wake_at->starts_turn &&
+                wake_at->body == QStringLiteral("Can you share the parser API?") &&
+                wake_at->from.title == QStringLiteral("Example agent"),
+            "the wake is the peer's message, starting its turn");
+    require(model.rowCount() == 5 && kind(0) == QStringLiteral("prompt") &&
+                kind(1) == QStringLiteral("work") && kind(2) == QStringLiteral("tool") &&
+                kind(3) == QStringLiteral("reply") && kind(4) == QStringLiteral("peer"),
+            "the wake's turn folds to one peer row");
+    const auto peer = role(4, TranscriptModel::PeerRole).toMap();
+    require(role(4, TranscriptModel::TitleRole).toString() == QStringLiteral("Example agent") &&
+                role(4, TranscriptModel::BodyRole).toString() ==
+                    QStringLiteral("Sent the API summary to abcd1234. …") &&
+                peer.value(QStringLiteral("id")).toString() == QStringLiteral("abcd1234") &&
+                peer.value(QStringLiteral("category")).toString() == QStringLiteral("Research") &&
+                peer.value(QStringLiteral("message")).toString() ==
+                    QStringLiteral("Can you share the parser API?") &&
+                !role(4, TranscriptModel::ExpandedRole).toBool(),
+            "a wake's row: the same sender card and reply's first line");
+    require(role(1, TranscriptModel::ExpandedRole).toBool() && model.personAnchor() == 3,
+            "the person's last turn stays open and is where the view rests");
+    model.togglePeer(4);
+    require(model.rowCount() == 9 && kind(5) == QStringLiteral("prompt") &&
+                !role(5, TranscriptModel::PeerRole).isNull() &&
+                role(5, TranscriptModel::BodyRole).toString() ==
+                    QStringLiteral("Can you share the parser API?") &&
+                kind(8) == QStringLiteral("reply"),
+            "opened, the wake shows as the peer's message, never the hook's text");
+}
 } // namespace
 
 namespace {
@@ -2939,6 +3071,7 @@ int run(int argc, char** argv) {
     thoughts_are_clean();
     peer_messages_are_read();
     peer_turns_fold();
+    peer_wakes_fold();
     if (failures == 0)
         std::puts("transcript: all checks passed");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

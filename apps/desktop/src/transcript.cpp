@@ -85,10 +85,49 @@ QString duration_text(qint64 ms) {
     return QStringLiteral("%1d %2h").arg(seconds / 86400).arg((seconds % 86400) / 3600);
 }
 
+namespace {
+constexpr QLatin1StringView peer_lead("[lapis-peers message from ");
+
+// What a hook wake says, or a null string: Claude Code records a Stop hook
+// that blocks as "<task-notification><summary>...</summary>
+// </task-notification><system-reminder>Stop hook blocking error from command
+// "...": REASON</system-reminder>".
+QString hook_wake(const QString& text) {
+    static const QRegularExpression wake(
+        QStringLiteral(R"(\A\s*<task-notification>\s*<summary>[^<]*</summary>\s*)"
+                       R"(</task-notification>\s*<system-reminder>\s*\w+ hook blocking error )"
+                       R"(from command "[^\n]*?": (.*?)\s*</system-reminder>\s*\z)"),
+        QRegularExpression::DotMatchesEverythingOption);
+    const auto match = wake.match(text);
+    return match.hasMatch() ? match.captured(1) : QString();
+}
+
+// A lapis-peers message a hook wake delivers: the inbox's preface paragraph
+// ("lapis-peers inbox (not an error): ..."), then the envelope and message.
+// Found by the envelope anywhere in the reason, or by the preface alone (a
+// sender then unknown); the preface is never part of the message.
+std::optional<PeerMessage> peer_wake(const QString& text) {
+    const auto reason = hook_wake(text);
+    if (reason.isNull())
+        return std::nullopt;
+    if (const auto at = reason.indexOf(peer_lead); at >= 0)
+        if (auto message = peer_message(reason.mid(at)))
+            return message;
+    if (!reason.startsWith(QLatin1String("lapis-peers inbox (not an error):")))
+        return std::nullopt;
+    const auto end = reason.indexOf(QLatin1String("\n\n"));
+    PeerMessage out;
+    out.body = end < 0 ? QString() : reason.mid(end + 2).trimmed();
+    return out;
+}
+} // namespace
+
 // Cohesive parser/test flow; branching stays local.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 std::optional<PeerMessage> peer_message(const QString& text) {
-    static const auto lead = QStringLiteral("[lapis-peers message from ");
+    if (QStringView(text).trimmed().startsWith(QLatin1String("<task-notification>")))
+        return peer_wake(text);
+    const auto& lead = peer_lead;
     qsizetype at = 0;
     while (at < text.size() && text.at(at).isSpace())
         ++at;
@@ -2102,6 +2141,19 @@ int ClaudeReader::add(const QByteArray& line) {
         }
         if (raw.startsWith(QLatin1String("[Request interrupted by user"))) {
             push(make(Kind::notice, QStringLiteral("Interrupted")));
+            return;
+        }
+        if (raw.startsWith(QLatin1String("<task-notification>")) && peer_message(raw)) {
+            // Another agent's message delivered by a hook wake reads as one
+            // pasted in: a peer prompt starting its turn.
+            status_.compacting_since = 0;
+            compact_item_ = -1;
+            auto item = make(Kind::prompt, {}, raw);
+            item.starts_turn = true;
+            mark_peer(item); // whole: a clipped wake would lose its end
+            item.body = clip(item.body, body_chars);
+            push(std::move(item));
+            prompted = true;
             return;
         }
         if (raw.startsWith(QLatin1String("<task-notification>"))) {

@@ -68,6 +68,17 @@ PEER_MESSAGE = re.compile(
     r"\s*(?P<body>.*)\Z",
     re.S,
 )
+# The same message delivered by a Claude Code hook wake: a Stop hook that
+# blocks with the message as its reason is recorded as a task notification
+# whose system reminder carries the reason. The lapis-peers inbox starts it
+# with a preface paragraph, then the envelope; the preface is not the message.
+HOOK_WAKE = re.compile(
+    r"\A<task-notification>\s*<summary>[^<]*</summary>\s*</task-notification>\s*"
+    r"<system-reminder>\s*\w+ hook blocking error from command \"[^\n]*?\": "
+    r"(?P<reason>.*?)\s*</system-reminder>\s*\Z",
+    re.S,
+)
+WAKE_PREFACE = "lapis-peers inbox (not an error):"
 # Codex attaches images as empty wrappers around the typed text, never inside.
 IMAGE_EDGES = re.compile(
     r"\A(?:<image\b[^>]*>\s*</image>\s*)*"
@@ -230,8 +241,20 @@ def typed(text):
 
 def peer_message(text):
     """Another agent's lapis-peers message as "from SENDER: body", or None
-    when `text` does not start with the envelope."""
+    when `text` does not start with the envelope (or is not a lapis-peers
+    hook wake: the envelope anywhere in its reason, or the inbox's preface)."""
     text = IMAGE_EDGES.sub(r"\1", (text or "").strip()).strip()
+    wake = HOOK_WAKE.match(text)
+    if wake:
+        reason = wake.group("reason")
+        at = reason.find(PEER_ENVELOPE)
+        if at >= 0:
+            text = reason[at:]
+        elif reason.startswith(WAKE_PREFACE):
+            body = reason.partition("\n\n")[2].strip()
+            return "from another agent: " + body
+        else:
+            return None
     if not text.startswith(PEER_ENVELOPE):
         return None
     match = PEER_MESSAGE.match(text)

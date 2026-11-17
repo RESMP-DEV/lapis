@@ -66,7 +66,11 @@ struct Peer {
 // CATEGORY). Reply with: ...]" or "[lapis-peers message from an agent on
 // HOST. Reply with: ...]", the message after it. `body` is that message
 // without the envelope. A prompt quoting the envelope later in its text is
-// the person's own.
+// the person's own. A Claude Code hook wake from the lapis-peers inbox (a
+// Stop hook blocking with the message as its reason: "<task-notification>
+// ...<system-reminder>Stop hook blocking error from command "...":
+// lapis-peers inbox (not an error): ...\n\nENVELOPE\n\nBODY
+// </system-reminder>") is the same message, without the inbox's preface.
 struct PeerMessage {
     Peer from;
     QString body;

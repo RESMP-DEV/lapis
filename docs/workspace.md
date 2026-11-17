@@ -179,7 +179,8 @@ steps; older turns start folded so long threads stay readable. A turn a
 background task or subagent woke shows only its header and the reply, with no
 "finished" notice.
 
-Messages other agents send with `lapis-peers send` are not your prompts. A
+Messages other agents send with `lapis-peers send` are not your prompts,
+whether pasted in or delivered to Claude Code by a hook wake. A
 Claude Code or Codex turn that one starts (the message, the work it caused
 and the agent's answer, up to the next prompt) folds to one quiet line under
 your thread: **From Example agent**, its time and a chevron, then the first
