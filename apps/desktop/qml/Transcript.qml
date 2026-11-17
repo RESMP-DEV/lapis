@@ -881,7 +881,7 @@ FocusScope {
                                            codeSize: codeSize - 1, codeColor: codeColor,
                                            linkColor: accentColor, inlineCodeColor: inlineCodeColor,
                                            inlineCodeTextColor: mutedTextColor,
-                                           borderColor: borderColor, quoteColor: mutedTextColor })
+                                           borderColor: borderColor })
     // Subagents and background tasks (a step's `task`): what follows the
     // step's target on its line, " · "-joined: its type and model (in the
     // running tasks' rows), how long it ran or has run, its steps or how it ended.
@@ -1068,8 +1068,11 @@ FocusScope {
     readonly property var proseStyle: ({ sans: sansFamily, mono: monoFamily, size: fontSize, codeSize: codeSize,
                                          codeColor: codeColor, linkColor: accentColor,
                                          inlineCodeColor: inlineCodeColor, inlineCodeTextColor: inlineCodeTextColor,
-                                         borderColor: borderColor, quoteColor: mutedTextColor,
-                                         headerColor: tableHeaderColor })
+                                         borderColor: borderColor, headerColor: tableHeaderColor })
+    // A quote's bar: between the quiet border and the muted text, opaque,
+    // so it marks the quote without competing with its words.
+    readonly property color quoteBarColor: Qt.tint(borderColor,
+                                                   Qt.rgba(mutedTextColor.r, mutedTextColor.g, mutedTextColor.b, 0.45))
     // A table's header: the body's text a step toward the muted tone, so
     // its weight, not a second color, sets it apart.
     readonly property color tableHeaderColor: Qt.tint(textColor,
@@ -1346,6 +1349,34 @@ FocusScope {
     readonly property int tableRoom: list.width - 56
 
     // Read-only text that selects with the mouse and copies with Command-C.
+    // A markdown quote's mark: a thin rounded bar at its left edge in a quiet
+    // theme color, the height of the lines its blocks take; the text keeps
+    // its color. Places come from the model (quoteBars) and are measured
+    // again when the text is laid out anew.
+    component QuoteBars: Repeater {
+        id: bars
+        required property TextEdit text
+        delegate: Rectangle {
+            required property var modelData
+            objectName: "quoteBar"
+            // Measured only while the text holds the run: the document is
+            // cleared and refilled before the new places arrive.
+            readonly property bool placed: bars.text.contentHeight >= 0 && bars.text.width >= 0
+                                           && modelData.end <= bars.text.length
+            readonly property rect first: placed ? bars.text.positionToRectangle(modelData.start)
+                                                 : Qt.rect(0, 0, 0, 0)
+            readonly property rect last: placed ? bars.text.positionToRectangle(modelData.end)
+                                                : Qt.rect(0, 0, 0, 0)
+            visible: placed
+            x: Math.round(modelData.x)
+            y: Math.round(first.y)
+            width: Math.max(2, Math.round(root.fontSize / 6))
+            height: Math.max(0, Math.round(last.y + last.height - first.y))
+            radius: width / 2
+            color: root.quoteBarColor
+        }
+    }
+
     component Selectable: TextEdit {
         readOnly: true
         selectByMouse: true
@@ -2163,9 +2194,12 @@ FocusScope {
         Selectable {
             id: prose
             readonly property string source: parent && parent.piece ? parent.piece.text : ""
+            property var quotes: []
             function restyle() {
-                if (root.model)
-                    root.model.style(textDocument, source, root.proseStyle)
+                if (!root.model)
+                    return
+                root.model.style(textDocument, source, root.proseStyle)
+                quotes = root.model.quoteBars(textDocument)
             }
             textFormat: TextEdit.RichText
             onSourceChanged: restyle()
@@ -2174,6 +2208,7 @@ FocusScope {
                 target: root
                 function onStyleKeyChanged() { prose.restyle() }
             }
+            QuoteBars { text: prose; model: prose.quotes }
         }
     }
 
@@ -2689,9 +2724,14 @@ FocusScope {
             id: thoughtText
             objectName: "thoughtText"
             readonly property string source: detail.thinking ? detail.entry.body : ""
+            property var quotes: []
             function restyle() {
-                if (root.model && source.length > 0)
-                    root.model.style(textDocument, source, root.thoughtStyle)
+                if (!root.model || source.length === 0) {
+                    quotes = []
+                    return
+                }
+                root.model.style(textDocument, source, root.thoughtStyle)
+                quotes = root.model.quoteBars(textDocument)
             }
             visible: source.length > 0
             width: parent.width
@@ -2703,6 +2743,7 @@ FocusScope {
                 target: root
                 function onStyleKeyChanged() { thoughtText.restyle() }
             }
+            QuoteBars { text: thoughtText; model: thoughtText.quotes }
         }
         }
     }

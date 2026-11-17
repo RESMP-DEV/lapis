@@ -479,8 +479,9 @@ message in the bar. A request the agent raises does not do this; it waits in
 the terminal as before.
 
 Code in replies is colored by its language with Tokyo Night's palette (its Day
-variant on light themes), as are the commands steps ran. Quotes read quieter
-than the reply. A table is sized from its text: a column whose cells fit in
+variant on light themes), as are the commands steps ran. Quotes keep the
+reply's color, marked by a thin bar at their left edge (a quote inside a list
+item too). A table is sized from its text: a column whose cells fit in
 24 characters keeps that width and never wraps (labels, ids, numbers, status
 words); the other columns start at 20 characters (or their longest word, up to
 32) and share what is left by how much text each holds, none wider than 64

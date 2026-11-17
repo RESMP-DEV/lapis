@@ -19,11 +19,13 @@
 #include <QQmlEngine>
 #include <QQuickTextDocument>
 #include <QTemporaryDir>
+#include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextFrame>
 #include <QTextList>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -2972,8 +2974,7 @@ void styled_replies_keep_their_shape() {
                             {QStringLiteral("inlineCodeColor"), QColor("#202020")},
                             {QStringLiteral("inlineCodeTextColor"), QColor("#cbcbcb")},
                             {QStringLiteral("linkColor"), QColor("#339cff")},
-                            {QStringLiteral("borderColor"), QColor("#444444")},
-                            {QStringLiteral("quoteColor"), QColor("#888888")}};
+                            {QStringLiteral("borderColor"), QColor("#444444")}};
     const char* cases[] = {
         "Plain paragraph.\n\nSecond paragraph with **bold**, *italic* and `code`.",
         "# Title\n\n## Sub\n\nText under.\n\n### Third\n\nMore.",
@@ -3017,6 +3018,54 @@ void styled_replies_keep_their_shape() {
     TranscriptModel().style(document, QStringLiteral("| a |\n|---|\n| 1 |"), style);
     require(document->textDocument()->rootFrame()->childFrames().size() == 1,
             "a reply that starts with a table keeps it");
+
+    // A quote keeps the reply's color, set in for a bar at its left edge;
+    // nested quotes have a bar each, and one inside a list item has its bar
+    // at the item's indent.
+    TranscriptModel model;
+    model.style(document,
+                QStringLiteral("Before\n\n> quoted line\n> more\n>\n> > nested\n\nafter\n\n"
+                               "- item\n\n  > in the item\n\n- next"),
+                style);
+    const auto& shown = *document->textDocument();
+    bool full_color = true;
+    for (auto block = shown.begin(); block.isValid(); block = block.next())
+        for (auto fragment = block.begin(); !fragment.atEnd(); ++fragment)
+            full_color = full_color && !fragment.fragment().charFormat().hasProperty(
+                                           QTextFormat::ForegroundBrush);
+    require(full_color, "quoted text is not dimmed");
+    const auto block_at = [&shown](const QString& text) {
+        for (auto block = shown.begin(); block.isValid(); block = block.next())
+            if (block.text() == text)
+                return block;
+        return QTextBlock();
+    };
+    const auto quoted = block_at(QStringLiteral("quoted line more"));
+    const auto nested = block_at(QStringLiteral("nested"));
+    const auto in_item = block_at(QStringLiteral("in the item"));
+    const qreal margin = std::round(15 * 0.9);
+    require(quoted.isValid() && nested.isValid() && in_item.isValid() &&
+                quoted.blockFormat().leftMargin() == margin &&
+                nested.blockFormat().leftMargin() == 2 * margin &&
+                quoted.blockFormat().rightMargin() == 0 &&
+                in_item.blockFormat().leftMargin() == margin,
+            "a quote is set in by a narrow margin per level");
+    const auto bars = model.quoteBars(document);
+    const auto bar = [&bars](int i) { return bars.value(i).toMap(); };
+    require(bars.size() == 3, "a bar per quote level and one for the quote in the item");
+    if (bars.size() == 3) {
+        const auto at = [&](int i, const char* key) { return bar(i).value(key).toReal(); };
+        // Closed innermost first: the nested bar, the outer, the item's.
+        require(at(0, "level") == 2 && at(0, "x") == margin &&
+                    at(0, "start") == nested.position() && at(1, "level") == 1 && at(1, "x") == 0 &&
+                    at(1, "start") == quoted.position() &&
+                    at(1, "end") == nested.position() + nested.length() - 1,
+                "nested quotes: the outer bar spans both, the inner sits one margin in");
+        require(at(2, "level") == 1 &&
+                    at(2, "x") == in_item.blockFormat().indent() * shown.indentWidth() &&
+                    at(2, "x") > 0 && at(2, "start") == in_item.position(),
+                "a quote in a list item has its bar at the item's indent");
+    }
 }
 } // namespace
 

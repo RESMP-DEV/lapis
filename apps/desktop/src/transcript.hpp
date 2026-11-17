@@ -933,9 +933,15 @@ class TranscriptModel final : public QAbstractListModel {
     // sizes, so headings, lists and inline code keep one scale and the text
     // stays selectable. `style` holds sans, mono, size, codeSize, codeColor
     // (code blocks), inlineCodeColor and inlineCodeTextColor (code inside a
-    // sentence), linkColor, borderColor and quoteColor.
+    // sentence), linkColor and borderColor. A quote keeps the text's color
+    // and is set in by a narrow margin per level for its bar (quoteBars).
     Q_INVOKABLE void style(QQuickTextDocument* target, const QString& markdown,
                            const QVariantMap& style) const;
+    // Where the view draws a styled document's quote bars: one per level
+    // for each run of quoted blocks, as {start, end: the run's first and
+    // last character positions, x: the bar's left edge in the document,
+    // level}. A quote inside a list item has its bar at the item's indent.
+    Q_INVOKABLE [[nodiscard]] QVariantList quoteBars(QQuickTextDocument* target) const;
     // Lays a reply's table (a `table` piece) into a TextEdit's document as
     // style() lays prose, in the cells' tighter type, with its columns fit
     // to `available` pixels by transcript::table_widths. Measuring is kept

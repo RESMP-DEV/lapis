@@ -42,6 +42,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -3568,6 +3569,16 @@ void TranscriptModel::style(QQuickTextDocument* target, const QString& markdown,
     transcript::detail::present(*target->textDocument(), document, style);
 }
 
+namespace {
+// A block's markdown quote depth, 0 outside quotes.
+int quote_level(const QTextBlockFormat& format) {
+    return std::max(0, format.intProperty(QTextFormat::BlockQuoteLevel));
+}
+// How far each quote level sets its text in at body size `size`: room for
+// the bar the view draws at its left edge and a gap after it.
+qreal quote_margin(int size) { return std::round(size * 0.9); }
+} // namespace
+
 // Cohesive parser/test flow; branching stays local.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void transcript::detail::compose(QTextDocument& document, const QString& markdown,
@@ -3623,6 +3634,13 @@ void transcript::detail::compose(QTextDocument& document, const QString& markdow
                                      : level > 0                   ? size * 0.3
                                      : block.textList() != nullptr ? size * 0.25
                                                                    : size * 0.65);
+        // A quote keeps the reply's color and is set in by a narrow margin
+        // per level, not the importer's 40 px, where the view draws its bar
+        // (quoteBars).
+        if (const int quote = quote_level(block_format); quote > 0) {
+            block_format.setLeftMargin(quote * quote_margin(size));
+            block_format.setRightMargin(0);
+        }
         first = false;
         // A code block the reply's pieces did not split out (indented, or
         // fenced inside a quote) keeps the code well; code inside a sentence
@@ -3685,19 +3703,54 @@ void transcript::detail::compose(QTextDocument& document, const QString& markdow
         found.mergeCharFormat(format);
     }
 
-    // A quote reads quieter than the reply around it.
-    const auto quote = style.value(QStringLiteral("quoteColor")).value<QColor>();
-    if (quote.isValid())
-        for (auto block = document.begin(); block.isValid(); block = block.next())
-            if (block.blockFormat().hasProperty(QTextFormat::BlockQuoteLevel) &&
-                block.blockFormat().intProperty(QTextFormat::BlockQuoteLevel) > 0) {
-                QTextCursor quoted(block);
-                quoted.select(QTextCursor::BlockUnderCursor);
-                QTextCharFormat format;
-                format.setForeground(quote);
-                quoted.mergeCharFormat(format);
-            }
     cursor.endEditBlock();
+}
+
+// Cohesive parser/test flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+QVariantList TranscriptModel::quoteBars(QQuickTextDocument* target) const {
+    QVariantList bars;
+    if (target == nullptr || target->textDocument() == nullptr)
+        return bars;
+    const auto& document = *target->textDocument();
+    // One bar per level for each run of blocks at that level or deeper:
+    // nested quotes show a bar each, side by side.
+    struct Open {
+        int start{};
+        int end{};
+        qreal x{};
+    };
+    std::vector<Open> open; // open[level - 1]
+    const auto close = [&](size_t keep) {
+        while (open.size() > keep) {
+            const auto& bar = open.back();
+            bars.append(QVariantMap{{QStringLiteral("start"), bar.start},
+                                    {QStringLiteral("end"), bar.end},
+                                    {QStringLiteral("x"), bar.x},
+                                    {QStringLiteral("level"), static_cast<int>(open.size())}});
+            open.pop_back();
+        }
+    };
+    for (auto block = document.begin(); block.isValid(); block = block.next()) {
+        const auto format = block.blockFormat();
+        const int level = quote_level(format);
+        close(static_cast<size_t>(level));
+        if (level == 0)
+            continue;
+        // The quote's own margin, past the indent of a list it sits in. A
+        // list inside the quote is indented within it, so its bar stays at
+        // the quote's edge.
+        const qreal step = format.leftMargin() / level;
+        const qreal base =
+            block.textList() == nullptr ? format.indent() * document.indentWidth() : 0;
+        const int end = block.position() + std::max(0, block.length() - 1);
+        for (auto& bar : open)
+            bar.end = end;
+        while (static_cast<int>(open.size()) < level)
+            open.push_back({block.position(), end, base + step * static_cast<qreal>(open.size())});
+    }
+    close(0);
+    return bars;
 }
 
 void transcript::detail::present(QTextDocument& shown, const QTextDocument& document,

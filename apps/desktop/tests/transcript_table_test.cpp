@@ -140,7 +140,6 @@ QVariantMap style(int size) {
             {QStringLiteral("inlineCodeTextColor"), QColor("#cbcbcb")},
             {QStringLiteral("linkColor"), QColor("#339cff")},
             {QStringLiteral("borderColor"), QColor("#444444")},
-            {QStringLiteral("quoteColor"), QColor("#888888")},
             {QStringLiteral("headerColor"), QColor("#bbbbbb")}};
 }
 

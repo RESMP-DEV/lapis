@@ -3873,6 +3873,55 @@ void check_peer_thread(QQuickWindow& window, lapis::desktop::Workspace& workspac
     CHECK(config_model.setVisual(QStringLiteral("theme"), QStringLiteral("terminal")));
 }
 
+// A reply's quotes keep the reply's color and carry a thin bar at their left
+// edge, a quote inside a list item too, on the dark theme.
+void check_quote_bars(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                      lapis::desktop::Config& config_model, const QTemporaryDir& directory,
+                      const QString& captures) {
+    using namespace lapis::desktop;
+    auto* view = find_visual(window.contentItem(), QStringLiteral("visualView"));
+    CHECK(view != nullptr);
+    auto* model = qobject_cast<TranscriptModel*>(workspace.transcript());
+    CHECK(model != nullptr);
+    CHECK(config_model.setVisual(QStringLiteral("theme"), QStringLiteral("codex")));
+    const auto path = directory.filePath(QStringLiteral("quote-thread.jsonl"));
+    QFile file(path);
+    CHECK(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(
+        R"({"type":"user","uuid":"p1","timestamp":"2026-11-11T16:00:00.000Z","message":{"content":"Draft the reply to the reviewer."}})"
+        "\n"
+        R"({"type":"assistant","uuid":"a1","timestamp":"2026-11-11T16:00:20.000Z","message":{"content":[{"type":"text","text":"Here is the draft for your go:\n\n> Thanks for the review. The cache now keeps the last layout per agent, so a warm switch drops from 18 ms to 4 ms. I left the shaping change for a follow-up PR.\n\nTwo smaller notes:\n\n- The second comment:\n\n  > Agreed, the name was unclear; it is now `warm_layout`.\n\n- The third needs no reply."}]}})"
+        "\n"
+        R"({"type":"system","subtype":"turn_duration","durationMs":20000})"
+        "\n");
+    file.close();
+    view->setProperty("visible", true);
+    model->setPath(path);
+    model->loadNow();
+    pump(400);
+    std::vector<QQuickItem*> bars;
+    std::function<void(QQuickItem*)> walk = [&](QQuickItem* item) {
+        if (item->objectName() == QStringLiteral("quoteBar") && item->isVisible())
+            bars.push_back(item);
+        for (auto* child : item->childItems())
+            walk(child);
+    };
+    walk(window.contentItem());
+    // The quote and the one in the list item: each a bar as tall as its
+    // lines, the item's set in past the list's indent.
+    CHECK(bars.size() == 2);
+    std::sort(bars.begin(), bars.end(), [](QQuickItem* a, QQuickItem* b) {
+        return a->mapToScene({}).y() < b->mapToScene({}).y();
+    });
+    CHECK(bars[0]->height() > bars[0]->width() * 4 && bars[1]->height() > bars[1]->width() * 4);
+    CHECK(bars[1]->mapToScene({}).x() > bars[0]->mapToScene({}).x());
+    if (!captures.isEmpty())
+        CHECK(window.grabWindow().save(QDir(captures).filePath(QStringLiteral("quote-bars.png"))));
+    view->setProperty("visible", false);
+    model->setPath(QString());
+    CHECK(config_model.setVisual(QStringLiteral("theme"), QStringLiteral("terminal")));
+}
+
 // Command-B slides the sidebar: its room and the stage's edge ease while the
 // panel keeps its full width, the title line fades and the stage's top eases
 // in step, a second toggle reverses from where it is, the stage's terminal
@@ -4047,6 +4096,7 @@ int run_settings_window_tests() {
     check_sidebar_theme(*window, workspace, config_model, directory, captures);
     check_hidden_sidebar_title(*window, workspace, config_model, directory, captures);
     check_peer_thread(*window, workspace, config_model, directory, captures);
+    check_quote_bars(*window, workspace, config_model, directory, captures);
     check_sidebar_slide(*window, preview, config_model, captures);
     check_settings_window(*window, preview, config_model, captures);
     CHECK(preview.diagnostics().isEmpty());
