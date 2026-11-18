@@ -61,6 +61,7 @@ that uses `lapis_project_options`.
 | Process birth | The window (or the windowless host) starts one detached session service per agent; agents survive window quitting only where the OS permits background execution, and the login helper restarts those whose services died with the Mac | Restart of a crashed session service is not implemented: the agent keeps its last screen until it is restarted or lapis next opens; macOS 27 also requires the Allow in the Background conditions in [install](install.md) |
 | Settings | Tracked `lapis.json` defaults plus private runtime workspace/window state | Machine-local state never becomes a portable credential or session transcript |
 | Native browser surfaces | CEF 156.0.30 / Chromium 156.0.8078.96 passed the isolated hidden W0 probe | Product and service wiring wait for R1/R4; each later W checkpoint needs its named receipt |
+| Extensions | Proposed `lapis.extension/1`: explicit packages, negotiated capabilities, an out-of-process Studio sidecar, and host-rendered declarative UI | X1 ships only manifest/schema/test-kit evidence; sidecar actions and production supervision require their reviewed phase gates |
 
 The old terminal-engine comparison and pinned source receipts remain in
 [evidence](../evidence/). They justify the selected engine; they are not a
@@ -121,14 +122,50 @@ The userscript and browser-agent prior art is deliberately narrowed to the
 deterministic parts lapis can own: host-registered per-document bootstrap,
 semantic state derived from accessibility and DOM boundaries, stable refs with
 action-time re-resolution, explicit stale-ref rejection, and trusted host input.
-Arbitrary caller scripts, extension capability grants, and debugger attachment
-do not become the public surface.
+For browser control, arbitrary caller scripts, browser extension capability
+grants, and debugger attachment do not become the public surface. A separately
+installed Studio package is a different boundary and receives no browser,
+debugger, page-input, or profile authority merely by being an extension.
 
 Firefox supplies a future model-isolation pattern, not a W0 dependency: run
 advisory classification in a separate inference process, pin runtime and model
 revisions, verify downloads, enforce an allowlist and bounded cache, and never
 let an annotation act, focus, navigate, or approve. No model runtime is added in
 this milestone.
+
+## Extension system
+
+The contributor surface is [extensions](extensions.md), not a fork of the
+desktop or an in-process plugin. A Studio-style contribution is an explicitly
+installed `lapis.extension/1` package with a validated manifest, literal-argv
+descriptors, negotiated capabilities, extension-scoped state, and one
+out-of-process sidecar when executable logic is required. Lapis renders
+declarative slot models; extensions provide neither QML nor pixels.
+
+This choice preserves the existing crash domains. Extension code never runs in
+the GUI process or a session service: a GUI crash already removes the
+workspace view, and the session service's process-group guard kills the live
+agent group when that service dies. Sidecars are separate processes whose
+malformed, stale, hung, or crashed state degrades to explicit
+`unknown`/`unavailable`. They never own, start, adopt, or terminate services or
+PTYs, assign focus, inject keys or paste, answer approvals, speak session wire
+v6, use `workspace-control.sock`, or read private workspace state files.
+
+Protocol exclusions are API boundaries, not an operating-system sandbox. An
+X2 sidecar runs with the user's normal privileges after executable-byte and
+manifest digests are re-verified at an absolute path; consent must state that
+trust. Production supervision requires a separate reviewed choice between
+retaining explicit user-level trust and adding a named enforced restriction.
+
+| Phase | Bounded slice | Exit evidence |
+| --- | --- | --- |
+| X1: schema and fixtures | Manifest parser, capability validation, terminal-only literal-argv harness descriptors, protocol schema, malformed and compatibility fixtures, and an offline test kit | Contributors can validate a package and replay protocol fixtures without rebuilding the desktop; no sidecar or UI is enabled |
+| X2: observation sidecar | One manually launched, explicitly trusted process per enabled extension; host-initiated negotiated JSON-RPC; read-only workspace snapshots; coalesced events; and one declarative slot | Fuzz, slow-reader, lag, malformed-DTO, stale-epoch, digest-change, and crash cases leave terminal input and agents intact |
+| X3: limited commands | Only commands Lapis already owns, with command consent and destructive-operation confirmation | Every rejection, audit, rollback, and authorization case has focused tests; no direct process, PTY, session, browser, or focus handle appears |
+| X4: lifecycle and qualification | Production trust/supervision decision, start/stop, degradation, epochs, restart policy, idle cost, IPC tails, and contributor iteration | Named M-series workload receipts cover GUI close/crash/reopen, sidecar death, stale state, and visible/hidden UI without regressing terminal input |
+
+Production supervision waits for R1; browser-backed panels remain behind the
+separate W ladder.
 
 ## Codex route
 
@@ -239,6 +276,7 @@ failures, and service disconnect without developer tools.
 | --- | --- | --- |
 | Codex native hooks | Research only; the notify route reports finished turns | A per-session hook relayed through the terminal would add turn starts and approval requests; it needs a live receipt for relay loss and trust, and lapis never installs global hooks |
 | Native browser surfaces | W0 is an isolated engine probe; W1 begins only after R1/R4 close | Promote each checkpoint with its named runtime, input, isolation, credential, and workload receipt |
+| Extension transport | stdio is the X2 development transport; an owner-only local socket is the later multi-client candidate | Choose the production transport only from measured IPC, supervision, credential, and crash-recovery evidence |
 | Performance thresholds | Existing 20/30/35 ms input budget is the only reviewed budget | Promote switch, frame, sustained-output, or memory numbers only from named candidate workloads and tails |
 
 ## Deferred work
