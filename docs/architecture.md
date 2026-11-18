@@ -151,13 +151,21 @@ malformed, stale, hung, or crashed state degrades to explicit
 PTYs, assign focus, inject keys or paste, answer approvals, speak session wire
 v6, use `workspace-control.sock`, or read private workspace state files.
 
-X1 validates manifests, literal-argv harness descriptors, protocol schemas,
-and replay fixtures without launching production code. X2 adds a manually
-launched observation sidecar with stable DTOs, bounded negotiated JSON-RPC,
-coalesced publish-to-publish events, and one declarative slot. X3 may add only
-Lapis-owned commands with explicit confirmation for destructive operations.
-X4 owns lifecycle and measured qualification. Production supervision waits for
-R1; browser-backed panels remain behind the separate W ladder.
+Protocol exclusions are API boundaries, not an operating-system sandbox. An
+X2 sidecar runs with the user's normal privileges after executable-byte and
+manifest digests are re-verified at an absolute path; consent must state that
+trust. Production supervision requires a separate reviewed choice between
+retaining explicit user-level trust and adding a named enforced restriction.
+
+| Phase | Bounded slice | Exit evidence |
+| --- | --- | --- |
+| X1: schema and fixtures | Manifest parser, capability validation, terminal-only literal-argv harness descriptors, protocol schema, malformed and compatibility fixtures, and an offline test kit | Contributors can validate a package and replay protocol fixtures without rebuilding the desktop; no sidecar or UI is enabled |
+| X2: observation sidecar | One manually launched, explicitly trusted process per enabled extension; host-initiated negotiated JSON-RPC; read-only workspace snapshots; coalesced events; and one declarative slot | Fuzz, slow-reader, lag, malformed-DTO, stale-epoch, digest-change, and crash cases leave terminal input and agents intact |
+| X3: limited commands | Only commands Lapis already owns, with command consent and destructive-operation confirmation | Every rejection, audit, rollback, and authorization case has focused tests; no direct process, PTY, session, browser, or focus handle appears |
+| X4: lifecycle and qualification | Production trust/supervision decision, start/stop, degradation, epochs, restart policy, idle cost, IPC tails, and contributor iteration | Named M-series workload receipts cover GUI close/crash/reopen, sidecar death, stale state, and visible/hidden UI without regressing terminal input |
+
+Production supervision waits for R1; browser-backed panels remain behind the
+separate W ladder.
 
 ## Codex route
 

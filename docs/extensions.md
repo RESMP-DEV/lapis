@@ -5,7 +5,9 @@ implemented or advertised as a product capability yet; see
 [status](status.md). The contract exists so a contributor can build a
 Lapis Studio-style companion without forking the desktop, linking private
 C++ objects, loading third-party QML into the app, or speaking the internal
-session wire.
+session wire. The X1-X4 implementation gates live only in
+[architecture](architecture.md); this page explains the contributor contract
+without maintaining a second roadmap.
 
 ## Goal
 
@@ -27,10 +29,21 @@ The first supported package is therefore an explicitly installed extension:
 ## Trust and package identity
 
 An extension package is installed by an explicit user action. Installation
-presents its identity, developer, executable path or bundle, manifest digest,
-requested capabilities, and protocol range before enablement. Presence on disk
-does nothing. A package remains disabled until the user enables that exact
-manifest revision; a manifest or executable change requires fresh consent.
+presents its identity, developer, resolved absolute executable path, executable
+digest, bundle inventory digest when applicable, manifest digest, requested
+capabilities, and protocol range before enablement. Presence on disk does
+nothing. Lapis re-verifies the executable and manifest digests before every
+launch; a changed path or byte sequence requires fresh consent. A manifest
+digest alone never authorizes replacement executable bytes, and extension
+commands are never resolved afresh through `PATH`.
+
+For X2 development, an enabled sidecar runs with the user's normal privileges.
+It is not OS-confined. The capability contract governs the supported protocol
+and Lapis-owned UI, but it does not make an untrusted executable safe. Consent
+must say this plainly: installing a Studio package is trusting that package
+with the user's local privileges, just as installing a CLI is. Production
+automatic start requires a separate reviewed decision to retain that explicit
+trust or add a named, enforced restriction before sidecars are supervised.
 
 The manifest contract is `lapis.extension/1`. A major mismatch fails the whole
 package, with no partial catalog entries or sidecar start. Unknown fields may
@@ -49,7 +62,7 @@ Version 1 has three capability groups:
 
 | Capability | Grants | Does not grant |
 | --- | --- | --- |
-| `harness.descriptor` | A literal-argv CLI descriptor merged into the existing harness catalog after validation | Adapter behavior, response routing, model probing, updates, or a process owned by the extension |
+| `harness.descriptor` | A terminal-adapter CLI descriptor with only `id`, label, resolved absolute command, literal default argv, model-argument shape, and resume option | A Codex or Claude adapter, update command, probe behavior, response routing, or a process owned by the extension |
 | `workspace.observe` | Versioned read-only workspace DTOs and coalesced state events | Direct reads of private workspace files, the session wire, transcripts, credentials, or workspace-control |
 | `ui.slot` | Declarative models for named Lapis-owned UI slots | QML, JavaScript, pixels, native views, focus, keyboard, paste, or arbitrary layout |
 
@@ -70,12 +83,13 @@ result.
 
 The transport is newline-delimited JSON-RPC 2.0 over stdio for the development
 slice. An owner-only local socket is the later alternative when a second
-Lapis-owned process needs to reach the same sidecar. Both sides exchange an
-`initialize` request carrying supported protocol major versions and selected
-capabilities, and both must accept the result before any DTO or UI method.
-Payloads are bounded, schema-validated, and versioned. Exact byte limits must
-be selected with a resource-safety rationale and regression tests; they are not
-part of this architecture decision.
+Lapis-owned process needs to reach the same sidecar. The host is the sole
+handshake initiator: it sends `initialize`, the sidecar replies with its
+supported protocol range and selected capabilities, and neither side may wait
+for later methods while that request is outstanding. Payloads are bounded,
+schema-validated, and versioned. Exact byte and timeout limits must be selected
+with a resource-safety rationale and regression tests; they are not part of
+this architecture decision.
 
 The protocol exchanges stable data-transfer objects, never serialized
 `Workspace`, `Agent`, `Config`, transcript, attention, browser, or adapter
@@ -133,15 +147,8 @@ must come from named extension-host workloads before any is promoted to a
 release budget. The absence of those measurements is a gate, not permission to
 infer a budget from the session service.
 
-## Delivery ladder
-
-| Phase | Bounded slice | Exit evidence |
-| --- | --- | --- |
-| X1: schema and fixtures | Manifest parser, capability validation, literal-argv harness descriptors, protocol schema, malformed and compatibility fixtures, and an offline test kit | Contributors can validate a package and replay protocol fixtures without rebuilding the desktop; no sidecar or UI is enabled |
-| X2: observation sidecar | One manually launched process per enabled extension, negotiated JSON-RPC, read-only workspace snapshots, coalesced events, and one declarative UI slot | Fuzz, slow-reader, lag, malformed-DTO, stale-epoch, and crash cases leave terminal input and agents intact |
-| X3: limited commands | Only commands Lapis already owns, with command consent and destructive-operation confirmation | Every rejection, audit, rollback, and authorization case has focused tests; no direct process, PTY, session, browser, or focus handle appears |
-| X4: lifecycle and qualification | Production start/stop, degradation, epochs, restart policy, idle cost, IPC tails, and contributor iteration | Named M-series workload receipts cover GUI close/crash/reopen, sidecar death, stale state, and visible/hidden UI without regressing terminal input |
-
-No phase may displace the current release order. In particular, production
-sidecar supervision depends on the unresolved R1 process-lifetime result, and
-browser-backed UI remains behind the native-browser W checkpoints.
+Follow the X1-X4 delivery ladder in
+[architecture](architecture.md#extension-system). No phase may displace the
+current release order. In particular, production sidecar supervision depends on
+the unresolved R1 process-lifetime result, and browser-backed UI remains behind
+the native-browser W checkpoints.

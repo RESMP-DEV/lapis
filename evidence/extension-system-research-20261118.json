@@ -46,19 +46,27 @@
       "observation": "The harness catalog is a static vector over closed adapter and model-option enums. This is compile-time coupling, although HarnessDescriptor itself is behavior-free launch data."
     },
     {
-      "path": "apps/desktop/src/workspace_control.hpp",
+      "paths": [
+        "apps/desktop/src/workspace_control.hpp"
+      ],
       "observation": "workspace-control.sock is version 1, one JSON request and one JSON response per connection. It has no event subscription and is not a Studio client protocol."
     },
     {
-      "path": "services/session/src/transport/local_protocol.hpp",
+      "paths": [
+        "services/session/src/transport/local_protocol.hpp"
+      ],
       "observation": "The session wire is internal version 6 with bounded frames and negotiated optional capabilities. Extensions must not speak this private binary protocol."
     },
     {
-      "path": "services/session/src/terminal_hooks.hpp",
+      "paths": [
+        "services/session/src/terminal_hooks.hpp"
+      ],
       "observation": "OSC 7717 is nonce-bound, bounded to 24 KiB per sequence, quarantined to 96 KiB, and stripped from terminal output. Existing observation ingress has useful authentication and bound precedents."
     },
     {
-      "path": "services/session/src/platform/posix/process_group_guard.cpp",
+      "paths": [
+        "services/session/src/platform/posix/process_group_guard.cpp"
+      ],
       "observation": "When the session-service guard loses its pipe, it sends SIGKILL to its process group. Arbitrary extension code in a session service therefore shares a fatal crash domain with the live agent."
     },
     {
@@ -71,14 +79,14 @@
   ],
   "selected_architecture": {
     "manifest_contract": "lapis.extension/1",
-    "trust": "Explicit installation and enablement bind package identity, executable or bundle identity, manifest digest, protocol range, and capabilities. Presence on disk never enables code.",
+    "trust": "Explicit installation and enablement bind package identity, the resolved absolute executable path, exact executable bytes (plus bundle inventory where applicable), manifest digest, protocol range, and capabilities. Presence on disk never enables code, PATH lookup is not repeated, and digests are re-verified before every launch. An X2 sidecar runs with normal user privileges; protocol capabilities are not an OS sandbox, and production supervision requires a separate trust-or-confinement decision.",
     "v1_capabilities": [
-      "harness.descriptor for validated literal-argv launch data",
+      "harness.descriptor for a terminal-only launch descriptor limited to identity, label, absolute command, literal argv, model-argument shape, and resume option",
       "workspace.observe for stable read-only DTOs and coalesced events",
       "ui.slot for declarative models rendered by Lapis"
     ],
     "process": "One separately launched sidecar per enabled executable extension. It is neither GUI code nor a session service.",
-    "protocol": "Schema-validated, bounded, newline-delimited JSON-RPC 2.0 over stdio for X2; an owner-only local socket remains a later measured alternative.",
+    "protocol": "Schema-validated, bounded, host-initiated newline-delimited JSON-RPC 2.0 over stdio for X2; the sidecar answers initialize before either side proceeds, and an owner-only local socket remains a later measured alternative.",
     "state": "Extension-private owner-only state under an ignored runtime namespace. Private Lapis workspace, window, agent, judge, attention, and configuration files remain single-owner and are never read or written directly.",
     "ui": "Fixed host-owned slots populated by labels, details, badges, rows, bounded action references, and simple controls. Extensions submit neither QML, JavaScript, pixels, nor native views.",
     "exclusions": [
@@ -96,6 +104,24 @@
       "X4": "Lifecycle, crash containment, degraded state, epochs, resource cost, IPC tails, and contributor-iteration qualification."
     }
   },
+  "review_repair": {
+    "initial_head": "555b2f4010c1f2ce582fa23aa78403b7d9f6caf3",
+    "services": {
+      "kilo": "completed at the initial head with no issues",
+      "coderabbit": "completed with findings at the initial head",
+      "opencodereview_deepseek": "completed with findings at the initial head",
+      "opencodereview_glm_closer": "completed with zero findings at the initial head",
+      "grok": "skipped/unavailable: the reviewer returned an explicit free-tier usage limit"
+    },
+    "repairs": [
+      "Bind consent to a resolved absolute executable path and exact executable/bundle/manifest digests, re-verified before every launch.",
+      "Limit harness.descriptor to terminal-only identity, label, absolute command, literal argv, model-argument shape, and resume option; prohibit adapter behavior and update commands.",
+      "Make initialize host-initiated and require the sidecar reply before either side proceeds.",
+      "State that X2 sidecars run with normal user privileges and that protocol exclusions are not an OS sandbox; defer production trust-or-confinement to a reviewed X4 decision.",
+      "Keep the X1-X4 ladder only in docs/architecture.md and route the contributor page to it.",
+      "Normalize every source_reconciliation entry to the paths array shape."
+    ]
+  },
   "performance_basis": {
     "reviewed_budget": "The existing 20/30/35 ms terminal input budget remains the only reviewed budget; extension work must stay off synchronous input and presentation paths.",
     "web_view_observation": "The tracked W0 receipt records one hidden CEF view at six processes and 567-573 MiB RSS. That is evidence against using a web view as the general Studio logic host, not a qualification of an extension sidecar.",
@@ -111,16 +137,20 @@
   },
   "validation": [
     {
+      "command": "Relative Markdown target inventory for README.md and docs/*.md",
+      "result": "passed at the initial and review-repair heads"
+    },
+    {
       "command": "python3 -m json.tool evidence/extension-system-research-20261118.json",
-      "result": "passed"
+      "result": "passed at the initial and review-repair heads"
     },
     {
       "command": "git diff --check",
-      "result": "passed"
+      "result": "passed at the initial and review-repair heads"
     },
     {
       "command": "python3 scripts/lapis.py quality",
-      "result": "passed; ignored build/reports/quality/receipt.json"
+      "result": "passed at the initial head and again after review repairs; ignored build/reports/quality/receipt.json"
     }
   ],
   "non_claims": [
