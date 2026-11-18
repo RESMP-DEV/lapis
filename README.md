@@ -80,6 +80,7 @@ uv run --no-project python scripts/lapis.py run
 | [phone](docs/phone.md) | The prototype iPhone app and its separately installed gateway |
 | [suggestions](docs/suggestions.md) | Optional next-prompt guesses, Tab, and their acceptance log |
 | [build](docs/build.md) | Building, checks, probes and fixtures |
+| [extensions](docs/extensions.md) | Proposed Lapis Studio package, sidecar and declarative-UI architecture |
 | [status](docs/status.md) | What is qualified, what remains, and the evidence |
 | [architecture](docs/architecture.md) | Design decisions and the plan |
 

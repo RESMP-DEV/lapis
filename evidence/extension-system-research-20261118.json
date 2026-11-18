@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "receipt": "extension-system-research-20261118",
+  "recorded_at": "2026-11-18T04:51:38Z",
+  "agent": "Codex",
+  "base_revision": "8c48190ba29613dc21318240c1a2f47fbc7a9470",
+  "branch": "docs/extension-system",
+  "scope": "Design-phase reconciliation for a Lapis Studio extension system. This PR records the architecture, source evidence, and delivery gates only; it does not implement an extension host or product feature.",
+  "sanitization": "Repository-relative source paths, public revision identity, worker session IDs, and already-tracked repository receipts only. No private transcript, credential, account, host, device, network, or user-specific absolute path is recorded.",
+  "live_baseline": {
+    "method": "git fetch --prune; git rev-parse origin/main; gh pr list --repo RESMP-DEV/lapis --state open",
+    "origin_main": "8c48190ba29613dc21318240c1a2f47fbc7a9470",
+    "open_pull_requests": [],
+    "checked_at": "2026-11-18T04:49:00Z"
+  },
+  "decomposition": {
+    "workers": [
+      {
+        "question": "Which existing internal seams are safe to expose, and what is missing at the public edge?",
+        "session_id": "7e3c5a7b-b90c-4796-afe3-e9914ea0385c",
+        "result": "Strong internal seams exist around service-owned PTYs, session wire v6, attention capability separation, nonce-authenticated OSC 7717 ingress, and owner-only state publication. The public edge lacks discovery, manifest versioning, dynamic registration, a scoped event API, and an extension trust model."
+      },
+      {
+        "question": "What does a Lapis Studio contributor need, and which naive integrations are unstable?",
+        "session_id": "538866e1-eed7-4798-8bd6-6f9176b5e1e9",
+        "result": "Studio should be a second client of a live workspace. Linking the private desktop static library, loading QML or dylibs into the signed GUI, speaking internal session wire, polling the eventless control socket, or writing private state files are rejected integration shapes."
+      },
+      {
+        "question": "Which process, IPC, rendering, and lifecycle option preserves responsiveness and isolation?",
+        "session_id": "199af4a2-dab9-47ce-9334-fae266c50888",
+        "result": "Out-of-process sidecars with host-rendered declarative UI outrank in-process registries for third-party code. First-party data-only registration is second, bundled QML is not a third-party mechanism, web views are content surfaces rather than the logic host, and session services are barred because their process-group guard kills the agent group on service death."
+      }
+    ],
+    "parent_only": [
+      "Reconcile competing worker recommendations into one architecture.",
+      "Spot-check load-bearing source claims at the exact base.",
+      "Own canonical documentation, evidence, acceptance, PR review, and merge."
+    ]
+  },
+  "source_reconciliation": [
+    {
+      "paths": [
+        "apps/desktop/src/harness_catalog.hpp",
+        "apps/desktop/src/harness_catalog.cpp"
+      ],
+      "observation": "The harness catalog is a static vector over closed adapter and model-option enums. This is compile-time coupling, although HarnessDescriptor itself is behavior-free launch data."
+    },
+    {
+      "path": "apps/desktop/src/workspace_control.hpp",
+      "observation": "workspace-control.sock is version 1, one JSON request and one JSON response per connection. It has no event subscription and is not a Studio client protocol."
+    },
+    {
+      "path": "services/session/src/transport/local_protocol.hpp",
+      "observation": "The session wire is internal version 6 with bounded frames and negotiated optional capabilities. Extensions must not speak this private binary protocol."
+    },
+    {
+      "path": "services/session/src/terminal_hooks.hpp",
+      "observation": "OSC 7717 is nonce-bound, bounded to 24 KiB per sequence, quarantined to 96 KiB, and stripped from terminal output. Existing observation ingress has useful authentication and bound precedents."
+    },
+    {
+      "path": "services/session/src/platform/posix/process_group_guard.cpp",
+      "observation": "When the session-service guard loses its pipe, it sends SIGKILL to its process group. Arbitrary extension code in a session service therefore shares a fatal crash domain with the live agent."
+    },
+    {
+      "paths": [
+        "apps/desktop/CMakeLists.txt",
+        "apps/desktop/src/main.cpp"
+      ],
+      "observation": "The desktop core is one private static library, QML files are explicitly added to the application resource, and QML types are statically registered. There is no installed desktop C++ ABI or third-party QML plugin surface."
+    }
+  ],
+  "selected_architecture": {
+    "manifest_contract": "lapis.extension/1",
+    "trust": "Explicit installation and enablement bind package identity, executable or bundle identity, manifest digest, protocol range, and capabilities. Presence on disk never enables code.",
+    "v1_capabilities": [
+      "harness.descriptor for validated literal-argv launch data",
+      "workspace.observe for stable read-only DTOs and coalesced events",
+      "ui.slot for declarative models rendered by Lapis"
+    ],
+    "process": "One separately launched sidecar per enabled executable extension. It is neither GUI code nor a session service.",
+    "protocol": "Schema-validated, bounded, newline-delimited JSON-RPC 2.0 over stdio for X2; an owner-only local socket remains a later measured alternative.",
+    "state": "Extension-private owner-only state under an ignored runtime namespace. Private Lapis workspace, window, agent, judge, attention, and configuration files remain single-owner and are never read or written directly.",
+    "ui": "Fixed host-owned slots populated by labels, details, badges, rows, bounded action references, and simple controls. Extensions submit neither QML, JavaScript, pixels, nor native views.",
+    "exclusions": [
+      "No shell strings, environment expansion, command substitution, caller scripts, dynamic libraries, QML plugins, or debugger attachment.",
+      "No extension code in the GUI process or a session service.",
+      "No service or PTY ownership, start, adoption, or termination.",
+      "No focus assignment, key or paste injection, or approval response.",
+      "No direct session wire, workspace-control, browser-control, private-state, or credential access.",
+      "No browser content authority merely because a Studio package is installed."
+    ],
+    "delivery_gates": {
+      "X1": "Manifest/schema/test-kit slice with malformed, duplicate, version, literal-argv, and replay fixtures; no production process launch.",
+      "X2": "Manually launched observation sidecar with negotiated protocol, stable DTOs, coalesced events, and one declarative slot.",
+      "X3": "Lapis-owned commands only, with command consent and explicit destructive-operation confirmation.",
+      "X4": "Lifecycle, crash containment, degraded state, epochs, resource cost, IPC tails, and contributor-iteration qualification."
+    }
+  },
+  "performance_basis": {
+    "reviewed_budget": "The existing 20/30/35 ms terminal input budget remains the only reviewed budget; extension work must stay off synchronous input and presentation paths.",
+    "web_view_observation": "The tracked W0 receipt records one hidden CEF view at six processes and 567-573 MiB RSS. That is evidence against using a web view as the general Studio logic host, not a qualification of an extension sidecar.",
+    "non_claims": [
+      "No extension-host spawn, handshake, IPC, rendering, idle, memory, crash, or contributor-iteration measurement exists.",
+      "No new numeric performance or payload budget is promoted by this receipt.",
+      "Production sidecar supervision waits for the unresolved R1 process-lifetime result."
+    ]
+  },
+  "method_note": {
+    "index_first_search": "A semantic search was attempted before source reads. The newly created worktree had no sindexer collection and sindexer-doctor reported the embedding lane broken, so load-bearing facts were verified with exact repository file reads.",
+    "worker_limits": "Workers were read-only and did not run builds, tests, or runtime probes. Their reports are evidence; parent source reconciliation and the checks below are acceptance."
+  },
+  "validation": [
+    {
+      "command": "python3 -m json.tool evidence/extension-system-research-20261118.json",
+      "result": "passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed"
+    },
+    {
+      "command": "python3 scripts/lapis.py quality",
+      "result": "passed; ignored build/reports/quality/receipt.json"
+    }
+  ],
+  "non_claims": [
+    "No extension manifest parser, schema validator, protocol implementation, sidecar supervisor, UI slot, SDK, installer, or Studio feature is implemented.",
+    "No third-party package, executable, signing identity, code-signing policy, or notarization path was exercised.",
+    "No terminal input, rendering, IPC, crash-recovery, process-lifetime, browser, or multi-extension workload was run.",
+    "This architecture does not alter the native-browser W ladder or grant browser-content extensions any host authority."
+  ]
+}
