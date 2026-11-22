@@ -221,7 +221,7 @@ int check_keys(QQuickView& view, QQuickItem* root) {
 // thinking, a search, an edit with a diff and an interim reply.
 const char* const kLiveTurn[] = {
     R"({"type":"user","uuid":"p1","timestamp":"2026-11-11T16:00:00.000Z","message":{"content":"Make the tests cover it"}})",
-    R"({"type":"assistant","uuid":"a1","timestamp":"2026-11-11T16:00:02.000Z","message":{"content":[{"type":"thinking","thinking":"plan"}]}})",
+    R"({"type":"assistant","uuid":"a1","timestamp":"2026-11-11T16:00:02.000Z","message":{"content":[{"type":"thinking","thinking":"Plan the **coverage** first. Then build it and run every test the change touches, including the slow ones that only run nightly, so nothing regresses."}]}})",
     R"({"type":"assistant","uuid":"a2","timestamp":"2026-11-11T16:00:03.000Z","message":{"content":[{"type":"tool_use","id":"t1","name":"Grep","input":{"pattern":"greet","path":"/work/demo"}}]}})",
     R"({"type":"user","uuid":"r1","timestamp":"2026-11-11T16:00:04.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"src/greet.cpp:3"}]}})",
     R"({"type":"assistant","uuid":"a3","timestamp":"2026-11-11T16:00:05.000Z","message":{"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"/work/demo/tests/greet_test.cpp","old_string":"a\nb","new_string":"c\nd\ne"}}]}})",
@@ -342,6 +342,27 @@ int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile
     expect(named(root, "liveHeader").size() == 1, "one live header while the turn runs");
     expect(named(root, "liveBox").empty() && nested_scrollers(root) == 0,
            "no box and no scroll area inside the thread");
+    // Folded by default: the header, its chevron, and the newest thought as
+    // one dim indented line of its first sentence (two lines at most); the
+    // whole thought shows only once opened.
+    {
+        auto* live_header = named(root, "liveHeader").front();
+        const auto thoughts = named(root, "liveThought");
+        expect(!live_header->property("expanded").toBool() && named(root, "stepRow").empty(),
+               "the running turn's steps start folded under its header");
+        expect(thoughts.size() == 1 &&
+                   thoughts.front()->property("text").toString() ==
+                       QStringLiteral("Plan the coverage first.") &&
+                   thoughts.front()->property("lineCount").toInt() <= 2 &&
+                   thoughts.front()->x() > 0 && named(root, "thoughtText").empty(),
+               "folded, the newest thought is one dim, indented line under the header");
+        click(view, live_header);
+        end();
+        expect(live_header->property("expanded").toBool() && named(root, "liveThought").empty(),
+               "opened, the header lists its steps and drops the thought line");
+        root->setProperty("following", true);
+        end();
+    }
     // Thinking, the search and the edit; the interim reply is a reply row.
     expect(named(root, "stepRow").size() == 3, "the running turn's steps are thread rows");
     expect(named(root, "diffCard").empty(), "no diff drawn before a step is opened");
@@ -447,6 +468,63 @@ int check_live(QQuickView& view, QQuickItem* root, TranscriptModel& model, QFile
     settle();
     expect(named(root, "stepRow").size() == 7 && named(root, "diffCard").size() == 1,
            "clicking it again shows them, the opened edit still opened");
+    end();
+    // A reply recorded while the view follows the end streams in: its block
+    // uncovers top to bottom on the animation clock in about 300 ms, and is
+    // whole after. With reduced motion it lands whole at once.
+    const auto last_reply = [&]() -> QQuickItem* {
+        QQuickItem* row = nullptr;
+        QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, row),
+                                  Q_ARG(int, model.rowCount() - 1));
+        QQuickItem* found = nullptr;
+        const auto walk = [&found](auto&& self, QQuickItem* item) -> void {
+            if (item->objectName() == QLatin1String("replyBlock"))
+                found = item;
+            for (auto* child : item->childItems())
+                self(self, child);
+        };
+        if (row != nullptr)
+            walk(walk, row);
+        return found;
+    };
+    const auto turn = [&](const char* id, const char* text) {
+        const auto line = [id](const char* format, const char* value = "") {
+            return QByteArray(format).replace("ID", id).replace("TEXT", value) + '\n';
+        };
+        file.write(line(R"({"type":"user","uuid":"pID","message":{"content":"Again"}})"));
+        file.write(line(
+            R"({"type":"assistant","uuid":"aID","message":{"content":[{"type":"text","text":"TEXT"}]}})",
+            text));
+        file.write(line(R"({"type":"system","subtype":"turn_duration","durationMs":1000})"));
+        file.flush();
+        root->setProperty("following", true);
+        model.readMore();
+        QMetaObject::invokeMethod(list, "positionViewAtEnd");
+        settle();
+    };
+    const auto wait_ms = [](int ms) {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < ms)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    };
+    turn("r1", "First line of the streamed reply.\\n\\nA second paragraph under it.");
+    auto* streaming = last_reply();
+    const auto early = streaming != nullptr ? streaming->property("shown").toReal() : -1.0;
+    expect(streaming != nullptr && early < 1.0 && streaming->height() < streaming->implicitHeight(),
+           "a reply landing while the view follows starts uncovering");
+    wait_ms(500);
+    (void)view.grabWindow();
+    streaming = last_reply();
+    expect(streaming != nullptr && streaming->property("shown").toReal() == 1.0 &&
+               streaming->height() == streaming->implicitHeight() && !streaming->clip(),
+           "within half a second the reply is whole");
+    root->setProperty("reducedMotion", true);
+    turn("r2", "Reduced motion lands whole.");
+    streaming = last_reply();
+    expect(streaming != nullptr && streaming->property("shown").toReal() == 1.0,
+           "with reduced motion a reply lands whole at once");
+    root->setProperty("reducedMotion", false);
     end();
     for (const auto& overlap : overlaps)
         std::fprintf(stderr, "live FAIL rows: %s\n", qPrintable(overlap));

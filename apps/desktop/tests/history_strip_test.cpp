@@ -196,14 +196,61 @@ void pages_without_seam_evidence_stay_unsettled() {
             "a later page can prove a partial blank-and-missing overlap");
 }
 
-void far_pages_are_forgotten() {
-    HistoryStrip strip(rows_of(4, {"s0", "s1", "s2", "s3"}), 120);
+void many_screens_stay_and_the_furthest_go_first() {
+    constexpr std::uint64_t screen = 4;
+    constexpr auto budget = HistoryStrip::kept_screens * screen;
+    const auto archived = budget * 2;
+    HistoryStrip strip(rows_of(4, {"s0", "s1", "s2", "s3"}), archived);
     strip.moveTo(0);
-    for (std::size_t first = 0; first < 120; first += 4)
-        strip.addPage(rows_of(4, {"a", "b", "c", "d"}, first));
-    require(!strip.missing(), "near pages are kept");
-    strip.moveTo(100);
-    require(strip.missing() == 100, "pages screens away were dropped, to be fetched again");
+    for (std::uint64_t first = 0; first < budget; first += screen)
+        strip.addPage(rows_of(4, {"a", "b", "c", "d"}, first), first + 1);
+    require(strip.pages() == HistoryStrip::kept_screens && strip.keptRows() == budget,
+            "the whole budget stays");
+    // Far more than four screens away: scrolling back needs no fetch.
+    strip.moveTo(static_cast<std::int64_t>(budget - screen));
+    require(!strip.missing() && strip.pages() == HistoryStrip::kept_screens,
+            "pages dozens of screens from the view are kept");
+    strip.moveTo(0);
+    require(!strip.missing(), "and are there on the way back");
+    // Past the budget, the page furthest from the view goes first.
+    strip.moveTo(static_cast<std::int64_t>(budget));
+    strip.addPage(rows_of(4, {"e", "f", "g", "h"}, budget), 999);
+    require(strip.keptRows() == budget && strip.missing() == std::nullopt &&
+                view_rows(strip) == Rows({"e", "f", "g", "h"}),
+            "a new page in view displaces one");
+    strip.moveTo(0);
+    require(strip.missing() == 0, "the furthest page, row 0, was the one dropped");
+    strip.moveTo(static_cast<std::int64_t>(screen));
+    require(!strip.missing(), "its neighbour stayed");
+}
+
+void neighbours_are_fetched_ahead() {
+    // Pages of four rows; the view of four sits on rows 40-43.
+    HistoryStrip strip(rows_of(4, {"s0", "s1", "s2", "s3"}), 80);
+    strip.moveTo(40);
+    require(strip.ahead(2, 1) == std::nullopt, "nothing ahead while the view itself is missing");
+    strip.addPage(rows_of(4, {"a", "b", "c", "d"}, 40), 11);
+    require(strip.ahead(2, 1) == 39, "the screen just above comes first, nearest row first");
+    strip.addPage(rows_of(4, {"a", "b", "c", "d"}, 36), 10);
+    require(strip.ahead(2, 1) == 44, "then the screen just below");
+    strip.addPage(rows_of(4, {"a", "b", "c", "d"}, 44), 12);
+    require(strip.ahead(2, 1) == 35, "then the second screen above");
+    strip.addPage(rows_of(4, {"a", "b", "c", "d"}, 32), 9);
+    require(strip.ahead(2, 1) == std::nullopt, "the window is full");
+    strip.moveTo(76);
+    strip.addPage(rows_of(4, {"a", "b", "c", "d"}, 76), 20);
+    require(strip.ahead(1, 3) == 75, "nothing below the newest kept row but the screen");
+    HistoryStrip top(rows_of(4, {"s0", "s1", "s2", "s3"}), 8);
+    top.moveTo(0);
+    top.addPage(rows_of(4, {"a", "b", "c", "d"}, 0), 1);
+    require(top.ahead(2, 2) == 4, "at the oldest row only below remains");
+
+    // Taken pages keep their IDs and places, nearest the view first to stay.
+    auto taken = strip.takePages(2);
+    require(strip.pages() == 0 && taken.size() == 2, "two screens of named pages taken");
+    require(taken[0].id == 12 && taken[0].snapshot.history.viewport_offset == 44 &&
+                taken[1].id == 20 && taken[1].snapshot.history.viewport_offset == 76,
+            "furthest dropped; IDs and places kept");
 }
 } // namespace
 
@@ -216,7 +263,8 @@ int main() {
         pages_that_do_not_say_where_they_sit_go_on_top();
         kept_rows_the_screen_shows_again_belong_to_it();
         pages_without_seam_evidence_stay_unsettled();
-        far_pages_are_forgotten();
+        many_screens_stay_and_the_furthest_go_first();
+        neighbours_are_fetched_ahead();
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

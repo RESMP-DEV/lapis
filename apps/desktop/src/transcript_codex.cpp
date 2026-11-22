@@ -299,6 +299,8 @@ void CodexReader::item(const QJsonObject& item, qint64 started_ms, qint64 comple
             ended_ = task->item;
             return;
         }
+        if (!process.isUndefined() && !process.isNull())
+            finished_.insert(id, completed_ms > 0 ? completed_ms : at_ms_);
         push(std::move(step));
     } else if (type == QLatin1String("CollabAgentToolCall")) {
         collab(item, started_ms);
@@ -423,7 +425,8 @@ void CodexReader::collab(const QJsonObject& item, qint64 started_ms) {
         }
     } else {
         // wait_agent, close_agent, send_input...: a step of their own.
-        const auto verb = tool == QLatin1String("wait")              ? "Waited for"
+        const auto verb = tool == QLatin1String("wait") || tool == QLatin1String("wait_agent")
+                              ? "Waited for"
                           : tool == QLatin1String("close_agent")     ? "Closed"
                           : tool == QLatin1String("interrupt_agent") ? "Interrupted"
                           : tool == QLatin1String("list_agents")     ? "Listed"
@@ -497,44 +500,73 @@ int CodexReader::exec_output(const QJsonObject& payload) {
     // original_token_count} while the process runs on.
     static const QRegularExpression running(
         QStringLiteral(R"re("session_id"\s*:\s*(\d+)|Process running with session ID (\d+))re"));
-    const auto match = running.match(text);
-    if (!match.hasMatch() || (!text.contains(QLatin1String("wall_time_seconds")) &&
-                              !text.contains(QLatin1String("Process running"))))
+    if (!text.contains(QLatin1String("wall_time_seconds")) &&
+        !text.contains(QLatin1String("Process running")))
         return -1;
-    const auto id = QStringLiteral("process %1")
-                        .arg(match.captured(1).isEmpty() ? match.captured(2) : match.captured(1));
-    // The output it gave so far, shortened.
-    QString said;
+    // A code-mode cell can start several (Promise.all over exec_command):
+    // each one still running is its own task.
+    std::vector<QRegularExpressionMatch> found;
+    for (auto matches = running.globalMatch(text); matches.hasNext();)
+        found.push_back(matches.next());
+    if (found.empty())
+        return -1;
+    // The command it ran, when the call ran exactly one.
+    const auto command = commands_.take(text_of(payload, "call_id"));
+    const auto called_at = called_at_.take(text_of(payload, "call_id"));
     static const QRegularExpression chunk(
         QStringLiteral(R"re("output"\s*:\s*"((?:[^"\\]|\\.)*)")re"));
-    if (const auto part = chunk.match(text); part.hasMatch())
-        said = QJsonDocument::fromJson(QStringLiteral("[\"%1\"]").arg(part.captured(1)).toUtf8())
-                   .array()
-                   .at(0)
-                   .toString();
-    if (auto* task = task_named(id)) {
-        // write_stdin polling it: a check on the same step.
-        ++task->checks;
-        task->seen_ms = std::max(task->seen_ms, at_ms_);
-        if (!said.trimmed().isEmpty())
-            task->last_check = clip(without_escapes(said).trimmed(), result_preview_chars);
-        return task->item;
+    int first = -1;
+    const auto changed = [&first](int item) { first = first < 0 ? item : std::min(first, item); };
+    for (size_t i = 0; i < found.size(); ++i) {
+        const auto& match = found[i];
+        const auto id =
+            QStringLiteral("process %1")
+                .arg(match.captured(1).isEmpty() ? match.captured(2) : match.captured(1));
+        // The output it gave so far, shortened: the "output" after its id,
+        // before the next one's.
+        QString said;
+        const auto end = i + 1 < found.size() ? found[i + 1].capturedStart() : text.size();
+        if (const auto part = chunk.match(text, match.capturedEnd());
+            part.hasMatch() && part.capturedStart() < end)
+            said =
+                QJsonDocument::fromJson(QStringLiteral("[\"%1\"]").arg(part.captured(1)).toUtf8())
+                    .array()
+                    .at(0)
+                    .toString();
+        // Codex reuses a process id once its process has ended: only a task
+        // still open is the same one.
+        if (auto* task = task_named(id); task != nullptr && task->status.isEmpty()) {
+            // write_stdin polling it: a check on the same step.
+            ++task->checks;
+            task->seen_ms = std::max(task->seen_ms, at_ms_);
+            if (!said.trimmed().isEmpty())
+                task->last_check = clip(without_escapes(said).trimmed(), result_preview_chars);
+            changed(task->item);
+            continue;
+        }
+        // Its end was already written, after this call began: the output
+        // is older than the end, not a process still running.
+        if (const auto ended = finished_.find(id);
+            ended != finished_.end() && (called_at == 0 || *ended >= called_at)) {
+            finished_.erase(ended);
+            continue;
+        }
+        const auto shown = found.size() == 1 ? command : QString{};
+        Task task;
+        task.type = Task::Type::background;
+        task.id = id;
+        task.description = shown.isEmpty() ? id : first_line(shown);
+        task.started_ms = at_ms_;
+        task.seen_ms = at_ms_;
+        task.last_check = clip(without_escapes(said).trimmed(), result_preview_chars);
+        auto step = make(Kind::tool, QStringLiteral("Started in background"),
+                         shown.isEmpty() ? id : clip(shown, 2000));
+        step.answered = true;
+        step.task = start_task(std::move(task));
+        changed(static_cast<int>(items_.size()));
+        push(std::move(step));
     }
-    const auto command = commands_.take(text_of(payload, "call_id"));
-    Task task;
-    task.type = Task::Type::background;
-    task.id = id;
-    task.description = command.isEmpty() ? id : first_line(command);
-    task.started_ms = at_ms_;
-    task.seen_ms = at_ms_;
-    task.last_check = clip(without_escapes(said).trimmed(), result_preview_chars);
-    auto step = make(Kind::tool, QStringLiteral("Started in background"),
-                     command.isEmpty() ? id : clip(command, 2000));
-    step.answered = true;
-    step.task = start_task(std::move(task));
-    const int at = static_cast<int>(items_.size());
-    push(std::move(step));
-    return at;
+    return first;
 }
 
 // Cohesive parser/test flow; branching stays local.
@@ -583,6 +615,7 @@ int CodexReader::add(const QByteArray& line) {
             }
             if (!command.isEmpty())
                 commands_.insert(text_of(payload, "call_id"), command);
+            called_at_.insert(text_of(payload, "call_id"), at_ms_);
             return -1;
         }
         if (kind == QLatin1String("custom_tool_call_output") ||
@@ -637,6 +670,9 @@ int CodexReader::add(const QByteArray& line) {
         push(std::move(turn));
         turn_.clear();
         turn_prompted_ = false;
+        // Ends and calls are matched within a turn; this keeps both bounded.
+        finished_.clear();
+        called_at_.clear();
     }
     const int added = static_cast<int>(items_.size()) > first ? first : -1;
     if (ended_ >= 0)

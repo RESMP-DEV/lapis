@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
-"""Mirrors one Claude Code conversation file from this machine to lapis.
+"""Mirrors one Claude Code or Antigravity (agy) conversation file from this
+machine to lapis.
 
 lapis sends this script over ssh on standard input (`python3 - follow ...`),
 so nothing is installed or written here: it only reads the conversation's
-JSONL file and writes frames to standard output, then exits when the
-connection closes. Standard library only; Python 3.6 or later.
+JSONL file (and, for agy, which conversation the agent's process holds) and
+writes frames to standard output, then exits when the connection closes.
+Standard library only; Python 3.6 or later.
+
+agy never tells lapis its conversation, so with `--discover` the helper
+looks for it here: the presence lock (`presence/<id>.lock`) an agy process
+running in the agent's folder holds open (Linux /proc), else that process's
+one open conversation database, else agy's record of the folder's last
+conversation. An open database or that record never names a conversation
+another agy process holds locked. When the one found is not the one being
+followed, the helper says so (C) and ends; lapis starts it again on that one.
 
 Every frame is one type byte, a big-endian 32-bit payload length, then the
 payload:
@@ -23,6 +33,8 @@ payload:
   M missing  JSON {}: no such file yet; the helper keeps looking
   E error    JSON {reason}: the helper cannot continue
   K alive    empty: sent when idle, so a closed connection is noticed
+  C moved    JSON {conversation}: (--discover) the agent's conversation is
+             this one; the helper ends after it
 """
 
 import argparse
@@ -46,7 +58,8 @@ MAX_TAIL = 4 * 1024 * 1024
 WAIT_POLL = 0.5
 POLL = 0.1
 ALIVE_EVERY = 10.0
-UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+DISCOVER_EVERY = 2.0
+UUID =re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 def frame(kind, payload=b""):
@@ -100,6 +113,180 @@ def find_transcript(conversation, folder, home=None):
     for path in sorted(glob.glob(os.path.join(glob.escape(projects), "*", name))):
         if os.path.isfile(path):
             return path
+    return None
+
+
+def antigravity_home(home=None):
+    return home or os.path.join(os.path.expanduser("~"), ".gemini", "antigravity-cli")
+
+
+def antigravity_transcript(conversation, home=None):
+    """Where agy appends the conversation's steps; None before it has."""
+    path = os.path.join(
+        antigravity_home(home),
+        "brain",
+        conversation,
+        ".system_generated",
+        "logs",
+        "transcript_full.jsonl",
+    )
+    return path if os.path.isfile(path) else None
+
+
+def real_folder(folder):
+    return os.path.realpath(os.path.expanduser(folder)) if folder else ""
+
+
+def parent_pid(proc, pid):
+    """The parent of `pid` from /proc/<pid>/stat (after the command's ')')."""
+    try:
+        with open(os.path.join(proc, str(pid), "stat"), "rb") as handle:
+            stat = handle.read(4096)
+        return int(stat[stat.rindex(b")") + 2 :].split()[1])
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
+def process_folder(proc, pid):
+    try:
+        return os.path.realpath(os.readlink(os.path.join(proc, str(pid), "cwd")))
+    except OSError:
+        return ""
+
+
+def agy_processes(home, proc="/proc"):
+    """This user's processes holding agy files open, as {pid: (locked, opened)}:
+    the conversations whose presence lock and whose database each holds.
+    None when processes cannot be read here (no /proc)."""
+    try:
+        pids = [int(name) for name in os.listdir(proc) if name.isdigit()]
+    except OSError:
+        return None
+    root = os.path.realpath(home)
+    presence = os.path.join(root, "presence") + os.sep
+    databases = os.path.join(root, "conversations") + os.sep
+    uid = os.getuid()
+    found = {}
+    for pid in pids:
+        base = os.path.join(proc, str(pid))
+        try:
+            if os.stat(base).st_uid != uid:
+                continue
+            fds = os.listdir(os.path.join(base, "fd"))
+        except OSError:
+            continue
+        locked, opened = set(), set()
+        for fd in fds:
+            try:
+                target = os.readlink(os.path.join(base, "fd", fd))
+            except OSError:
+                continue
+            name = os.path.basename(target)
+            if target.startswith(presence) and name.endswith(".lock"):
+                if UUID.match(name[:-5]):
+                    locked.add(name[:-5])
+            elif target.startswith(databases) and name.endswith(".db"):
+                if UUID.match(name[:-3]):
+                    opened.add(name[:-3])
+        if locked or opened:
+            found[pid] = (locked, opened)
+    return found
+
+
+def agent_of(proc, pid, folder):
+    """The agent a process belongs to in `folder`: its furthest ancestor
+    (itself included) working there, or 0 when none does."""
+    agent = 0
+    seen = 0
+    while pid > 1 and seen < 32:
+        if process_folder(proc, pid) == folder:
+            agent = pid
+        pid = parent_pid(proc, pid)
+        seen += 1
+    return agent
+
+
+def last_conversation(home, folder):
+    """agy's record of the folder's last conversation, or None."""
+    try:
+        path = os.path.join(home, "cache", "last_conversations.json")
+        if os.path.getsize(path) > 32 * 1024 * 1024:
+            return None
+        with open(path, "rb") as handle:
+            record = json.loads(handle.read().decode("utf-8", "replace"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    for key, value in record.items():
+        if (
+            isinstance(key, str)
+            and isinstance(value, str)
+            and UUID.match(value)
+            and real_folder(key) == folder
+        ):
+            return value
+    return None
+
+
+def newest(conversations, home):
+    """The conversation whose transcript changed last."""
+
+    def changed(conversation):
+        path = antigravity_transcript(conversation, home)
+        try:
+            return os.stat(path).st_mtime if path else 0
+        except OSError:
+            return 0
+
+    return max(sorted(conversations), key=changed)
+
+
+def discover_agy(folder, pin, home=None, proc="/proc"):
+    """The conversation an agy agent in `folder` writes, as (id, how), how
+    being "locked", "open" or "cached"; None when nothing decides it. `pin` is
+    the one lapis follows now, if any: an open database confirms it, and only
+    a lock moves away from it."""
+    home = antigravity_home(home)
+    folder = real_folder(folder)
+    if not folder:
+        return None
+    processes = agy_processes(home, proc)
+    agents = {}
+    locked_by = {}
+    if processes:
+        for pid, (locked, opened) in processes.items():
+            agent = agent_of(proc, pid, folder)
+            for conversation in locked:
+                locked_by.setdefault(conversation, set()).add(agent)
+            if agent:
+                mine = agents.setdefault(agent, (set(), set()))
+                mine[0].update(locked)
+                mine[1].update(opened)
+
+    def elsewhere(conversation, agent):
+        return bool(locked_by.get(conversation, set()) - {agent})
+
+    if pin and any(pin in locked for locked, _ in agents.values()):
+        return pin, "locked"
+    if len(agents) > 1:
+        return None  # several agy agents work here: none says which is lapis's
+    if len(agents) == 1:
+        agent, (locked, opened) = next(iter(agents.items()))
+        if locked:
+            return newest(locked, home), "locked"
+        if pin:
+            return (pin, "open") if pin in opened else None
+        free = [one for one in opened if not elsewhere(one, agent)]
+        if len(opened) == 1 and free:
+            return free[0], "open"
+        if opened:
+            return None  # agy opens others' databases while it lists them
+    if pin:
+        return None
+    cached = last_conversation(home, folder)
+    if cached and not locked_by.get(cached):
+        return cached, "cached"
     return None
 
 
@@ -197,13 +384,42 @@ class Watcher:
             self.fd = -1
 
 
+class Moved(Exception):
+    """The agent's conversation is another one (C was sent)."""
+
+
 class Follower:
-    def __init__(self, args, out, use_inotify=True, home=None):
+    def __init__(self, args, out, use_inotify=True, home=None, proc="/proc"):
         self.args = args
         self.out = out
         self.use_inotify = use_inotify
-        self.home = home
+        self.home = home  # the CLI's home (tests); its usual one when None
+        self.proc = proc
         self.last_sent = time.monotonic()
+        self.discovered_at = None
+
+    def locate(self):
+        """The conversation's file now, or None."""
+        if self.args.cli == "agy":
+            if not self.args.conversation:
+                return None
+            return antigravity_transcript(self.args.conversation, self.home)
+        return find_transcript(self.args.conversation, self.args.folder, self.home)
+
+    def check_moved(self):
+        """With --discover, every few seconds: raises Moved after sending C
+        when the agent's conversation is no longer the one followed."""
+        if not getattr(self.args, "discover", False):
+            return
+        now = time.monotonic()
+        if self.discovered_at is not None and now - self.discovered_at < DISCOVER_EVERY:
+            return
+        self.discovered_at = now
+        pin = self.args.conversation
+        found = discover_agy(self.args.folder, pin, self.home, self.proc)
+        if found and found[0] != pin and (not pin or found[1] == "locked"):
+            self.send(json_frame(b"C", {"conversation": found[0]}))
+            raise Moved()
 
     def send(self, data):
         self.out.write(data)
@@ -218,7 +434,8 @@ class Follower:
         """Waits for the transcript to exist; returns its path."""
         told = False
         while True:
-            path = find_transcript(self.args.conversation, self.args.folder, self.home)
+            self.check_moved()
+            path = self.locate()
             if path:
                 return path
             if not told:
@@ -258,6 +475,12 @@ class Follower:
         return start
 
     def run(self, rounds=None):
+        try:
+            self.follow(rounds)
+        except Moved:
+            return
+
+    def follow(self, rounds):
         offset = self.args.offset
         known_inode = self.args.inode
         known_head = self.args.head
@@ -323,6 +546,7 @@ class Follower:
                     if tail_end is not None and offset >= tail_end:
                         tail_end = None
                     continue
+                self.check_moved()
                 self.alive()
                 watcher.wait(1.0)
             return None
@@ -335,13 +559,33 @@ def arguments(argv):
     commands = parser.add_subparsers(dest="command")
     follow = commands.add_parser("follow")
     follow.add_argument("--cli", required=True)
-    follow.add_argument("--conversation", required=True)
+    follow.add_argument("--conversation", default="")
     follow.add_argument("--folder", default="")
     follow.add_argument("--offset", type=int, default=0)
     follow.add_argument("--head", default="")
     follow.add_argument("--inode", type=int, default=0)
     follow.add_argument("--tail-bytes", type=int, default=0)
+    follow.add_argument("--discover", action="store_true")
+    # Prints which conversation --discover would follow, as one JSON line
+    # (for diagnosis and tests; `--proc` names another process table).
+    discover = commands.add_parser("discover")
+    discover.add_argument("--folder", required=True)
+    discover.add_argument("--conversation", default="")
+    discover.add_argument("--proc", default="/proc")
     return parser.parse_args(argv)
+
+
+def valid(args):
+    """Why the follow arguments cannot work, or None."""
+    if args.cli not in ("claude", "agy"):
+        return "only Claude Code and Antigravity are mirrored"
+    if args.offset < 0:
+        return "bad conversation"
+    if UUID.match(args.conversation):
+        return None
+    if args.cli == "agy" and args.discover and not args.conversation:
+        return None
+    return "bad conversation"
 
 
 def main(argv=None):
@@ -355,11 +599,18 @@ def main(argv=None):
         if sys.version_info < (3, 6):
             out.write(json_frame(b"E", {"reason": "python3 is older than 3.6"}))
             return 3
-        if args.command != "follow" or args.cli != "claude":
-            out.write(json_frame(b"E", {"reason": "only Claude Code is mirrored"}))
+        if args.command == "discover":
+            pin = args.conversation if UUID.match(args.conversation) else ""
+            found = discover_agy(args.folder, pin, proc=args.proc)
+            line = {"conversation": found[0], "how": found[1]} if found else {}
+            out.write(json.dumps(line).encode() + b"\n")
+            return 0
+        if args.command != "follow":
+            out.write(json_frame(b"E", {"reason": "bad arguments"}))
             return 2
-        if not UUID.match(args.conversation) or args.offset < 0:
-            out.write(json_frame(b"E", {"reason": "bad conversation"}))
+        why = valid(args)
+        if why:
+            out.write(json_frame(b"E", {"reason": why}))
             return 2
         Follower(args, out).run()
     except (BrokenPipeError, KeyboardInterrupt):

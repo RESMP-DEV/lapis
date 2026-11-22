@@ -188,9 +188,15 @@ qint64 service_pid(const QString& endpoint) {
     return number && platform::process_alive(pid) ? pid : 0;
 }
 
-// Cohesive positional parser flow; callers and tests pin it.
+namespace {
+struct Held {
+    QString id;
+    bool locked{}; // from a presence lock or rollout, not an open database
+};
+
+// Cohesive parser flow; callers and tests pin it.
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters,readability-function-cognitive-complexity)
-QString held_conversation(const QString& harness, const QString& endpoint, const QString& pin) {
+Held heldConversation(const QString& harness, const QString& endpoint, const QString& pin) {
     const bool agy = harness == QLatin1String("agy");
     if (!agy && harness != QLatin1String("codex"))
         return {};
@@ -218,7 +224,7 @@ QString held_conversation(const QString& harness, const QString& endpoint, const
                     add(held, id, [&id] { return antigravityStart(id); });
             } else if (agy && path.startsWith(databases) && name.endsWith(QLatin1String(".db"))) {
                 if (const auto id = name.chopped(3); uuid(id))
-                    add(opened, id, [&id] { return antigravityStart(id); });
+                    add(opened, id, [] { return qint64{}; }); // never ordered
             } else if (!agy && path.startsWith(sessions) &&
                        name.startsWith(QLatin1String("rollout-")) &&
                        name.endsWith(QLatin1String(".jsonl"))) {
@@ -227,17 +233,33 @@ QString held_conversation(const QString& harness, const QString& endpoint, const
             }
         }
     }
-    if (held.isEmpty())
-        held = std::move(opened);
-    if (held.isEmpty())
+    const auto has_pin = [&pin](const QList<Started>& list) {
+        return std::any_of(list.cbegin(), list.cend(),
+                           [&pin](const Started& known) { return known.id == pin; });
+    };
+    if (held.isEmpty()) {
+        // agy opens other conversations' databases while it lists and
+        // summarizes them (a resumed agy reconciles hundreds at start), and
+        // a resumed agy may hold no presence lock until its next turn. So an
+        // open database without a lock only confirms an existing pin; it
+        // never names a conversation for an unpinned agent.
+        if (has_pin(opened))
+            return {pin, false};
         return {};
-    if (held.size() > 1 && std::any_of(held.cbegin(), held.cend(),
-                                       [&pin](const Started& known) { return known.id == pin; }))
-        return pin;
-    return std::max_element(
-               held.cbegin(), held.cend(),
-               [](const Started& left, const Started& right) { return left.ms < right.ms; })
-        ->id;
+    }
+    if (held.size() > 1 && has_pin(held))
+        return {pin, true};
+    return {std::max_element(
+                held.cbegin(), held.cend(),
+                [](const Started& left, const Started& right) { return left.ms < right.ms; })
+                ->id,
+            true};
+}
+} // namespace
+
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+QString held_conversation(const QString& harness, const QString& endpoint, const QString& pin) {
+    return heldConversation(harness, endpoint, pin).id;
 }
 
 // Cohesive parser/test flow; branching stays local.
@@ -245,20 +267,45 @@ QString held_conversation(const QString& harness, const QString& endpoint, const
 QHash<QString, QString> pins(const QList<Agent>& agents) {
     QHash<QString, QString> changed;
     QHash<QString, QString> current;
+    QHash<QString, Held> held_by_agent;
+    QHash<QString, QString> locked_owners;
     const auto handled = [](const Agent& agent) {
         return !agent.recorded &&
                (agent.harness == QLatin1String("agy") || agent.harness == QLatin1String("codex"));
     };
-    for (const auto& agent : agents)
+    for (const auto& agent : agents) {
         current.insert(agent.id, agent.known);
-    // What each agent's own processes hold is its, whatever else is known.
+        if (!handled(agent))
+            continue;
+        const auto held = heldConversation(agent.harness, agent.endpoint, agent.known);
+        held_by_agent.insert(agent.id, held);
+        if (held.locked && !held.id.isEmpty())
+            locked_owners.insert(held.id, agent.id);
+    }
+    const auto owned_elsewhere = [&](const QString& self, const QString& conversation) {
+        if (locked_owners.contains(conversation) && locked_owners.value(conversation) != self)
+            return true;
+        return std::any_of(agents.cbegin(), agents.cend(), [&](const Agent& other) {
+            return other.id != self && current.value(other.id) == conversation;
+        });
+    };
+    // What each agent's own processes hold is its, whatever else is known,
+    // except an unlocked database handle cannot take another agent's conversation.
     for (const auto& agent : agents) {
         if (!handled(agent))
             continue;
-        if (const auto held = held_conversation(agent.harness, agent.endpoint, agent.known);
-            !held.isEmpty() && held != agent.known) {
-            changed.insert(agent.id, held);
-            current.insert(agent.id, held);
+        const auto held = held_by_agent.value(agent.id);
+        if (held.id.isEmpty()) {
+            if (!agent.known.isEmpty() && locked_owners.contains(agent.known) &&
+                locked_owners.value(agent.known) != agent.id) {
+                changed.insert(agent.id, QString{});
+                current.insert(agent.id, QString{});
+            }
+            continue;
+        }
+        if (held.id != agent.known && (held.locked || !owned_elsewhere(agent.id, held.id))) {
+            changed.insert(agent.id, held.id);
+            current.insert(agent.id, held.id);
         }
     }
     // Before that, the start time, where it singles out one agent.

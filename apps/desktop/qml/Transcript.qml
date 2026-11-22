@@ -170,6 +170,35 @@ FocusScope {
         function onRowsInserted() { root.pendingCommand = "" }
         function onModelReset() { root.pendingCommand = "" }
     }
+    // The rows the transcript last appended, and when: a reply recorded
+    // while the view follows the end is revealed as it lands (Entry.fresh).
+    // A reset (another conversation, its history read) reveals nothing; a
+    // click that folds or opens work stops following, so it reveals nothing
+    // either. Only the records, never the terminal's screen.
+    property int insertedFirst: -1
+    property int insertedLast: -1
+    property double insertedAt: 0
+    property double resetAt: 0
+    readonly property int revealDuration: 300
+    Connections {
+        target: root.model
+        function onRowsInserted(parent, first, last) {
+            root.insertedFirst = first
+            root.insertedLast = last
+            root.insertedAt = Date.now()
+        }
+        function onModelReset() {
+            root.insertedFirst = -1
+            root.insertedLast = -1
+            root.resetAt = Date.now()
+        }
+    }
+    function revealsRow(index, kind, inWork) {
+        const now = Date.now()
+        return kind === "reply" && !inWork && root.following && root.visible && !root.reducedMotion
+               && index >= root.insertedFirst && index <= root.insertedLast
+               && now - root.insertedAt < 250 && now - root.resetAt > root.revealDuration
+    }
     onWorkingChanged: if (working) {
         pendingCommand = ""
         sentAt = 0
@@ -1311,8 +1340,18 @@ FocusScope {
         // running turn behind it, never draws: Qt can leave a released row
         // where it was, over the rows that took its place.
         visible: index >= 0 && (kind !== "live" || root.liveShown)
+        // A reply the transcript just appended (root.revealsRow): its block
+        // reveals it once. Made or reused for a row, it asks again; pooled,
+        // it is no longer fresh.
+        property bool fresh: false
+        Component.onCompleted: fresh = root.revealsRow(index, kind, inWork)
+        ListView.onPooled: fresh = false
         // A reused command row starts closed, whatever the last item opened.
-        ListView.onReused: if (loader.item && loader.item.open !== undefined) loader.item.open = false
+        ListView.onReused: {
+            if (loader.item && loader.item.open !== undefined)
+                loader.item.open = false
+            fresh = root.revealsRow(index, kind, inWork)
+        }
         Loader {
             id: loader
             y: row.gapAbove
@@ -2150,8 +2189,37 @@ FocusScope {
         id: replyBlock
         Column {
             id: reply
+            objectName: "replyBlock"
             readonly property var entry: parent ? parent.entry : null
             spacing: Math.round(root.fontSize * 0.6)
+            // A reply just recorded streams in: its lines uncover top to
+            // bottom over root.revealDuration on the animation clock (frame
+            // paced), the thread following its growing end. Reduced motion,
+            // or any other row: shown whole at once.
+            readonly property bool fresh: entry !== null && entry.fresh === true
+            property real shown: 1
+            height: shown >= 1 ? implicitHeight : Math.ceil(implicitHeight * shown)
+            clip: shown < 1
+            function reveal() {
+                if (!fresh || root.reducedMotion)
+                    return
+                revealAnimation.stop()
+                shown = 0
+                revealAnimation.start()
+            }
+            onFreshChanged: if (fresh) reveal(); else if (revealAnimation.running) {
+                revealAnimation.stop()
+                shown = 1
+            }
+            Component.onCompleted: reveal()
+            NumberAnimation {
+                id: revealAnimation
+                target: reply
+                property: "shown"
+                to: 1
+                duration: root.revealDuration
+                easing.type: Easing.OutCubic
+            }
             HoverHandler { id: replyHover }
             Repeater {
                 model: reply.entry && root.model ? root.model.pieces(reply.entry.body) : []
@@ -2963,7 +3031,8 @@ FocusScope {
                         objectName: "runningTask"
                         width: parent.width
                         withKind: true
-                        entry: ({ kind: "tool", title: stripTask.modelData.type === "subagent" ? qsTr("Subagent") : qsTr("Background"),
+                        entry: ({ kind: "tool", title: stripTask.modelData.type === "subagent" ? qsTr("Subagent")
+                                                     : stripTask.modelData.type === "monitor" ? qsTr("Monitor") : qsTr("Background"),
                                   body: stripTask.modelData.description, task: stripTask.modelData, answered: true,
                                   failed: false, added: 0, removed: 0, duration: 0, result: "", detail: "" })
                         opened: stripTask.opened
@@ -3043,8 +3112,11 @@ FocusScope {
     // The running turn's header, while the agent works: its state line
     // ("Working · 2m 10s · 14 steps") over its steps, which are thread rows
     // like a finished turn's, added as the CLI records them, the newest at
-    // the bottom. Clicking it folds or shows those rows. It is the
-    // transcript's own record, never the terminal's screen.
+    // the bottom. It starts folded with its chevron; clicking it shows or
+    // folds those rows. Folded, the newest thought sits under it as one dim,
+    // indented line (two at most) of its first sentence; the whole thought
+    // shows only with the rows opened. It is the transcript's own record,
+    // never the terminal's screen.
     Component {
         id: liveBlock
         Item {
@@ -3052,7 +3124,7 @@ FocusScope {
             objectName: "liveHeader"
             readonly property var entry: parent ? parent.entry : null
             readonly property bool expanded: entry !== null && entry.expanded
-            height: liveLine.height
+            height: liveLine.height + (liveThought.visible ? liveThought.height + 2 : 0)
             MouseArea {
                 id: liveHover
                 anchors.fill: parent
@@ -3073,16 +3145,43 @@ FocusScope {
                     color: liveHover.containsMouse ? root.textColor : root.mutedTextColor
                 }
             }
+            Text {
+                id: liveThought
+                objectName: "liveThought"
+                visible: !live.expanded && !root.compacting && text.length > 0
+                x: Math.round(root.stepSize * 0.85)
+                y: liveLine.height + 2
+                width: Math.max(0, live.width - x)
+                text: root.thoughtLine(root.liveThoughtBody)
+                textFormat: Text.PlainText
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                color: root.tint(root.mutedTextColor, 0.85)
+                font.family: root.sansFamily
+                font.pixelSize: root.stepSize - 1
+            }
         }
     }
     // The running turn's newest step is done (or is not a tool call).
     property bool liveLastAnswered: false
-    // ...and is a thought with words, already flowing in the box.
+    // ...and is a thought with words.
     property bool liveLastThought: false
+    // The running turn's newest thought with words, or "": what its folded
+    // live header shows under it.
+    property string liveThoughtBody: ""
     function checkLiveLast() {
-        const last = liveSteps && liveSteps.count > 0 ? liveSteps.entry(liveSteps.count - 1) : null
+        const count = liveSteps ? liveSteps.count : 0
+        const last = count > 0 ? liveSteps.entry(count - 1) : null
         liveLastAnswered = last !== null && (last.kind !== "tool" || last.answered)
         liveLastThought = last !== null && last.kind === "thinking" && last.body.length > 0
+        let thought = ""
+        for (let i = count - 1; i >= 0 && thought.length === 0; --i) {
+            const step = i === count - 1 ? last : liveSteps.entry(i)
+            if (step.kind === "thinking")
+                thought = step.body
+        }
+        liveThoughtBody = thought
     }
     Connections {
         target: root.liveSteps

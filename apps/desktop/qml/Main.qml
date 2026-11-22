@@ -3296,12 +3296,27 @@ ApplicationWindow {
                                                 verticalAlignment: Text.AlignVCenter
                                             }
                                             StatusMark {
+                                                id: rowMark
                                                 objectName: "sidebarStatus_" + agentRow.agentId
                                                 kind: agentRow.agent ? agentRow.agent.statusKind : "unknown"
                                                 size: window.statusMarkSize
                                                 visible: shape !== "dot" && shape !== "ring" && shape !== "box"
                                                 Layout.preferredWidth: size
                                                 Layout.preferredHeight: size
+                                                Layout.alignment: Qt.AlignVCenter
+                                            }
+                                            // A confirmed finished turn not yet looked at (never
+                                            // quiet output); a rare mark above takes its place.
+                                            Rectangle {
+                                                objectName: "sidebarDot_" + agentRow.agentId
+                                                visible: !rowMark.visible && agentRow.agent !== null &&
+                                                         agentRow.agent.dotVisible
+                                                width: 7
+                                                height: 7
+                                                radius: width / 2
+                                                color: window.chrome.accent
+                                                Layout.preferredWidth: width
+                                                Layout.preferredHeight: height
                                                 Layout.alignment: Qt.AlignVCenter
                                             }
                                         }

@@ -247,6 +247,97 @@ void history_capability_tracks_current_page() {
     require(!f.document.historyScrubbable(), "A single page retained stale scrubbing capability");
 }
 
+// A service placing ten pages of two rows (IDs 100 to 109, oldest first).
+// Pages around the view arrive ahead of need without holding it, a scroll
+// onto them needs no request, and after returning to live they rejoin the
+// next browse even though eviction moved every row meanwhile.
+void placed_history_is_fetched_ahead_and_kept() {
+    Fixture f;
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    constexpr std::uint64_t pages = 10;
+    std::uint64_t evicted{}; // oldest pages the archive has dropped
+    const auto page = [&](std::uint64_t index) {
+        lapis::session::Terminal terminal({4, 2});
+        const auto name = "p" + std::to_string(index);
+        terminal.feed(name + "a\r\n" + name + "b");
+        auto snapshot = terminal.snapshot();
+        snapshot.history = {.total_rows = (pages - evicted) * 2,
+                            .viewport_offset = (index - evicted) * 2,
+                            .viewport_rows = 2};
+        return snapshot;
+    };
+    // Answers every history request the agent has sent; their references.
+    const auto serve = [&] {
+        std::vector<wire::HistoryRequest> served;
+        settle();
+        peer.bytes += peer.socket->readAll();
+        wire::Frame frame;
+        while (wire::take_frame(peer.bytes, frame)) {
+            if (frame.kind != wire::Kind::history_request)
+                continue;
+            const auto request =
+                wire::decode_history_request(wire::decode_control(frame.payload).payload);
+            const auto index = request.direction == wire::HistoryDirection::older
+                                   ? pages - 1
+                                   : std::min(pages - 1, request.reference / 2 + evicted);
+            f.historyReply(peer, request.request_id, 100 + index, page(index));
+            served.push_back(request);
+        }
+        return served;
+    };
+    // A screen (two rows) back.
+    f.document.scrollHistory(2);
+    require(serve().size() == 1, "Browsing did not ask for the newest page");
+    until([&] { return f.document.historyActive() && !f.document.historyRequestPending(); });
+    require(first_row(f.document.snapshot()) == "p9a", "The newest page was not shown");
+    // Four screens above the view come ahead, nearest first, one at a time,
+    // none of them reading as pending history.
+    std::vector<std::uint64_t> ahead;
+    for (int round = 0; round < 8; ++round) {
+        require(!f.document.historyRequestPending(), "A prefetch read as pending history");
+        const auto served = serve();
+        if (served.empty())
+            break;
+        require(served.size() == 1 && served.front().direction == wire::HistoryDirection::at,
+                "Pages ahead were not asked for one at a time by row");
+        ahead.push_back(served.front().reference);
+    }
+    require(ahead == std::vector<std::uint64_t>({17, 15, 13, 11}),
+            "Pages ahead were not the four screens above the view");
+    // Four screens back is already here: shown without a request.
+    f.document.scrollHistory(8);
+    require(!f.document.historyRequestPending() && first_row(f.document.snapshot()) == "p5a",
+            "A prefetched screen waited for the service");
+    while (!serve().empty()) {
+    }
+    f.document.scrollHistory(8);
+    require(first_row(f.document.snapshot()) == "p1a", "The prefetch did not follow the view");
+    while (!serve().empty()) {
+    }
+    f.document.returnToLive();
+    require(!f.document.historyActive(), "Did not return to live");
+    // The archive drops its two oldest pages: every row moves up by four.
+    evicted = 2;
+    f.document.scrollHistory(2);
+    require(serve().size() == 1, "Browsing again did not ask for the newest page");
+    until([&] { return f.document.historyActive() && !f.document.historyRequestPending(); });
+    // The newest page's ID places the kept pages: page 3 is now rows 2-3.
+    f.document.scrollHistory(14 - 2);
+    require(!f.document.historyRequestPending() && first_row(f.document.snapshot()) == "p3a",
+            "Pages kept across live were not placed by the eviction shift");
+    f.document.scrollHistory(2);
+    require(first_row(f.document.snapshot()) == "p2a",
+            "The oldest surviving page was not kept or was misplaced");
+    while (!serve().empty()) {
+    }
+    require(f.document.connectionState() == QStringLiteral("ready"),
+            "Prefetching disturbed the connection");
+}
+
 void unqueued_history_is_rejected_immediately() {
     Fixture f;
     lapis::desktop::LiveConnection connection(f.document, f.endpoint, f.launch,
@@ -865,6 +956,7 @@ int main(int argc, char** argv) {
         stale_reconnect_and_history_errors();
         overloaded_status_keeps_the_attachment();
         history_capability_tracks_current_page();
+        placed_history_is_fetched_ahead_and_kept();
         unqueued_history_is_rejected_immediately();
         missing_and_replaced();
         stale_descriptor_writer_cannot_resurrect_a_replacement();

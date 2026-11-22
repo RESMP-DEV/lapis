@@ -5,6 +5,8 @@
 #include <QAbstractListModel>
 #include <QByteArray>
 #include <QHash>
+#include <QJsonObject>
+#include <QMultiHash>
 #include <QSet>
 #include <QString>
 #include <QStringList>
@@ -19,7 +21,6 @@
 #include <optional>
 #include <vector>
 
-class QJsonObject;
 class QQuickTextDocument;
 class QTextDocument;
 class QThreadPool;
@@ -157,7 +158,7 @@ struct Task {
 // A task with no end recorded counts as running until its last sign of life
 // (`alive_ms`: its start, a check or event, or its own file's last write) is
 // this old, so one whose end was never written (the CLI quit) does not run
-// forever. A monitor also stops at its own expiry.
+// forever. A monitor or timer with its own expiry runs until then instead.
 inline constexpr qint64 task_silence_ms = qint64{60} * 60 * 1000;
 [[nodiscard]] bool task_running(const Task& task, qint64 alive_ms, qint64 now_ms);
 
@@ -234,11 +235,15 @@ struct Layout {
     std::vector<Turn> turns;
     std::vector<Row> rows;
 };
-// How many finished turns with steps, counted from the end, open with their steps shown
-// when a conversation is first laid out (the running turn always does, as do
-// turns that start after). Older turns start as their "Worked for" header
-// alone. std::numeric_limits<int>::max() opens every turn.
-inline constexpr int expanded_finished_turns = 1;
+// An `expand_from` no lead reaches: every part, the running one and those of
+// turns still to come included, starts folded to its header. A sentinel, not
+// an item index: it is never shifted when older history loads above.
+inline constexpr int expand_none = std::numeric_limits<int>::max();
+// How many finished turns with steps, counted from the end, open with their
+// steps shown when a conversation is first laid out (the running turn and
+// turns that start after open too). 0: none do; every "Worked for" and live
+// header starts folded with its chevron, and expand_from gives expand_none.
+inline constexpr int expanded_finished_turns = 0;
 // A part's work is shown when its lead is at or after `expand_from` (the
 // default above), flipped for the leads in `toggled` (the person's clicks).
 // The defaults leave every part folded. `live`: the agent is working, so the
@@ -249,11 +254,12 @@ inline constexpr int expanded_finished_turns = 1;
 // is held (Turn::held; `request_waiting`: a request waits in the terminal,
 // which holds the last turn). Prompts the person queued in it still show.
 [[nodiscard]] Layout lay_out(const std::vector<Item>& items, const QSet<int>& toggled,
-                             bool live = false, int expand_from = std::numeric_limits<int>::max(),
+                             bool live = false, int expand_from = expand_none,
                              const QSet<int>& peers_open = {}, bool request_waiting = false);
 // The first item whose parts open by default (expanded_finished_turns): the
-// start of the oldest such finished turn, or 0 when there are fewer. Peer
-// turns do not count: the person's own last turn opens.
+// start of the oldest such finished turn, or 0 when there are fewer; with
+// none to open, expand_none. Peer turns do not count: the person's own last
+// turn opens.
 [[nodiscard]] int expand_from(const Layout& layout);
 // The row the view keeps in sight when it follows the thread's end: the last
 // row of the last turn the person started when every row after it is a
@@ -675,6 +681,11 @@ class CodexReader final : public Reader {
     QString turn_;                     // the running turn's id, or empty between turns
     bool turn_prompted_{};             // the running turn has its prompt
     QHash<QString, QString> commands_; // a code-mode call's id -> the command it runs, if one
+    QHash<QString, qint64> called_at_; // a tool call's id -> when it was made, until its output
+    // A process ("process N") whose end Codex wrote with no task open for
+    // it -> when. A cell running several commands writes their ends before
+    // its output, which still calls them running; this turn's only.
+    QHash<QString, qint64> finished_;
 };
 
 // Folds an Antigravity CLI transcript (brain/<conversation>/.system_generated
@@ -686,9 +697,13 @@ class CodexReader final : public Reader {
 // The model and effort come from the settings change agy notes in a prompt.
 // invoke_subagent starts a task per subagent it created (its conversation
 // id); a message from that conversation, manage_subagents listing it idle or
-// killing it ends one. A run_command agy left running ("background task with
-// task id") starts a background task; manage_task checks attach to it and
-// the "Task id ... finished" system message ends it.
+// killing it ends one. Any tool agy left running ("background task with
+// task id", bare in agy 1.5.12, in backticks before) starts a task: a
+// schedule a monitor (a timer due after DurationSeconds, or a cron that runs
+// on, each firing an event); anything else a background task. manage_task
+// checks attach to it, its kill ("cancelled") stops it, the "Task id ...
+// finished" or "was canceled" message ends it, and a timer set on its end
+// (TimerCondition) ends with it. A one-shot timer ends when it fires.
 class AntigravityReader final : public Reader {
   public:
     int add(const QByteArray& line) override;
@@ -709,6 +724,9 @@ class AntigravityReader final : public Reader {
     // A system message about a task or from a subagent; returns the step
     // that started it, or -1.
     int system_note(const QString& content);
+    // Ends a task and the timers agy set to fire on its end; returns the
+    // first step changed.
+    int finish(Task& task, const QString& status);
     qint64 at_ms_{};
     QString record_;
     // Tool items awaiting their result, in call order, with the tool's name.
@@ -718,6 +736,11 @@ class AntigravityReader final : public Reader {
     // lists the conversations it created; a manage_task step -> the task it
     // checks.
     QHash<int, std::vector<int>> spawned_;
+    // A schedule step -> its arguments, until its result names the task.
+    QHash<int, QJsonObject> scheduled_;
+    QSet<int> recurring_; // schedule tasks set by a cron: each firing is an event
+    // A task's id -> the timers that fire when it ends (TimerCondition).
+    QMultiHash<QString, int> waits_on_;
     bool turn_open_{};
     qint64 turn_since_ms_{};
     // When the running turn's last tool step was written, or 0: a person's
@@ -1241,7 +1264,8 @@ class TranscriptModel final : public QAbstractListModel {
     QSet<int> expanded_;
     // Where parts start open by default (transcript::expand_from), fixed when
     // the conversation is first laid out so later turns never fold earlier
-    // ones; -1 until then.
+    // ones; -1 until then. transcript::expand_none (every part folded) stays
+    // so when older history loads; an item index moves with its item.
     mutable int expand_from_{-1};
     // Items whose step rows are opened (toggleStep), and the messages of
     // peer turns opened to their whole exchange (togglePeer).

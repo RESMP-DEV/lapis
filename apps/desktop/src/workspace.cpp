@@ -873,6 +873,9 @@ Workspace::Workspace(WorkspaceMode mode, WorkspaceOptions options)
         conversation_pins_.setInterval(5000);
         connect(&conversation_pins_, &QTimer::timeout, this, &Workspace::pinConversations);
         conversation_pins_.start();
+        agy_turn_timer_.setInterval(2000);
+        connect(&agy_turn_timer_, &QTimer::timeout, this, &Workspace::checkAgyTurns);
+        agy_turn_timer_.start();
         setupRemoteThreads();
         return;
     }
@@ -1310,6 +1313,7 @@ void Workspace::noteStructuralFocus() {
 void Workspace::watch(Agent* item) {
     // Its unseen mark and whether it is at work outlive a window (GuiState).
     connect(item, &Agent::unseenChanged, this, &Workspace::marksChanged);
+    connect(item, &Agent::dotVisibleChanged, this, &Workspace::marksChanged);
     connect(item, &Agent::statusChanged, this, &Workspace::marksChanged);
     connect(item, &Agent::connectionChanged, this, [this, item] { finishClosing(item); });
     // The service reports why a session ended just after the state changes.
@@ -2474,6 +2478,14 @@ bool conversationSaved(const session::ResumeRecord& record) {
 bool pinnedHarness(const QString& harness) {
     return harness == QLatin1String("agy") || harness == QLatin1String("codex");
 }
+// The CLIs whose thread on another machine is mirrored (remote_threads.hpp).
+bool remoteThreadHarness(const QString& harness) {
+    return harness == QLatin1String("claude") || harness == QLatin1String("agy");
+}
+bool uuidText(const QString& text) {
+    return !text.isEmpty() && QUuid::fromString(text).toString(QUuid::WithoutBraces) == text &&
+           text == text.toLower();
+}
 } // namespace
 conversation_owner::Agent Workspace::conversationOwner(const QString& id) const {
     const auto& entry = *agents_.constFind(id);
@@ -2514,7 +2526,7 @@ bool Workspace::visualSupported(const QString& id) const {
     if (entry == agents_.cend())
         return false;
     if (!agentMachine(*entry).isEmpty())
-        return entry->harness == QLatin1String("claude") && remote_threads_ != nullptr &&
+        return remoteThreadHarness(entry->harness) && remote_threads_ != nullptr &&
                remote_threads_->supported(id);
     return entry->harness == QLatin1String("claude") || pinnedHarness(entry->harness);
 }
@@ -2547,20 +2559,31 @@ bool Workspace::remoteAgent(const QString& id) const {
 }
 std::optional<RemoteThreads::Target> Workspace::remoteTarget(const QString& id) const {
     const auto entry = agents_.constFind(id);
-    if (entry == agents_.cend() || entry->harness != QLatin1String("claude"))
+    if (entry == agents_.cend() || !remoteThreadHarness(entry->harness))
         return std::nullopt;
     const auto remote = remoteCommand(entry->launch);
     if (!remote)
         return std::nullopt;
-    return RemoteThreads::Target{remote->first, remoteCommandFolder(remote->second),
-                                 agentConversation(id), entry->launch.program};
+    auto conversation = agentConversation(id);
+    if (entry->harness == QLatin1String("agy") && !uuidText(conversation)) {
+        // agy names its conversation only when lapis resumed one
+        // (`--conversation <id>`); otherwise the helper finds it there.
+        conversation.clear();
+        const auto words = launchWords(entry->launch);
+        if (const auto at = words.indexOf(QStringLiteral("--conversation"));
+            at >= 0 && at + 1 < words.size() && uuidText(words.at(at + 1)))
+            conversation = words.at(at + 1);
+    }
+    return RemoteThreads::Target{remote->first, remoteCommandFolder(remote->second), conversation,
+                                 entry->launch.program, entry->harness};
 }
 QString Workspace::visualUnavailable(const QString& id) const {
     const auto entry = agents_.constFind(id);
     if (entry == agents_.cend() || agentMachine(*entry).isEmpty())
         return {};
-    if (entry->harness != QLatin1String("claude"))
-        return QStringLiteral("On another machine only Claude Code shows as a thread");
+    if (!remoteThreadHarness(entry->harness))
+        return QStringLiteral("On another machine only Claude Code and Antigravity show as a "
+                              "thread");
     if (remote_threads_ == nullptr)
         return QStringLiteral("This window keeps no remote threads");
     return remote_threads_->unavailable(id);
@@ -2612,7 +2635,7 @@ QString Workspace::conversationFile(const QString& id) {
     if (fixture_mode_)
         return fixture_files_.value(id);
     if (remoteAgent(id))
-        return remote_threads_ != nullptr && agents_.value(id).harness == QLatin1String("claude")
+        return remote_threads_ != nullptr && remoteThreadHarness(agents_.value(id).harness)
                    ? remote_threads_->file(id)
                    : QString();
     if (!visualSupported(id))
@@ -2629,7 +2652,7 @@ QString Workspace::conversationFile(const QString& id) {
             if (const auto held =
                     conversation_owner::held_conversation(harness, owner.endpoint, owner.known);
                 !held.isEmpty() && held != owner.known)
-                applyPins({{id, held}});
+                pinConversations();
     }
     return knownConversationFile(id);
 }
@@ -3938,6 +3961,8 @@ void Agent::restoreUnseen(bool unseen, qint64 neededAtMs) {
     if (unseen_ == unseen)
         return;
     unseen_ = unseen;
+    if (!unseen)
+        setDotVisible(false);
     emit unseenChanged();
 }
 void Agent::setUnseen(bool unseen) {
@@ -3946,7 +3971,16 @@ void Agent::setUnseen(bool unseen) {
     unseen_ = unseen;
     if (unseen)
         needed_at_ms_ = QDateTime::currentMSecsSinceEpoch();
+    else
+        setDotVisible(false);
     emit unseenChanged();
+}
+void Agent::setDotVisible(bool visible) {
+    visible = visible && unseen_;
+    if (dot_visible_ == visible)
+        return;
+    dot_visible_ = visible;
+    emit dotVisibleChanged();
 }
 
 void Agent::noteOutput() {
@@ -3985,8 +4019,11 @@ void Agent::noteOutput() {
 //   already marked.
 // - Restarts keep marks (restoreMarks); a turn that ended while no window ran
 //   is marked once (watchFinishWhileAway).
-// - Tab, the chime and agent_state.json read this mark; the window does not
-//   draw it. The status mark shows only what the agent is doing.
+// - Tab, the chime and agent_state.json read this mark. The window draws only
+//   the sidebar dot (dotVisible): a confirmed finished turn (Need::finished,
+//   or Need::away an observer reported), never quiet output. It clears with
+//   the mark or when a new turn starts. The status mark shows only what the
+//   agent is doing.
 namespace {
 bool transient_kind(const QString& kind) {
     return kind == QLatin1String("connecting") || kind == QLatin1String("unknown") ||
@@ -4008,22 +4045,31 @@ void Workspace::logMark(const Agent* item, const char* event, const QString& why
                {QStringLiteral("status"), item->statusKind()},
                {QStringLiteral("why"), why}});
 }
-QString Workspace::markNeedsYou(Agent* item, Need need) {
+QString Workspace::markNeedsYou(Agent* item, Need need, bool confirmed) {
     const auto why = need == Need::finished  ? QStringLiteral("finished")
                      : need == Need::quiet   ? QStringLiteral("quiet")
                      : need == Need::request ? QStringLiteral("request")
                                              : QStringLiteral("away");
+    // Quiet output and requests never light the dot; requests have their mark.
+    const bool dot = need == Need::finished || (need == Need::away && confirmed);
     if (looking(item)) {
         logMark(item, "seen", QStringLiteral("looking: ") + why);
         return QStringLiteral("looking");
     }
-    if (item->unseen())
+    if (item->unseen()) {
+        // Already unseen (quiet output marked it first): a confirmed end of
+        // the same turn still lights the dot.
+        if (dot)
+            item->setDotVisible(true);
         return QStringLiteral("waiting");
+    }
     if (need != Need::request && unchanged_ && unchanged_(item)) {
         logMark(item, "seen", QStringLiteral("unchanged: ") + why);
         return QStringLiteral("unchanged");
     }
     item->setUnseen(true);
+    if (dot)
+        item->setDotVisible(true);
     logMark(item, "unseen", why);
     return QStringLiteral("marked");
 }
@@ -4042,6 +4088,9 @@ void Workspace::noteStatus(Agent* item) {
     last_kind_.insert(item, now);
     if (previous == now)
         return;
+    // A new turn: the last one's dot has served its purpose.
+    if (now == QLatin1String("working"))
+        item->setDotVisible(false);
     // A turn waiting on a request is still the turn.
     const bool in_turn =
         previous == QLatin1String("working") || previous == QLatin1String("waiting");
@@ -4142,6 +4191,8 @@ QJsonObject Workspace::saveMarks() const {
         QJsonObject mark{{QStringLiteral("neededAtMs"), item->neededAtMs()}};
         if (item->unseen())
             mark.insert(QStringLiteral("unseen"), true);
+        if (item->dotVisible())
+            mark.insert(QStringLiteral("dot"), true);
         if (working)
             mark.insert(QStringLiteral("working"), true);
         if (const auto conversation = agentConversation(item->agentId()); !conversation.isEmpty())
@@ -4179,6 +4230,9 @@ void Workspace::restoreMarks(const QJsonObject& marks) {
                                                               : item->neededAtMs());
         if (unseen)
             logMark(item, "unseen", QStringLiteral("restored"));
+        // Only a confirmed turn's dot comes back; a quiet mark stays undrawn.
+        if (mark.value(QStringLiteral("dot")).toBool())
+            item->setDotVisible(true);
         if (mark.value(QStringLiteral("working")).toBool())
             watchFinishWhileAway(item, recent);
     }
@@ -4199,7 +4253,7 @@ void Workspace::watchFinishWhileAway(Agent* item, bool recent) {
             (kind == QLatin1String("idle") && item->statusSource() != Agent::StatusSource::output);
         if (kind != QLatin1String("finished") && kind != QLatin1String("idle"))
             return;
-        markNeedsYou(item, Need::away);
+        markNeedsYou(item, Need::away, observed);
         if (observed && recent)
             emit finishedWhileAway(item);
     };
@@ -4207,6 +4261,109 @@ void Workspace::watchFinishWhileAway(Agent* item, bool recent) {
     // The status may already have arrived.
     if (settledKind(item->statusKind()))
         check();
+}
+
+// agy's turns from its transcript ---------------------------------------------
+
+void Workspace::checkAgyTurns() {
+    QSet<QString> present;
+    for (const auto& item : items_) {
+        const auto& id = item->agentId();
+        const auto entry = agents_.constFind(id);
+        if (entry == agents_.cend() || entry->harness != QLatin1String("agy"))
+            continue;
+        present.insert(id);
+        checkAgyTurn(item.get(), agy_turns_[id]);
+    }
+    for (auto state = agy_turns_.begin(); state != agy_turns_.end();)
+        state = present.contains(state.key()) ? std::next(state) : agy_turns_.erase(state);
+}
+
+// Cohesive parser flow; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+void Workspace::checkAgyTurn(Agent* item, AgyTurns& state) {
+    const auto& id = item->agentId();
+    // The path is looked up again every 30 s (or each tick while unknown):
+    // the conversation may change after /new or a resume.
+    if (state.path.isEmpty() || --state.resolve_in <= 0) {
+        state.resolve_in = 15;
+        auto full =
+            fixture_mode_ ? fixture_files_.value(id)
+            : remoteAgent(id)
+                ? (remote_threads_ != nullptr ? remote_threads_->mirroredFile(id) : QString())
+                : knownConversationFile(id);
+        if (!full.isEmpty()) {
+            // The compact transcript beside transcript_full.jsonl is smaller.
+            const auto compact = QFileInfo(full).dir().filePath(QStringLiteral("transcript.jsonl"));
+            if (QFileInfo(full).fileName() == QLatin1String("transcript_full.jsonl") &&
+                QFileInfo(compact).isFile())
+                full = compact;
+        }
+        if (full != state.path)
+            state =
+                AgyTurns{.path = full, .size = -1, .step = -1, .resolve_in = 15, .primed = false};
+    }
+    if (state.path.isEmpty())
+        return;
+    const QFileInfo info(state.path);
+    const auto size = info.size();
+    if (size == state.size || size <= 0)
+        return;
+    // A file that shrank was rewritten: its steps are read afresh.
+    const bool first_sight = !state.primed || size < state.size;
+    if (size < state.size)
+        state.step = -1;
+    state.primed = true;
+    state.size = size;
+    QFile file(state.path);
+    if (!file.open(QIODevice::ReadOnly))
+        return;
+    constexpr qint64 tail_bytes = qint64{64} * 1024;
+    const auto offset = std::max<qint64>(0, size - tail_bytes);
+    if (!file.seek(offset))
+        return;
+    auto lines = file.read(size - offset).split('\n');
+    // The last piece is unfinished (or empty after the final newline); the
+    // first is cut when the tail starts mid-file.
+    lines.removeLast();
+    if (offset > 0 && !lines.isEmpty())
+        lines.removeFirst();
+    const auto seen = state.step;
+    bool new_input = false;
+    QJsonObject last;
+    for (const auto& line : lines) {
+        if (line.trimmed().isEmpty())
+            continue;
+        const auto record = QJsonDocument::fromJson(line).object();
+        if (record.isEmpty())
+            continue;
+        last = record;
+        const auto index = record.value(QLatin1String("step_index"));
+        if (!index.isDouble())
+            continue;
+        const auto step = static_cast<qint64>(index.toDouble());
+        if (step <= seen)
+            continue;
+        state.step = std::max(state.step, step);
+        if (record.value(QLatin1String("type")).toString() == QLatin1String("USER_INPUT"))
+            new_input = true;
+    }
+    // History already written when first seen marks nothing.
+    if (first_sight)
+        return;
+    if (new_input)
+        item->setDotVisible(false);
+    const auto step = last.value(QLatin1String("step_index"));
+    const bool final_reply =
+        last.value(QLatin1String("type")).toString() == QLatin1String("PLANNER_RESPONSE") &&
+        last.value(QLatin1String("status")).toString() == QLatin1String("DONE") &&
+        last.value(QLatin1String("tool_calls")).toArray().isEmpty() &&
+        !last.value(QLatin1String("content")).toString().trimmed().isEmpty() && step.isDouble() &&
+        static_cast<qint64>(step.toDouble()) > seen;
+    if (!final_reply)
+        return;
+    emit needsYou(item, markNeedsYou(item, Need::finished));
+    emit turnFinished(item);
 }
 
 QJsonArray Workspace::saveClosed() const {

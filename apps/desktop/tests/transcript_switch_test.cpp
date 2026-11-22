@@ -301,6 +301,13 @@ void cold_conversation_shows_its_end() {
     require(model.rowCount() == static_cast<int>(whole_rows) &&
                 model.items().size() == all.reader->items().size(),
             "all of it is read");
+    // Every part starts folded (expand_none), and stays so once the older
+    // history lands above the tail: the sentinel is never shifted.
+    require(open_from == lapis::desktop::transcript::expand_none, "no turn opens by default");
+    bool any_open = false;
+    for (int row = 0; row < model.rowCount(); ++row)
+        any_open = any_open || model.data(model.index(row), TranscriptModel::ExpandedRole).toBool();
+    require(!any_open, "loading the history above opens no turn's work");
 }
 
 // Conversations read stay kept until the budget (count or memory) is

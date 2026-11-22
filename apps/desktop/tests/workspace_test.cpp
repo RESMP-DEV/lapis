@@ -1151,6 +1151,135 @@ void attentionMarksSurviveARestart() {
     require(!probe.unseen("service"), "the window in front sees the stage agent's restored mark");
 }
 
+// The sidebar's solid dot: only a confirmed finished turn lights it (an
+// observer's word or agy's transcript), never quiet output; looking or a new
+// turn clears it, and a restart keeps confirmed dots only.
+// Cohesive scenario; branching stays local.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+void sidebarDotFollowsConfirmedTurns() {
+    using lapis::session::attention::Activity;
+    const auto dot = [](Workspace& workspace, const char* id) {
+        return workspace.agent(QString::fromLatin1(id))->dotVisible();
+    };
+    QJsonObject marks;
+    {
+        Workspace workspace(WorkspaceMode::fixture);
+        MarkProbe probe(workspace);
+        require(workspace.selectAgent(QStringLiteral("renderer")), "dot: renderer on the stage");
+
+        // A finished turn off the stage lights the dot; looking clears it.
+        probe.finish("agent");
+        require(probe.unseen("agent") && dot(workspace, "agent"), "dot: a finished turn lights it");
+        require(workspace.selectAgent(QStringLiteral("agent")) && !dot(workspace, "agent") &&
+                    !probe.unseen("agent"),
+                "dot: showing the agent clears it");
+        // noteLooking: the window comes to the front with the agent on stage.
+        probe.window = false;
+        probe.finish("agent");
+        require(dot(workspace, "agent"), "dot: the stage agent lights while nobody looks");
+        probe.window = true;
+        workspace.noteLooking(QStringLiteral("window"));
+        require(!dot(workspace, "agent") && !probe.unseen("agent"), "dot: noteLooking clears it");
+        // A turn the person watched end lights nothing.
+        probe.finish("agent");
+        require(!dot(workspace, "agent"), "dot: a turn seen as it ends lights nothing");
+
+        // Quiet output marks unseen but never lights the dot.
+        auto* notes = workspace.agent(QStringLiteral("notes"));
+        notes->setStatusSource(lapis::desktop::Agent::StatusSource::output);
+        probe.state("notes", Activity::working);
+        probe.state("notes", Activity::idle);
+        require(probe.unseen("notes") && !notes->dotVisible(),
+                "dot: quiet output does not light it");
+        // The observer then confirms the same turn: the dot lights.
+        probe.state("notes", Activity::working);
+        probe.state("notes", Activity::turn_completed);
+        require(probe.unseen("notes") && notes->dotVisible(),
+                "dot: a confirmed end lights an agent quiet output already marked");
+        // A new turn starting clears the dot (the unseen mark stays for Tab).
+        probe.state("notes", Activity::working);
+        require(!notes->dotVisible(), "dot: a new turn clears it");
+        probe.state("notes", Activity::idle); // quiet again
+
+        // agy: a final reply in its transcript is a confirmed finished turn.
+        QTemporaryDir directory;
+        require(directory.isValid(), "dot: agy directory");
+        const auto logs = directory.filePath(QStringLiteral("logs"));
+        QDir().mkpath(logs);
+        const auto full = QDir(logs).filePath(QStringLiteral("transcript_full.jsonl"));
+        const auto compact = QDir(logs).filePath(QStringLiteral("transcript.jsonl"));
+        const auto append = [](const QString& path, const QByteArray& bytes) {
+            QFile file(path);
+            require(file.open(QIODevice::Append), "dot: transcript written");
+            file.write(bytes);
+        };
+        append(full, "{}\n"); // the compact file beside it is the one read
+        append(compact,
+               R"({"step_index":0,"type":"USER_INPUT","content":"<USER_REQUEST>go</USER_REQUEST>"})"
+               "\n"
+               R"({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","content":"Old."})"
+               "\n");
+        const auto category = workspace.activeCategoryId();
+        require(workspace.addFixtureAgent(QStringLiteral("agy"), QStringLiteral("agy"), category,
+                                          QStringLiteral("agy"), {}) &&
+                    workspace.setFixtureConversation(QStringLiteral("agy"), full),
+                "dot: agy fixture agent");
+        workspace.checkAgyTurnsForTesting();
+        require(!probe.unseen("agy") && !dot(workspace, "agy"),
+                "dot: agy history already there lights nothing");
+        append(
+            compact,
+            R"({"step_index":2,"type":"USER_INPUT","content":"<USER_REQUEST>more</USER_REQUEST>"})"
+            "\n"
+            R"({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","content":"Running.","tool_calls":[{"name":"run_command","args":{}}]})"
+            "\n");
+        workspace.checkAgyTurnsForTesting();
+        require(!probe.unseen("agy") && !dot(workspace, "agy"),
+                "dot: an agy reply with tool calls lights nothing");
+        append(compact, R"({"step_index":4,"type":"CHECKPOINT","status":"DONE","content":"x"})"
+                        "\n");
+        workspace.checkAgyTurnsForTesting();
+        require(!dot(workspace, "agy"), "dot: an agy checkpoint lights nothing");
+        // Half a line is still being written.
+        append(compact, R"({"step_index":5,"type":"PLANNER_RESPONSE","status":"DONE",)");
+        workspace.checkAgyTurnsForTesting();
+        require(!dot(workspace, "agy"), "dot: an unfinished line lights nothing");
+        append(compact, R"("content":"Done."})"
+                        "\n");
+        workspace.checkAgyTurnsForTesting();
+        require(probe.unseen("agy") && dot(workspace, "agy") &&
+                    probe.outcomes.back() == QStringLiteral("agy:marked"),
+                "dot: an agy final reply without tool calls lights it");
+        workspace.checkAgyTurnsForTesting();
+        require(probe.marked("agy") == 1, "dot: an unchanged transcript marks nothing more");
+        append(
+            compact,
+            R"({"step_index":6,"type":"USER_INPUT","content":"<USER_REQUEST>next</USER_REQUEST>"})"
+            "\n");
+        workspace.checkAgyTurnsForTesting();
+        require(!dot(workspace, "agy"), "dot: new agy input clears it");
+        append(compact,
+               R"({"step_index":7,"type":"PLANNER_RESPONSE","status":"DONE","content":"Again."})"
+               "\n");
+        workspace.checkAgyTurnsForTesting();
+        require(dot(workspace, "agy"), "dot: the next agy final reply lights it again");
+
+        // Saved: agent with a confirmed dot, notes only quiet-unseen.
+        probe.window = false;
+        probe.finish("agent");
+        require(dot(workspace, "agent") && probe.unseen("notes") && !dot(workspace, "notes"),
+                "dot: before the restart");
+        marks = workspace.saveMarks();
+    }
+    Workspace after(WorkspaceMode::fixture);
+    MarkProbe probe(after);
+    probe.window = false;
+    after.restoreMarks(marks);
+    require(probe.unseen("agent") && dot(after, "agent"),
+            "dot: a confirmed dot survives a restart");
+    require(probe.unseen("notes") && !dot(after, "notes"), "dot: a quiet mark comes back undrawn");
+}
+
 // A replay shaped like the worst sequence in the owner's logs (counts and
 // order, no content): an agent finishing on the stage while lapis is behind
 // another app, the person returning, statuses republished and reconnected,
@@ -7209,7 +7338,22 @@ class FakeServices {
   public:
     explicit FakeServices(const QString& root) : root_(root) {
         writeExecutable(root_.filePath(QStringLiteral("cli.sh")),
-                        "#!/bin/sh\nwhile :; do exec 3<\"$(cat \"$1\")\"; sleep 0.1; done\n");
+                        "#!/bin/sh\n"
+                        "# Holds each path named in $1, one per line; reopens on a change.\n"
+                        "last=\n"
+                        "while :; do\n"
+                        "  cur=$(cat \"$1\")\n"
+                        "  if [ \"$cur\" != \"$last\" ]; then\n"
+                        "    exec 3<&- 4<&- 5<&- 6<&-; i=3\n"
+                        "    while IFS= read -r p; do\n"
+                        "      eval \"exec $i<\\\"\\$p\\\"\"; i=$((i+1))\n"
+                        "    done <<END\n"
+                        "$cur\n"
+                        "END\n"
+                        "    last=$cur\n"
+                        "  fi\n"
+                        "  sleep 0.1\n"
+                        "done\n");
         writeExecutable(root_.filePath(QStringLiteral("service.sh")),
                         "#!/bin/sh\n\"$(dirname \"$0\")/cli.sh\" \"$1\"\n");
     }
@@ -7242,6 +7386,10 @@ class FakeServices {
         require(file.open(QIODevice::WriteOnly) && file.write(QFile::encodeName(path)) > 0 &&
                     file.commit(),
                 "name the file the stand-in CLI holds");
+    }
+    // Up to four files at once, as agy holds its lock and databases.
+    void holdAll(const QString& id, const QStringList& paths) {
+        hold(id, paths.join(QLatin1Char('\n')));
     }
     void stop(const QString& id) {
         const auto process = processes_.take(id);
@@ -7413,6 +7561,263 @@ void agyAgentsKeepTheirOwnConversations() {
         require(workspace.closeAgent(id, true), "close a restored agent");
     require(waitFor([&workspace] { return closedFully(workspace); }, 10000),
             "restored agents close");
+}
+
+void agyOpenedDatabaseNeverStealsHeldPin() {
+    using lapis::desktop::conversation_owner::Agent;
+    using lapis::desktop::conversation_owner::pins;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-pin-steal-XXXXXX"));
+    require(directory.isValid(), "pin steal directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const ScopedHome home{root.filePath(QStringLiteral("home")).toUtf8()};
+    const ScopedCodexHome codex_home{root.filePath(QStringLiteral("codex")).toUtf8()};
+    const auto work = root.filePath(QStringLiteral("work"));
+    require(QDir().mkpath(work), "work folder");
+    const QDir agy(root.filePath(QStringLiteral("home/.gemini/antigravity-cli")));
+    require(QDir().mkpath(agy.filePath(QStringLiteral("presence"))), "agy presence folder");
+    require(QDir().mkpath(agy.filePath(QStringLiteral("conversations"))),
+            "agy conversations folder");
+
+    FakeServices services(root.path());
+    const auto first = uuid();
+    const auto second = uuid();
+    const auto endpoint = [&root](const QString& id) {
+        return root.filePath(id + QStringLiteral(".sock"));
+    };
+    for (const auto& id : {first, second}) {
+        QFile made(endpoint(id));
+        require(made.open(QIODevice::WriteOnly), "make an endpoint");
+        services.start(id, endpoint(id));
+    }
+    const auto conv = uuid();
+    const auto lock = agy.filePath(QStringLiteral("presence/%1.lock").arg(conv));
+    {
+        QFile f(lock);
+        require(f.open(QIODevice::WriteOnly), "make presence lock");
+    }
+    const auto db = agy.filePath(QStringLiteral("conversations/%1.db").arg(conv));
+    {
+        QFile f(db);
+        require(f.open(QIODevice::WriteOnly), "make conversation db");
+    }
+    services.hold(first, lock);
+    services.hold(second, db);
+    require(waitFor(
+                [&] {
+                    return lapis::desktop::conversation_owner::held_conversation(
+                               QStringLiteral("agy"), endpoint(first), {}) == conv &&
+                           lapis::desktop::conversation_owner::held_conversation(
+                               QStringLiteral("agy"), endpoint(second), conv) == conv &&
+                           lapis::desktop::conversation_owner::held_conversation(
+                               QStringLiteral("agy"), endpoint(second), {})
+                               .isEmpty();
+                },
+                5000),
+            "both processes see their open file");
+
+    // Unlocked .db handle on second cannot steal conv from first.
+    const auto assigned = pins({
+        {first, QStringLiteral("agy"), work, endpoint(first), conv, false},
+        {second, QStringLiteral("agy"), work, endpoint(second), {}, false},
+    });
+    require(!assigned.contains(second), "unlocked db handle never steals held conversation");
+
+    // A stale duplicate pin on an idle agent is cleared when another agent holds the lock.
+    services.stop(second);
+    QFile::remove(endpoint(second));
+    QFile::remove(endpoint(second) + QStringLiteral(".lock"));
+    const auto cleared = pins({
+        {first, QStringLiteral("agy"), work, endpoint(first), conv, false},
+        {second, QStringLiteral("agy"), work, endpoint(second), conv, false},
+    });
+    require(cleared.value(second).isEmpty() && cleared.contains(second),
+            "duplicate pin on idle agent is cleared when lock is held elsewhere");
+
+    services.stop(first);
+}
+
+// A restored agy agent (Command-Shift-T, or a restore at login) resumes its
+// conversation with `--conversation <id>` and has no pin yet. Its agy holds
+// no presence lock until its next turn, but opens other conversations'
+// databases while it lists and summarizes them. Those never move the agent
+// off the conversation it resumed (which showed it the newest conversation
+// anywhere: an empty one, or another agent's, so two tabs showed one
+// conversation), and an agent with no pin is not given one by them while
+// several are open.
+void agyResumedAgentKeepsItsConversation() {
+    using lapis::desktop::conversation_owner::held_conversation;
+    using lapis::desktop::conversation_owner::pins;
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-resumed-XXXXXX"));
+    require(directory.isValid(), "resumed directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const ScopedHome home{root.filePath(QStringLiteral("home")).toUtf8()};
+    const ScopedCodexHome codex_home{root.filePath(QStringLiteral("codex")).toUtf8()};
+    const auto work = root.filePath(QStringLiteral("work"));
+    require(QDir().mkpath(work), "agent folder");
+    const QDir agy(root.filePath(QStringLiteral("home/.gemini/antigravity-cli")));
+    require(QDir().mkpath(agy.filePath(QStringLiteral("presence"))), "agy presence folder");
+    require(QDir().mkpath(agy.filePath(QStringLiteral("conversations"))),
+            "agy conversations folder");
+    const auto now = QDateTime::currentDateTimeUtc();
+    const auto transcript = [&agy](const QString& conversation) {
+        return agy.filePath(QStringLiteral("brain/%1/.system_generated/logs/transcript_full.jsonl")
+                                .arg(conversation));
+    };
+    const auto touch = [](const QString& path) {
+        QFile made(path);
+        require(made.open(QIODevice::WriteOnly), "make an agy file");
+        return path;
+    };
+    // A conversation agy began `seconds` from now, with its database.
+    const auto begin = [&](int seconds) {
+        const auto conversation = uuid();
+        writeLines(transcript(conversation),
+                   {R"({"step_index":0,"type":"USER_INPUT","created_at":")" +
+                    now.addSecs(seconds).toString(Qt::ISODate).toUtf8() +
+                    R"(","content":"made up"})"});
+        touch(agy.filePath(QStringLiteral("conversations/%1.db").arg(conversation)));
+        return conversation;
+    };
+    const auto db = [&agy](const QString& conversation) {
+        return agy.filePath(QStringLiteral("conversations/%1.db").arg(conversation));
+    };
+    const auto lock = [&](const QString& conversation) {
+        return touch(agy.filePath(QStringLiteral("presence/%1.lock").arg(conversation)));
+    };
+    writeExecutable(root.filePath(QStringLiteral("agy")), "#!/bin/sh\nexit 0\n");
+
+    // Two resumed conversations, then newer ones agy lists.
+    const auto resumed = begin(-3600);
+    const auto other_resumed = begin(-1800);
+    const auto newer = begin(-60);
+    const auto newest = begin(-30);
+
+    FakeServices services(root.path());
+    const auto restored = uuid();
+    const auto other = uuid();
+    const auto fresh = uuid();
+    const auto endpoint = [&root](const QString& id) {
+        return root.filePath(id + QStringLiteral(".sock"));
+    };
+    QJsonArray agents;
+    // What reopenAgent and a full restore record: the resume pair lapis
+    // added, and no pin.
+    const auto add = [&](const QString& id, const QString& conversation) {
+        touch(endpoint(id));
+        services.start(id, endpoint(id));
+        auto record = agentRecord(work, id, "general");
+        record.insert(QStringLiteral("endpoint"), endpoint(id));
+        record.insert(QStringLiteral("program"), root.filePath(QStringLiteral("agy")));
+        record.insert(QStringLiteral("harness"), QStringLiteral("agy"));
+        if (!conversation.isEmpty()) {
+            record.insert(QStringLiteral("arguments"),
+                          QJsonArray{QStringLiteral("--conversation"), conversation});
+            record.insert(QStringLiteral("managedResume"),
+                          QJsonObject{{QStringLiteral("index"), 0},
+                                      {QStringLiteral("identity"), conversation}});
+        }
+        agents.append(record);
+    };
+    add(restored, resumed);
+    add(other, other_resumed);
+    add(fresh, {});
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    writeRegistry(options.storagePath,
+                  {{"version", 2},
+                   {"activeCategory", "general"},
+                   {"categories", QJsonArray{QJsonObject{{"id", "general"}, {"name", "General"}}}},
+                   {"agents", agents}});
+    // Each agy is listing: newer conversations' databases open, no lock.
+    for (const auto& id : {restored, other, fresh})
+        services.holdAll(id, {db(newer), db(newest)});
+    // An open database confirms a pin it matches (and shows the files open).
+    require(waitFor(
+                [&] {
+                    return std::all_of(agents.begin(), agents.end(), [&](const QJsonValue& agent) {
+                        const auto id = agent.toObject().value(QStringLiteral("id")).toString();
+                        return held_conversation(QStringLiteral("agy"), endpoint(id), newer) ==
+                               newer;
+                    });
+                },
+                5000),
+            "every agy has the listed databases open");
+    require(
+        held_conversation(QStringLiteral("agy"), endpoint(restored), resumed).isEmpty() &&
+            held_conversation(QStringLiteral("agy"), endpoint(other), other_resumed).isEmpty() &&
+            held_conversation(QStringLiteral("agy"), endpoint(fresh), {}).isEmpty(),
+        "open databases without a lock name no other conversation");
+    require(pins({{restored, QStringLiteral("agy"), work, endpoint(restored), resumed, false},
+                  {other, QStringLiteral("agy"), work, endpoint(other), other_resumed, false},
+                  {fresh, QStringLiteral("agy"), work, endpoint(fresh), {}, false}})
+                .isEmpty(),
+            "listed databases move no pin and place none");
+    const auto pinned = [&options](const QString& id) {
+        for (const auto& value : QJsonDocument::fromJson(readRegistry(options.storagePath))
+                                     .object()
+                                     .value(QStringLiteral("agents"))
+                                     .toArray())
+            if (value.toObject().value(QStringLiteral("id")).toString() == id)
+                return value.toObject().value(QStringLiteral("conversation")).toString();
+        return QString();
+    };
+    Workspace workspace(WorkspaceMode::live, options);
+    require(workspace.workspaceError().isEmpty(), "resumed agy agents load");
+    for (int poll = 0; poll < 3; ++poll) { // the view asks every two seconds
+        require(workspace.conversationFile(restored) == transcript(resumed),
+                "a restored agent shows the conversation it resumed");
+        require(workspace.conversationFile(other) == transcript(other_resumed),
+                "a second restored agent shows its own");
+        require(workspace.conversationFile(fresh).isEmpty(),
+                "an agent with no conversation shows none of the listed ones");
+    }
+    require(workspace.agentConversation(restored) == resumed &&
+                workspace.agentConversation(other) == other_resumed,
+            "each restored agent's conversation is the one it resumed");
+    require(pinned(restored) != newest && pinned(other) != newest && pinned(fresh).isEmpty(),
+            "no listed conversation is pinned to any agent");
+
+    // Its database alone, or with the lock its next turn takes: still it.
+    services.holdAll(restored, {db(resumed)});
+    services.holdAll(other, {lock(other_resumed), db(other_resumed), db(newest)});
+    require(waitFor(
+                [&] {
+                    return held_conversation(QStringLiteral("agy"), endpoint(restored), resumed) ==
+                               resumed &&
+                           held_conversation(QStringLiteral("agy"), endpoint(other), {}) ==
+                               other_resumed;
+                },
+                5000),
+            "each agy now holds its resumed conversation");
+    require(workspace.conversationFile(restored) == transcript(resumed) &&
+                workspace.conversationFile(other) == transcript(other_resumed),
+            "the resumed conversations stay shown");
+
+    // An unlocked database alone never names a conversation for a fresh agent;
+    // agy holds its presence lock once a conversation actually starts.
+    services.holdAll(fresh, {db(newer)});
+    require(waitFor(
+                [&] {
+                    return held_conversation(QStringLiteral("agy"), endpoint(fresh), {}).isEmpty();
+                },
+                5000) &&
+                workspace.conversationFile(fresh).isEmpty(),
+            "an unlocked database never pins a fresh agent");
+    services.holdAll(fresh, {lock(newer), db(newer)});
+    require(waitFor([&] { return workspace.conversationFile(fresh) == transcript(newer); }, 5000),
+            "a fresh agent takes its conversation once it holds the lock");
+
+    // /clear in the restored agent: agy locks its new conversation.
+    const auto cleared = begin(0);
+    services.holdAll(restored, {lock(cleared), db(cleared)});
+    require(
+        waitFor([&] { return workspace.conversationFile(restored) == transcript(cleared); }, 5000),
+        "a restored agent follows its own /clear");
+    require(workspace.conversationFile(other) == transcript(other_resumed) &&
+                workspace.conversationFile(fresh) == transcript(newer),
+            "the others keep theirs");
+    for (const auto& id : {restored, other, fresh})
+        services.stop(id);
 }
 
 // Two Codex agents in one folder before either's first turn ends: a thread
@@ -7740,6 +8145,8 @@ int main(int argc, char** argv) {
             } else if (selected == QStringLiteral("visual-files")) {
                 visualConversationFiles();
                 agyAgentsKeepTheirOwnConversations();
+                agyOpenedDatabaseNeverStealsHeldPin();
+                agyResumedAgentKeepsItsConversation();
                 codexAgentsNeverTakeEachOthersThread();
                 claudeTranscriptsAreFoundAndKept();
                 visualThreadsAreReadAhead();
@@ -7757,6 +8164,7 @@ int main(int argc, char** argv) {
                 attentionMarksFollowLooking();
                 tabSkipsTurnsAlreadySeen();
                 attentionMarksSurviveARestart();
+                sidebarDotFollowsConfirmedTurns();
                 attentionReplayMarksEachTurnOnce();
             } else if (selected == QStringLiteral("closing")) {
                 closeEndsTheAgent("exec sleep 600", 0);
@@ -7790,6 +8198,8 @@ int main(int argc, char** argv) {
         restoreAgentIdentity();
         visualConversationFiles();
         agyAgentsKeepTheirOwnConversations();
+        agyOpenedDatabaseNeverStealsHeldPin();
+        agyResumedAgentKeepsItsConversation();
         codexAgentsNeverTakeEachOthersThread();
         claudeTranscriptsAreFoundAndKept();
         visualThreadsAreReadAhead();
@@ -7805,6 +8215,7 @@ int main(int argc, char** argv) {
         attentionMarksFollowLooking();
         tabSkipsTurnsAlreadySeen();
         attentionMarksSurviveARestart();
+        sidebarDotFollowsConfirmedTurns();
         attentionReplayMarksEachTurnOnce();
         tabGoesToTheReadyThenTheOldest();
         tabAttributionFollowsTheNextHandMove();

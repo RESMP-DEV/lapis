@@ -73,9 +73,13 @@ opening agent's row is its title alone.
 | Hollow square | Opening, or status unknown |
 | Dash | Ended |
 
-The mark never says whether you have looked at an agent: a finished agent looks
-the same either way, and lapis draws no unseen dots, category counts or Dock
-badge. Look at an agent when you want to. Attention never reorders categories
+The mark never says whether you have looked at an agent. One thing does: a small
+solid dot in the accent colour at the right of a sidebar row means a turn
+really ended there while you were not looking (the agent's own report, or for
+agy a final reply in its transcript). Output going quiet never lights it.
+Looking at the agent, or its next turn starting, clears it; a restart keeps
+it. A rare mark on the row takes its place. lapis draws no category counts or
+Dock badge. Look at an agent when you want to. Attention never reorders categories
 or takes the keyboard.
 
 Keyboard focus, activity, pending requests and lost connections each have their

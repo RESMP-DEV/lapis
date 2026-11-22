@@ -3,6 +3,7 @@
 #include "transport/local_protocol.hpp"
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -288,10 +289,211 @@ void check_maximum_history_page() {
     HistoryStore reopened(root, session);
     require(present(reopened.at(0)).id == id);
 }
+// Appended and read pages come back from RAM until their segment changes or
+// leaves; the budgets still hold while most appends skip the archive scan.
+void check_ram_cache() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-history-cache-XXXXXX"));
+    require(directory.isValid());
+    const auto root = directory.filePath(QStringLiteral("archive"));
+    const QString session(32, QLatin1Char('a'));
+    const QString other(32, QLatin1Char('b'));
+    const auto snapshot = page();
+    {
+        HistoryStore store(root, session);
+        const auto id1 = store.append(snapshot);
+        const auto id2 = store.append(snapshot);
+        require(store.cachedPages() == 2 && store.cachedBytes() > 0);
+        // Served from RAM: no disk read, and the same page the disk holds.
+        auto cached = present(store.at(0));
+        require(cached.id == id1 && store.cacheHits() == 1 && store.diskReads() == 0);
+        require(present(store.older()).id == id2 && store.diskReads() == 0);
+        HistoryStore reopened(root, session);
+        auto disk = present(reopened.at(0));
+        require(reopened.diskReads() == 1 && reopened.cacheHits() == 0);
+        require(wire::encode_snapshot(disk.snapshot) == wire::encode_snapshot(cached.snapshot));
+        // A page read from disk is kept: the second read is from RAM.
+        require(present(reopened.at(0)).id == id1 && reopened.cacheHits() == 1 &&
+                reopened.diskReads() == 1);
+        // Another writer appending to the segment changes it: kept pages are
+        // read and verified from disk again, then kept again.
+        static_cast<void>(reopened.append(snapshot));
+        require(present(store.at(0)).id == id1 && store.diskReads() == 1);
+        require(present(store.at(0)).id == id1 && store.diskReads() == 1 && store.cacheHits() == 3);
+        // A kept page from a corrupted segment is not trusted.
+        {
+            QFile file(segment_of(root, session, id1));
+            require(file.open(QIODevice::ReadWrite) && file.seek(80) && file.write("Z") == 1);
+        }
+        rejects([&] { static_cast<void>(store.at(0)); });
+        store.clear();
+        require(store.cachedPages() == 0 && store.cachedBytes() == 0 && !store.older());
+    }
+    // The RAM budget evicts least recently used pages first.
+    {
+        quint64 payload{};
+        {
+            HistoryStore probe(root, QString(32, QLatin1Char('f')));
+            static_cast<void>(probe.append(snapshot));
+            payload = probe.cachedBytes();
+            probe.clear();
+        }
+        // Room for two of these pages.
+        HistoryStore store(root, session, {.cache_bytes = payload * 2});
+        const auto id1 = store.append(snapshot);
+        const auto id2 = store.append(snapshot);
+        require(present(store.at(0)).id == id1); // id1 now the most recently used
+        static_cast<void>(store.append(snapshot));
+        require(store.cachedPages() == 2 && store.cachedBytes() == payload * 2);
+        require(present(store.at(0)).id == id1 && store.diskReads() == 0);
+        require(present(store.newer(id1)).id == id2 && store.diskReads() == 1);
+        HistoryStore none(root, session, {.cache_bytes = 0});
+        static_cast<void>(none.append(snapshot));
+        require(none.cachedPages() == 0 && present(none.older()).id > id2 && none.diskReads() == 1);
+        store.clear();
+    }
+    // Generous budgets: appends within a segment skip the archive scan.
+    {
+        HistoryStore store(root, other);
+        for (int index = 0; index < 64; ++index)
+            static_cast<void>(store.append(snapshot));
+        require(store.budgetScans() <= 2 && store.cachedPages() == 64);
+        store.clear();
+    }
+    // Tight budgets: every append that could matter scans, and both budgets
+    // hold for this session, for another's eviction of it, and across reopen.
+    {
+        const auto bytes = record_bytes(root);
+        const HistoryLimits limits{bytes * 4, bytes * 6};
+        HistoryStore store(root, session, limits);
+        for (int index = 0; index < 20; ++index) {
+            static_cast<void>(store.append(snapshot));
+            const auto stats = store.stats();
+            require(stats.session_bytes <= limits.session_bytes &&
+                    stats.global_bytes <= limits.global_bytes);
+        }
+        const auto oldest = present(store.at(0)).id;
+        require(store.cachedPages() <= store.stats().pages);
+        HistoryStore second(root, other, limits);
+        for (int index = 0; index < 20; ++index)
+            static_cast<void>(second.append(snapshot));
+        require(second.stats().global_bytes <= limits.global_bytes);
+        // The other session's budget took this one's older segments; their
+        // kept pages are not served, and reading recovers to what remains.
+        const auto remaining = present(store.at(0));
+        require(remaining.id > oldest && remaining.snapshot.history.viewport_offset == 0);
+        // One page per segment at this budget: each page read has its file.
+        for (auto item = store.older(); item; item = store.older(item->id))
+            require(item->id >= remaining.id &&
+                    QFileInfo::exists(segment_of(root, session, item->id)));
+    }
+}
+double milliseconds(qint64 nanoseconds) { return static_cast<double>(nanoseconds) / 1e6; }
+// Prints timings against an archive under `root` (use a copy, never the live
+// archive): every page of its largest session read from disk then from RAM,
+// and appends of a new session with and without the archive scan.
+int timing(const QString& root) {
+    QString largest;
+    qint64 largest_bytes{};
+    int sessions{};
+    for (const auto& name : QDir(root).entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (name.size() != 32)
+            continue;
+        ++sessions;
+        qint64 bytes{};
+        for (const auto& file : QDir(root + QLatin1Char('/') + name).entryInfoList(QDir::Files))
+            bytes += file.size();
+        if (bytes > largest_bytes) {
+            largest_bytes = bytes;
+            largest = name;
+        }
+    }
+    require(!largest.isEmpty());
+    QElapsedTimer clock;
+    HistoryStore store(root, largest);
+    const auto pages = store.stats().pages;
+    std::vector<qint64> disk;
+    std::vector<qint64> ram;
+    for (int pass = 0; pass < 2; ++pass) {
+        auto& times = pass == 0 ? disk : ram;
+        quint64 row{};
+        for (;;) {
+            clock.start();
+            auto item = store.at(row);
+            times.push_back(clock.nsecsElapsed());
+            if (!item ||
+                item->snapshot.history.viewport_offset + item->snapshot.history.viewport_rows >=
+                    item->snapshot.history.total_rows)
+                break;
+            row = item->snapshot.history.viewport_offset + item->snapshot.history.viewport_rows;
+        }
+    }
+    const auto report = [](const char* label, std::vector<qint64> times) {
+        std::sort(times.begin(), times.end());
+        const auto at = [&](double q) {
+            return milliseconds(times[static_cast<std::size_t>(q * double(times.size() - 1))]);
+        };
+        std::cout << label << ": n=" << times.size() << " p50=" << at(0.5) << " ms p95=" << at(0.95)
+                  << " ms p99=" << at(0.99) << " ms max=" << at(1.0) << " ms\n";
+    };
+    std::cout << "archive: " << sessions << " sessions; largest " << largest_bytes << " bytes, "
+              << pages << " pages\n";
+    report("read, disk (first pass)", disk);
+    report("read, RAM (second pass)", ram);
+    std::cout << "disk reads " << store.diskReads() << ", RAM hits " << store.cacheHits()
+              << ", RAM " << store.cachedBytes() << " bytes in " << store.cachedPages()
+              << " pages\n";
+    // Where a RAM read goes, on the newest page.
+    {
+        const auto newest = present(store.older());
+        const auto encoded = wire::encode_snapshot(newest.snapshot);
+        const auto payload = qCompress(encoded, 6);
+        std::vector<qint64> inflate;
+        std::vector<qint64> decode;
+        std::vector<qint64> encode;
+        for (int index = 0; index < 200; ++index) {
+            clock.start();
+            const auto bytes = qUncompress(payload);
+            inflate.push_back(clock.nsecsElapsed());
+            clock.start();
+            const auto decoded = wire::decode_snapshot(bytes);
+            decode.push_back(clock.nsecsElapsed());
+            clock.start();
+            static_cast<void>(wire::encode_snapshot(decoded));
+            encode.push_back(clock.nsecsElapsed());
+        }
+        std::cout << "newest page " << newest.snapshot.size.columns << "x"
+                  << newest.snapshot.size.rows << ", " << encoded.size() << " bytes encoded, "
+                  << payload.size() << " compressed\n";
+        report("  qUncompress", inflate);
+        report("  wire::decode_snapshot", decode);
+        report("  wire::encode_snapshot (service reply)", encode);
+    }
+    Terminal terminal({200, 50});
+    for (int line = 0; line < 50; ++line)
+        terminal.feed("agent output line " + std::to_string(line) +
+                      " with enough varied text to compress like a real page\r\n");
+    const auto sample = terminal.snapshot();
+    HistoryStore writer(root, QString(32, QLatin1Char('9')));
+    std::vector<qint64> plain;
+    std::vector<qint64> scanned;
+    for (int index = 0; index < 400; ++index) {
+        const auto scans = writer.budgetScans();
+        clock.start();
+        static_cast<void>(writer.append(sample));
+        (writer.budgetScans() != scans ? scanned : plain).push_back(clock.nsecsElapsed());
+    }
+    report("append, no scan", plain);
+    if (!scanned.empty())
+        report("append, with archive scan", scanned);
+    writer.clear();
+    return 0;
+}
 } // namespace
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
+        if (app.arguments().size() == 3 && app.arguments().at(1) == QStringLiteral("--timing"))
+            return timing(app.arguments().at(2));
         if (app.arguments().size() == 5 && app.arguments().at(1) == QStringLiteral("--writer")) {
             const auto snapshot = page();
             const auto bytes = app.arguments().at(4).toULongLong();
@@ -314,6 +516,7 @@ int main(int argc, char** argv) {
         check_store();
         check_long_history();
         check_maximum_history_page();
+        check_ram_cache();
         check_worker_drain();
         check_worker_drain_deadline();
         std::cout << "History roundtrip, quotas, corruption and write recovery passed\n";

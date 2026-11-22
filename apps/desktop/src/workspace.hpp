@@ -86,9 +86,13 @@ class Agent final : public QObject {
     Q_PROPERTY(bool closing READ closing NOTIFY statusChanged)
     // Finished a turn or started needing a response while the person was not
     // looking at it; cleared for good once they look (Workspace::looking).
-    // Bookkeeping for Tab, the chime and agent_state.json; the window does not
-    // draw it.
+    // Bookkeeping for Tab, the chime and agent_state.json; the window draws
+    // only its confirmed subset (dotVisible).
     Q_PROPERTY(bool unseen READ unseen NOTIFY unseenChanged)
+    // The sidebar's solid dot: an unseen mark from a confirmed finished turn
+    // (an observer's word, or agy's transcript ending a turn), never from
+    // quiet output. Clears with the unseen mark and when a new turn starts.
+    Q_PROPERTY(bool dotVisible READ dotVisible NOTIFY dotVisibleChanged)
   public:
     Agent(QString title, QString directory, QString activity, QColor accent,
           std::string_view content);
@@ -130,6 +134,9 @@ class Agent final : public QObject {
     // A mark an earlier window saved: unseen or not, and when it began to
     // need you. Restoring emits unseenChanged and nothing else.
     void restoreUnseen(bool unseen, qint64 neededAtMs);
+    [[nodiscard]] bool dotVisible() const { return dot_visible_; }
+    // Shown only while unseen: clearing the unseen mark clears it too.
+    void setDotVisible(bool visible);
     // When it last began to need you (ms since the epoch); 0 before that.
     [[nodiscard]] qint64 neededAtMs() const { return needed_at_ms_; }
     // Where activity comes from: a service-side observer (Claude Code's hook
@@ -268,6 +275,7 @@ class Agent final : public QObject {
     void attentionChanged();
     void attentionArrived();
     void unseenChanged();
+    void dotVisibleChanged();
     void pasteResult(quint64 requestId, bool queued, bool submit, const QString& message);
 
   private:
@@ -285,6 +293,7 @@ class Agent final : public QObject {
     bool closing_{};
     QString updating_;
     bool unseen_{};
+    bool dot_visible_{};
     qint64 needed_at_ms_{};
     StatusSource status_source_{StatusSource::observer};
     // Output estimate: several frames close together read as activity, and a
@@ -298,6 +307,9 @@ class Agent final : public QObject {
     // Shows the strip's view once its pages are here, fetching the next one
     // it lacks.
     void showStrip();
+    // With the view shown, fetches the nearest page around it the strip
+    // lacks, one at a time, so scrolling on finds its rows already here.
+    void prefetchHistory();
     // Moves past the strip's oldest row: a service that does not place its
     // pages has older ones to put on top.
     void extendStrip();
@@ -335,6 +347,16 @@ class Agent final : public QObject {
     // The screen when browsing was asked for: the archive answering is at
     // least as new, so it can repeat rows the screen shows but never miss one.
     std::optional<session::TerminalSnapshot> strip_screen_;
+    // The outstanding request fetches a page near the view ahead of need; it
+    // neither holds the view nor reads as pending history.
+    bool history_prefetching_{};
+    // Pages from the last browse, kept across returning to live. Eviction
+    // drops a session's oldest rows, which moves every kept row by the same
+    // count, so they rejoin a later browse once a page fetched then carries
+    // the ID of one of them: that page's place gives the shift.
+    std::vector<HistoryStrip::Page> strip_reuse_;
+    QString strip_reuse_session_;
+    void reuseKeptPages(quint64 page_id, std::uint64_t offset);
     int strip_rows_asked_{};
     quint64 strip_oldest_page_{};
     bool strip_extending_{};
@@ -723,6 +745,8 @@ class Workspace final : public QObject {
     bool addFixtureAgent(const QString& id, const QString& title, const QString& category,
                          const QString& harness, const QString& content);
     bool setFixtureConversation(const QString& id, const QString& file);
+    // One pass of the agy transcript check the two-second timer runs.
+    void checkAgyTurnsForTesting() { checkAgyTurns(); }
     // The command a fixture agent was started with, as a saved agent keeps
     // it (agentModel reads it); never run.
     bool setFixtureLaunch(const QString& id, const QString& program, const QStringList& arguments);
@@ -971,7 +995,24 @@ class Workspace final : public QObject {
     QHash<const Agent*, QString> last_kind_;
     // Why an agent may need the person; the one rule that marks it unseen.
     enum class Need : std::uint8_t { finished, quiet, request, away };
-    QString markNeedsYou(Agent* item, Need need);
+    // `confirmed` says an away turn was an observer's word (a finished one
+    // always is): only a confirmed turn lights the sidebar dot.
+    QString markNeedsYou(Agent* item, Need need, bool confirmed = false);
+    // agy's turns from its transcript, every two seconds: a final reply
+    // (PLANNER_RESPONSE, DONE, text and no tool calls) at a new step is a
+    // confirmed finished turn; new input (USER_INPUT) starts a turn. History
+    // already there when first seen marks nothing.
+    struct AgyTurns {
+        QString path;      // transcript.jsonl beside transcript_full.jsonl, else that
+        qint64 size{-1};   // when last read; unchanged costs one stat
+        qint64 step{-1};   // newest step_index read
+        int resolve_in{0}; // ticks until the path is looked up again
+        bool primed{};     // the file's history was read once
+    };
+    QHash<QString, AgyTurns> agy_turns_;
+    QTimer agy_turn_timer_;
+    void checkAgyTurns();
+    void checkAgyTurn(Agent* item, AgyTurns& state);
     void logMark(const Agent* item, const char* event, const QString& why) const;
     Looking looking_;
     Looking unchanged_;

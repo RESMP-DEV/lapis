@@ -159,6 +159,8 @@ void Agent::captureHistoryScreen() {
     }
 }
 void Agent::beginHistoryRequest() {
+    if (history_prefetching_)
+        return; // fetched ahead of need: nothing waits on it
     // History shows the live screen until a page comes, so take the newest.
     decodeWaiting();
     history_active_ = true;
@@ -168,9 +170,11 @@ void Agent::beginHistoryRequest() {
 }
 void Agent::completeHistoryRequest(quint64 page_id, session::TerminalSnapshot snapshot,
                                    const QString& message) {
+    const bool prefetched = std::exchange(history_prefetching_, false);
     history_active_ = true;
     history_request_pending_ = false;
-    history_message_ = message;
+    if (!prefetched)
+        history_message_ = message;
     // A service that places its pages says so with more than the page.
     const auto place = snapshot.history;
     history_scrubbable_ = place.viewport_offset > 0 || place.total_rows > place.viewport_rows;
@@ -183,14 +187,16 @@ void Agent::completeHistoryRequest(quint64 page_id, session::TerminalSnapshot sn
                        place.total_rows);
         strip_screen_.reset();
         strip_oldest_page_ = page_id;
-        strip_->addPage(std::move(snapshot));
+        strip_->addPage(std::move(snapshot), page_id);
+        reuseKeptPages(page_id, place.viewport_offset);
         strip_->moveTo(static_cast<qint64>(strip_->archived()) - std::max(1, strip_rows_asked_));
     } else if (strip_extending_) {
         strip_oldest_page_ = page_id;
         strip_->prependPage(std::move(snapshot));
         strip_->moveTo(static_cast<qint64>(strip_->top()) - std::max(1, strip_rows_asked_));
     } else {
-        strip_->addPage(std::move(snapshot));
+        strip_->addPage(std::move(snapshot), page_id);
+        reuseKeptPages(page_id, place.viewport_offset);
     }
     strip_rows_asked_ = 0;
     strip_extending_ = false;
@@ -202,15 +208,55 @@ void Agent::showStrip() {
         return;
     // Rows no page holds wait for their page; a service that cannot fetch
     // by row shows them blank.
+    // A page fetched ahead that is still out comes first; its arrival shows
+    // the strip again.
     if (const auto row = strip_->missing(); row && history_scrubbable_) {
-        if (!history_request_pending_ && live_)
+        if (!history_request_pending_ && !history_prefetching_ && live_)
             live_->requestHistory(wire::HistoryDirection::at, *row);
-        if (history_request_pending_)
+        if (history_request_pending_ || history_prefetching_)
             return;
     }
     snapshot_ = strip_->view();
     emit historyChanged();
     emit snapshotChanged();
+    prefetchHistory();
+}
+void Agent::prefetchHistory() {
+    // Screens over the view are fetched further ahead: browsing mostly
+    // scrolls back.
+    constexpr std::uint64_t screens_above = 4;
+    constexpr std::uint64_t screens_below = 2;
+    if (!strip_ || !history_scrubbable_ || !live_ || history_request_pending_ ||
+        history_prefetching_)
+        return;
+    const auto row = strip_->ahead(screens_above, screens_below);
+    if (!row)
+        return;
+    history_prefetching_ = true;
+    if (!live_->requestHistory(wire::HistoryDirection::at, *row))
+        history_prefetching_ = false;
+}
+void Agent::reuseKeptPages(quint64 page_id, std::uint64_t offset) {
+    if (strip_reuse_.empty() || !strip_ || !history_scrubbable_)
+        return;
+    if (strip_reuse_session_ != service_session_id_) {
+        strip_reuse_.clear();
+        return;
+    }
+    const auto match = std::find_if(strip_reuse_.begin(), strip_reuse_.end(),
+                                    [page_id](const auto& page) { return page.id == page_id; });
+    if (match == strip_reuse_.end())
+        return;
+    const auto shift =
+        static_cast<qint64>(offset) - static_cast<qint64>(match->snapshot.history.viewport_offset);
+    auto reuse = std::exchange(strip_reuse_, {});
+    for (auto& page : reuse) {
+        const auto placed = static_cast<qint64>(page.snapshot.history.viewport_offset) + shift;
+        if (page.id == page_id || placed < 0)
+            continue; // the page just fetched, or rows evicted since
+        page.snapshot.history.viewport_offset = static_cast<std::size_t>(placed);
+        strip_->addPage(std::move(page.snapshot), page.id);
+    }
 }
 std::optional<session::TerminalSnapshot> Agent::historyRowAbove() const {
     if (!history_active_ || !strip_ || snapshot_.history.viewport_offset != strip_->top())
@@ -249,6 +295,14 @@ void Agent::historyAt(qreal fraction) {
     showStrip();
 }
 void Agent::failHistoryRequest(const QString& message) {
+    if (history_prefetching_) {
+        // Nothing waited on it, unless the view moved onto its rows: that
+        // view asks for them itself now, and reports its own failure.
+        history_prefetching_ = false;
+        if (strip_ && strip_->missing())
+            showStrip();
+        return;
+    }
     if (!history_request_pending_)
         return;
     history_request_pending_ = false;
@@ -271,6 +325,7 @@ void Agent::failHistoryRequest(const QString& message) {
 }
 void Agent::cancelHistoryRequests() {
     history_request_pending_ = false;
+    history_prefetching_ = false;
     strip_extending_ = false;
     if (!history_active_ && live_)
         live_->sendWantedSize();
@@ -319,6 +374,15 @@ void Agent::returnToLive() {
     decodeWaiting();
     if (live_)
         live_->cancelHistoryRequest();
+    // The pages nearest where browsing stopped wait for the next browse.
+    constexpr std::uint64_t reused_screens = 16;
+    if (strip_ && history_scrubbable_) {
+        strip_reuse_ = strip_->takePages(reused_screens);
+        strip_reuse_session_ = service_session_id_;
+    } else {
+        strip_reuse_.clear();
+    }
+    history_prefetching_ = false;
     strip_.reset();
     strip_screen_.reset();
     strip_rows_asked_ = 0;
@@ -832,14 +896,14 @@ void LiveConnection::applyWantedSize() {
     resize(wanted);
 }
 
-void LiveConnection::requestHistory(wire::HistoryDirection direction, quint64 reference) {
+bool LiveConnection::requestHistory(wire::HistoryDirection direction, quint64 reference) {
     if (!ready_ || failed_ || !attachment_ || outstanding_history_request_)
-        return;
+        return false;
     if (direction == wire::HistoryDirection::newer && reference == 0)
         throw std::runtime_error("Newer history requires a page");
     if (history_request_ids_exhausted_) {
         document_.failHistoryRequest(QStringLiteral("History browsing is unavailable."));
-        return;
+        return false;
     }
     const auto request_id = next_history_request_id_;
     if (request_id == std::numeric_limits<quint64>::max())
@@ -852,9 +916,10 @@ void LiveConnection::requestHistory(wire::HistoryDirection direction, quint64 re
     const wire::HistoryRequest request{request_id, reference, direction};
     if (pending_resize_) {
         deferred_history_ = request;
-        return;
+        return true;
     }
     queueHistoryRequest(request);
+    return true;
 }
 void LiveConnection::queueHistoryRequest(const wire::HistoryRequest& request) {
     // The frozen screen must match the size the service used for its archive.

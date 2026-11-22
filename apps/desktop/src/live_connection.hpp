@@ -53,7 +53,9 @@ class LiveConnection final : public QObject {
     // Sends the wanted size when the terminal has another; a new snapshot
     // permits one retry, while requests without snapshot progress coalesce.
     void sendWantedSize();
-    void requestHistory(session::wire::HistoryDirection direction, quint64 reference);
+    // True when the request went out or waits for a resize to land; false
+    // when it was declined (not ready, or another still outstanding).
+    bool requestHistory(session::wire::HistoryDirection direction, quint64 reference);
     void cancelHistoryRequest();
 
   private:

@@ -261,6 +261,19 @@ quint64 read_counter(const QString& path) {
     input >> value;
     return value;
 }
+// A file's identity and last change, for trusting pages kept from it. The
+// change time moves on every write, truncation or replacement and cannot be
+// set back by a caller.
+template <typename Stamp> Stamp stamp_of(const struct stat& status) {
+#ifdef __APPLE__
+    const auto& changed = status.st_ctimespec;
+#else
+    const auto& changed = status.st_ctim;
+#endif
+    return {static_cast<quint64>(status.st_dev), static_cast<quint64>(status.st_ino),
+            static_cast<quint64>(status.st_size), static_cast<qint64>(changed.tv_sec),
+            static_cast<qint64>(changed.tv_nsec)};
+}
 void write_counter(const QString& path, quint64 value) {
     QByteArray bytes;
     QDataStream output(&bytes, QIODevice::WriteOnly);
@@ -293,13 +306,20 @@ void HistoryStore::load() {
     remove_pending(directory_);
     records_.clear();
     segments_.clear();
+    session_bytes_ = 0;
     std::vector<quint64> firsts;
     QDirIterator files(directory_,
                        QDir::Files | QDir::System | QDir::Hidden | QDir::NoDotAndDotDot);
     while (files.hasNext()) {
-        files.next();
-        if (const auto first = segment_id(files.fileName()))
+        const auto path = files.next();
+        if (const auto first = segment_id(files.fileName())) {
             firsts.push_back(*first);
+        } else if (legacy_page(files.fileName())) {
+            // Counted against the session budget, as a scan counts it.
+            struct stat status{};
+            if (::lstat(QFile::encodeName(path).constData(), &status) == 0 && status.st_size > 0)
+                session_bytes_ += static_cast<quint64>(status.st_size);
+        }
     }
     std::sort(firsts.begin(), firsts.end());
     for (const auto first : firsts) {
@@ -326,8 +346,26 @@ void HistoryStore::load() {
                 fail("Could not recover interrupted history write");
             continue;
         }
+        session_bytes_ += offset;
         segments_.push_back(first);
     }
+    // Kept pages stay only for records this index still holds; a segment
+    // rewritten meanwhile no longer matches its stamp and drops its own.
+    std::unordered_map<quint64, quint64> live; // page ID to segment
+    live.reserve(records_.size());
+    for (const auto& record : records_)
+        live.emplace(record.id, record.segment);
+    std::vector<quint64> stale;
+    for (const auto& [id, cached] : cache_) {
+        const auto found = live.find(id);
+        if (found == live.end() || found->second != cached.segment)
+            stale.push_back(id);
+    }
+    for (const auto id : stale)
+        dropCached(id);
+    std::erase_if(stamps_, [this](const auto& entry) {
+        return std::find(segments_.begin(), segments_.end(), entry.first) == segments_.end();
+    });
     const auto counted = read_counter(directory_ + QStringLiteral("/counter"));
     const auto last = records_.empty() ? quint64{0} : records_.back().id;
     if (std::max(counted, last) == std::numeric_limits<quint64>::max())
@@ -365,6 +403,10 @@ quint64 HistoryStore::append(const TerminalSnapshot& page) {
     const bool fresh = segments_.empty() || segment != segments_.back();
     const auto path = segmentPath(segment);
     auto fd = private_file(path, fresh ? O_WRONLY | O_CREAT | O_EXCL : O_WRONLY | O_APPEND);
+    struct stat status{};
+    // Pages kept from this segment hold only if nothing else changed it.
+    if (!fresh && ::fstat(fd.get(), &status) == 0)
+        restamp(segment, stamp_of<Stamp>(status));
     if (!write_all(fd.get(), record) || ::fsync(fd.get()) != 0) {
         // A failed write keeps what was committed: undo this one only.
         if (fresh)
@@ -375,15 +417,35 @@ quint64 HistoryStore::append(const TerminalSnapshot& page) {
     }
     if (fresh)
         segments_.push_back(segment);
-    records_.push_back({segment, offset, header.length, header.id, header.first, header.rows});
+    const Record added{segment, offset, header.length, header.id, header.first, header.rows};
+    records_.push_back(added);
     ++next_id_;
-    enforceBudgets();
+    session_bytes_ += size;
+    written_since_scan_ += size;
+    // This write is the segment's only change: its pages stay trusted.
+    if (::fstat(fd.get(), &status) == 0) {
+        stamps_[segment] = stamp_of<Stamp>(status);
+        keep(added, payload);
+    } else {
+        dropSegment(segment);
+    }
+    enforceBudgets(fresh);
     return header.id;
 }
 // Oldest first, session budget before global: a session over its own budget
 // gives up its own segments; over the global budget, any session's closed
 // segments go, the least recently written first.
-void HistoryStore::enforceBudgets() {
+//
+// The scan reads every session's directory, so it runs only when this session
+// is over its own budget by its count, starts a segment, or has written a
+// slice of the global budget since the last scan. Between scans the archive
+// can exceed the global budget by at most that slice per writing session.
+void HistoryStore::enforceBudgets(bool new_segment) {
+    const auto slice = std::min<quint64>(limits_.global_bytes / 8, quint64{4} * 1024 * 1024);
+    if (!new_segment && session_bytes_ <= limits_.session_bytes && written_since_scan_ < slice)
+        return;
+    ++budget_scans_;
+    written_since_scan_ = 0;
     auto entries = scan(root_);
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
         return a.modified < b.modified || (a.modified == b.modified && a.path < b.path);
@@ -407,18 +469,31 @@ void HistoryStore::enforceBudgets() {
             std::erase_if(records_, [&entry](const Record& record) {
                 return record.segment == entry.segment;
             });
+            dropSegment(entry.segment);
         }
     }
+    session_bytes_ = usage.session_bytes;
 }
 HistoryPage HistoryStore::read(const Record& record) {
     auto fd = private_file(segmentPath(record.segment), O_RDONLY);
+    // Stamped before reading: a change after this point is a later change.
+    struct stat status{};
+    if (::fstat(fd.get(), &status) != 0)
+        fail("Could not inspect history segment");
     const auto bytes =
         read_at(fd.get(), record.offset, header_bytes + static_cast<qint64>(record.length));
     const auto header = decode_header(bytes.first(header_bytes));
-    const auto payload = bytes.sliced(header_bytes);
+    auto payload = bytes.sliced(header_bytes);
     if (!header || header->id != record.id || header->length != record.length ||
         QCryptographicHash::hash(payload, QCryptographicHash::Sha256) != header->digest)
         fail("Truncated or corrupt history record");
+    ++disk_reads_;
+    auto page = decode(record, payload);
+    restamp(record.segment, stamp_of<Stamp>(status));
+    keep(record, std::move(payload));
+    return page;
+}
+HistoryPage HistoryStore::decode(const Record& record, const QByteArray& payload) const {
     const auto encoded = qUncompress(payload);
     if (encoded.isEmpty() || encoded.size() > max_page_bytes)
         fail("Truncated or corrupt history record");
@@ -430,7 +505,76 @@ HistoryPage HistoryStore::read(const Record& record) {
                         static_cast<std::size_t>(record.rows), true};
     return {record.id, std::move(snapshot)};
 }
+std::optional<HistoryPage> HistoryStore::cachedRead(const Record& record) {
+    const auto found = cache_.find(record.id);
+    if (found == cache_.end())
+        return std::nullopt;
+    const auto known = stamps_.find(record.segment);
+    struct stat status{};
+    // Missing, rewritten, truncated or replaced: its pages take the verified
+    // disk path, which also recovers from another session's eviction.
+    if (found->second.segment != record.segment || known == stamps_.end() ||
+        ::lstat(QFile::encodeName(segmentPath(record.segment)).constData(), &status) != 0 ||
+        !S_ISREG(status.st_mode) || stamp_of<Stamp>(status) != known->second) {
+        dropSegment(record.segment);
+        dropCached(record.id);
+        return std::nullopt;
+    }
+    cache_use_.splice(cache_use_.begin(), cache_use_, found->second.use);
+    ++cache_hits_;
+    return decode(record, found->second.payload);
+}
+void HistoryStore::keep(const Record& record, QByteArray payload) {
+    dropCached(record.id);
+    const auto bytes = static_cast<quint64>(payload.size());
+    if (bytes == 0 || bytes > limits_.cache_bytes)
+        return;
+    cache_use_.push_front(record.id);
+    cache_.emplace(record.id, Cached{std::move(payload), record.segment, cache_use_.begin()});
+    cache_bytes_ += bytes;
+    while (cache_bytes_ > limits_.cache_bytes && !cache_use_.empty())
+        dropCached(cache_use_.back());
+}
+void HistoryStore::dropCached(quint64 id) {
+    const auto found = cache_.find(id);
+    if (found == cache_.end())
+        return;
+    cache_bytes_ -= static_cast<quint64>(found->second.payload.size());
+    cache_use_.erase(found->second.use);
+    cache_.erase(found);
+}
+void HistoryStore::dropSegment(quint64 segment) {
+    stamps_.erase(segment);
+    std::erase_if(cache_, [this, segment](const auto& entry) {
+        if (entry.second.segment != segment)
+            return false;
+        cache_bytes_ -= static_cast<quint64>(entry.second.payload.size());
+        cache_use_.erase(entry.second.use);
+        return true;
+    });
+}
+void HistoryStore::dropCache() {
+    cache_.clear();
+    cache_use_.clear();
+    stamps_.clear();
+    cache_bytes_ = 0;
+}
+void HistoryStore::restamp(quint64 segment, const Stamp& stamp) {
+    const auto known = stamps_.find(segment);
+    if (known != stamps_.end() && known->second == stamp)
+        return;
+    dropSegment(segment);
+    stamps_[segment] = stamp;
+}
 template <typename Select> std::optional<HistoryPage> HistoryStore::readSelected(Select select) {
+    // A page kept in RAM from an unchanged segment needs neither the lock nor
+    // the file. The index is this store's own, so selecting needs no lock.
+    if (const auto selected = select()) {
+        if (auto page = cachedRead(*selected))
+            return page;
+    } else {
+        return std::nullopt;
+    }
     // Held through selection and read: another session's budget needs this
     // lock, and an already-open descriptor survives unlink. A non-cooperating
     // unlink can still win the check/open race, so one missing-segment retry
@@ -508,6 +652,8 @@ void HistoryStore::clear() {
     write_counter(directory_ + QStringLiteral("/counter"), next_id_ - 1);
     records_.clear();
     segments_.clear();
+    dropCache();
+    session_bytes_ = 0;
 }
 HistoryStats HistoryStore::stats() {
     auto lock = lock_root(root_);

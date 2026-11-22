@@ -44,7 +44,9 @@ struct Agent {
 
 // The conversation the processes of the service at `endpoint` hold open for
 // `harness`, or empty. When they hold several, `pin` if it is one of them,
-// else the newest.
+// else the newest. agy's open databases without a presence lock count only
+// as `pin`, or, with no pin, as the one database open: agy opens others'
+// while it lists them.
 [[nodiscard]] QString held_conversation(const QString& harness, const QString& endpoint,
                                         const QString& pin);
 

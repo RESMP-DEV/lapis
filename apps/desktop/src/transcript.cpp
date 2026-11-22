@@ -898,8 +898,10 @@ int Reader::end_task(Task& task, const QString& status, qint64 at_ms) {
 bool task_running(const Task& task, qint64 alive_ms, qint64 now_ms) {
     if (!task.status.isEmpty())
         return false;
-    if (task.expires_ms > 0 && now_ms >= task.expires_ms)
-        return false;
+    if (task.expires_ms > 0)
+        // A timer or monitor with its own end is waiting until then, however
+        // quiet: one set for three hours is not lost after one.
+        return now_ms < task.expires_ms;
     return now_ms - std::max({alive_ms, task.seen_ms, task.started_ms}) < task_silence_ms;
 }
 
@@ -1218,11 +1220,21 @@ InputBox input_box(const QStringList& screen, Format format) {
 // faint.
 bool placeholder(const QString& text, Format format) {
     static const QRegularExpression agy_mode(
-        QStringLiteral(R"(^[A-Z][A-Za-z-]* mode: .+ \(shift\+tab to cycle\)$)"));
+        QStringLiteral(R"(^[A-Z][A-Za-z-]* mode: .*(?:\(shift\+tab to cycle\)|\.\.\.|…)$)"));
+    const auto truncated = [&](QLatin1StringView full) {
+        if (text == full)
+            return true;
+        const auto strip = text.endsWith(QLatin1String("...")) ? 3
+                           : text.endsWith(QChar(0x2026))      ? 1
+                                                               : 0;
+        if (strip == 0 || text.size() - strip < 8)
+            return false;
+        return full.startsWith(QStringView(text).left(text.size() - strip));
+    };
     switch (format) {
     case Format::codex:
-        return text == QLatin1String("Ask Codex to do anything") ||
-               text == QLatin1String("Ask a follow-up question");
+        return truncated(QLatin1StringView("Ask Codex to do anything")) ||
+               truncated(QLatin1StringView("Ask a follow-up question"));
     case Format::antigravity:
         return agy_mode.match(text).hasMatch();
     case Format::claude:
@@ -1490,6 +1502,8 @@ QString work_summary(const std::vector<Item>& items, int first, int last, int ex
 }
 
 int expand_from(const Layout& layout) {
+    if constexpr (expanded_finished_turns <= 0)
+        return expand_none;
     int finished = 0;
     for (auto t = layout.turns.size(); t-- > 0;) {
         // A turn with no end recorded may still be running, whether or not
@@ -4674,9 +4688,11 @@ void TranscriptModel::adopt(transcript::Read read, bool appended) {
     };
     auto expanded = moved(expanded_);
     auto opened = moved(opened_);
-    expand_from_ = expand_from_ >= 0
-                       ? std::max(0, expand_from_ + shift)
-                       : transcript::expand_from(transcript::lay_out(new_items, {}, live_));
+    // expand_none is no item: it stays, never shifted (nor overflowed).
+    if (expand_from_ < 0)
+        expand_from_ = transcript::expand_from(transcript::lay_out(new_items, {}, live_));
+    else if (expand_from_ != transcript::expand_none)
+        expand_from_ = std::max(0, expand_from_ + shift);
     auto next =
         transcript::lay_out(new_items, expanded, live_, expand_from_, opened, request_waiting_);
     if (read.tail)

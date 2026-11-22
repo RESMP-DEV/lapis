@@ -19,6 +19,22 @@ QString text_of(const QJsonObject& object, const char* key) {
     return object.value(QLatin1String(key)).toString();
 }
 
+// A tool argument as text. transcript_full.jsonl writes it plain;
+// transcript.jsonl writes each string as its JSON text ("\"status\"").
+QString arg_text(const QJsonObject& args, const char* key) {
+    const auto value = args.value(QLatin1String(key));
+    if (value.isDouble())
+        return QString::number(value.toDouble());
+    auto text = value.toString();
+    if (text.size() >= 2 && text.startsWith(QLatin1Char('"')) && text.endsWith(QLatin1Char('"'))) {
+        const auto inner =
+            QJsonDocument::fromJson(QStringLiteral("[%1]").arg(text).toUtf8()).array();
+        if (inner.size() == 1 && inner.at(0).isString())
+            return inner.at(0).toString();
+    }
+    return text;
+}
+
 // The text between <tag> and </tag>, or empty.
 QString inside(const QString& text, QStringView tag) {
     const auto open = QStringLiteral("<%1>").arg(tag);
@@ -65,7 +81,7 @@ void read_selection(const QString& content, Status& status) {
 Item tool_item(const QJsonObject& call) {
     const auto name = text_of(call, "name");
     auto args = call.value(QLatin1String("args")).toObject();
-    const auto arg = [&args](const char* key) { return text_of(args, key); };
+    const auto arg = [&args](const char* key) { return arg_text(args, key); };
     const auto summary = arg("toolSummary");
     Item item;
     item.kind = Kind::tool;
@@ -117,9 +133,20 @@ Item tool_item(const QJsonObject& call) {
     } else if (name == QLatin1String("send_message")) {
         step("Messaged", arg("Recipient"));
     } else if (name == QLatin1String("manage_task")) {
-        step("Checked task", summary.isEmpty() ? arg("TaskId") : summary);
+        step(arg("Action") == QLatin1String("kill") ? "Stopped task" : "Checked task",
+             summary.isEmpty() ? arg("TaskId") : summary);
     } else if (name == QLatin1String("schedule")) {
-        step("Scheduled a wakeup", summary);
+        // A one-shot timer (DurationSeconds, maybe cut short by the end of
+        // the task TimerCondition names) or a recurring CronExpression.
+        const auto target = summary.isEmpty() ? first_line(arg("Prompt")) : summary;
+        if (const auto cron = arg("CronExpression"); !cron.isEmpty())
+            step("Scheduled a recurring check", target, cron);
+        else
+            step("Scheduled a wakeup", target,
+                 arg("DurationSeconds").toDouble() > 0
+                     ? QStringLiteral("in %1").arg(duration_text(
+                           static_cast<qint64>(arg("DurationSeconds").toDouble() * 1000)))
+                     : QString{});
     } else {
         args.remove(QStringLiteral("toolAction"));
         args.remove(QStringLiteral("toolSummary"));
@@ -217,10 +244,12 @@ void AntigravityReader::call(const QJsonObject& call) {
         }
     } else if (name == QLatin1String("manage_task")) {
         // A check on a background task folds into that task's step.
-        if (const int task = task_ids_.value(text_of(args, "TaskId"), -1); task >= 0) {
+        if (const int task = task_ids_.value(arg_text(args, "TaskId"), -1); task >= 0) {
             item.quiet = true;
             spawned_[at] = {task};
         }
+    } else if (name == QLatin1String("schedule")) {
+        scheduled_.insert(at, args);
     }
     waiting_.push_back(at);
     called_.insert(at, name);
@@ -240,6 +269,14 @@ int AntigravityReader::result(int at, const QJsonObject& record) {
     const auto content = text_of(record, "content");
     int changed = at;
     const auto touched = [&changed](int item) { changed = std::min(changed, item); };
+    // "You have 2 background task(s) currently running:" and a {"taskId":
+    // ...} for each: a sign of life for each one listed.
+    if (content.contains(QLatin1String("currently running"))) {
+        static const QRegularExpression listed(QStringLiteral(R"re("taskId"\s*:\s*"([^"]+)")re"));
+        for (auto entries = listed.globalMatch(content); entries.hasNext();)
+            if (auto* task = task_named(entries.next().captured(1)); task && task->status.isEmpty())
+                task->seen_ms = std::max(task->seen_ms, at_ms_);
+    }
     if (name == QLatin1String("invoke_subagent")) {
         // "Created the following subagents:" and a {conversationId,
         // logAbsoluteUri, workspaceUris} for each, in order.
@@ -260,31 +297,81 @@ int AntigravityReader::result(int at, const QJsonObject& record) {
             step.result.clear();
             step.result_lines = 0;
         }
-    } else if (name == QLatin1String("run_command") &&
-               text_of(record, "status") == QLatin1String("RUNNING")) {
-        // "Tool is running as a background task with task id: `<id>`" and
-        // "Task logs are available at: file:///.../task-N.log".
-        static const QRegularExpression task_id(QStringLiteral(R"(task id: `([^`]+)`)"));
+    } else if (text_of(record, "status") == QLatin1String("RUNNING")) {
+        // Any tool agy left running (run_command, schedule, ...): "Tool is
+        // running as a background task with task id: <id>" (agy 1.5.12; older
+        // ones put the id in backticks), "Task Description: ..." and "Task
+        // logs are available at: file:///.../task-N.log".
+        static const QRegularExpression task_id(QStringLiteral(R"(task id: `?([^\s`]+)`?)"));
+        static const QRegularExpression said(QStringLiteral(R"(Task Description: ([^\n]*))"));
         static const QRegularExpression logs(QStringLiteral(R"(available at: (\S+))"));
+        const auto args = scheduled_.take(at);
         if (const auto id = task_id.match(content); id.hasMatch() && step.task < 0) {
             Task task;
             task.type = Task::Type::background;
             task.id = id.captured(1);
             task.item = at;
             task.description = first_line(step.body);
+            if (const auto described = said.match(content);
+                task.description.isEmpty() && described.hasMatch())
+                task.description = described.captured(1).trimmed();
             task.started_ms = step.at_ms;
             task.seen_ms = at_ms_;
-            if (const auto file = logs.match(content); file.hasMatch())
-                task.file = file.captured(1);
+            if (const auto file = logs.match(content); file.hasMatch()) {
+                const auto raw = file.captured(1);
+                task.file =
+                    raw.startsWith(QLatin1String("file://")) ? QUrl(raw).toLocalFile() : raw;
+            }
             task.last_check = step.result;
+            // A schedule task describes itself as "Timer: 3m, Prompt: ..." or
+            // "Cron: */2 * * * *, Prompt: ...", whichever step it lands on.
+            static const QRegularExpression timer(
+                QStringLiteral(R"(^(Timer|Cron): (.*?), Prompt: (.*)$)"));
+            const auto described = timer.match(said.match(content).captured(1).trimmed());
+            const bool scheduled = name == QLatin1String("schedule") || described.hasMatch();
+            const bool cron = scheduled && (!arg_text(args, "CronExpression").isEmpty() ||
+                                            described.captured(1) == QLatin1String("Cron"));
+            const auto condition = scheduled ? arg_text(args, "TimerCondition") : QString{};
+            if (scheduled) {
+                // A wakeup: what it will ask, until it fires (or, for a
+                // cron, each time it fires) or is stopped.
+                task.type = Task::Type::monitor;
+                auto prompt = first_line(arg_text(args, "Prompt"));
+                if (prompt.isEmpty())
+                    prompt = described.captured(3).trimmed();
+                if (!prompt.isEmpty())
+                    task.description = prompt;
+                auto seconds = arg_text(args, "DurationSeconds").toDouble();
+                if (seconds <= 0 && !cron) {
+                    // "40s", "3m", "1h30m"
+                    static const QRegularExpression part(QStringLiteral(R"((\d+)([hms]))"));
+                    for (auto parts = part.globalMatch(described.captured(2)); parts.hasNext();) {
+                        const auto unit = parts.next();
+                        const auto scale = unit.captured(2) == QLatin1String("h")   ? 3600
+                                           : unit.captured(2) == QLatin1String("m") ? 60
+                                                                                    : 1;
+                        seconds += unit.captured(1).toDouble() * scale;
+                    }
+                }
+                if (!cron && seconds > 0)
+                    task.expires_ms = task.started_ms + static_cast<qint64>(seconds * 1000);
+            }
             step.task = start_task(std::move(task));
-            step.title = QStringLiteral("Started in background");
+            if (cron)
+                recurring_.insert(step.task);
+            if (!condition.isEmpty())
+                waits_on_.insert(condition, step.task);
+            if (!scheduled)
+                step.title = QStringLiteral("Started in background");
             step.result.clear();
             step.result_lines = 0;
             step.duration_ms = 0;
         }
     } else if (name == QLatin1String("manage_task")) {
-        static const QRegularExpression checked(QStringLiteral(R"(task id: `?([^\s`]+/task-\d+))"));
+        // "Task: <id>\nStatus: RUNNING\nLog: ..." for a status check, `Task
+        // "<id>" cancelled.` for a kill (agy 1.5.12).
+        static const QRegularExpression checked(
+            QStringLiteral(R"re((?:task id: `?|Task: |Task ")([^\s`"]+/task-\d+))re"));
         Task* task = nullptr;
         if (const auto checked_task = spawned_.take(at); !checked_task.empty())
             task = &tasks_[static_cast<size_t>(checked_task.front())];
@@ -300,11 +387,20 @@ int AntigravityReader::result(int at, const QJsonObject& record) {
                 task->exit_code = code.captured(1).toInt();
                 task->exited = true;
             }
-            if (task->status.isEmpty() && content.contains(QLatin1String("Status: DONE")))
-                end_task(*task,
-                         task->exited && task->exit_code != 0 ? QStringLiteral("failed")
-                                                              : QStringLiteral("completed"),
-                         at_ms_);
+            static const QRegularExpression state(QStringLiteral(R"(Status: ([A-Z_]+))"));
+            static const QRegularExpression cancelled(
+                QStringLiteral(R"re(Task "[^"]+" cancell?ed)re"));
+            const auto word = state.match(content).captured(1);
+            if (task->status.isEmpty() && !step.failed) {
+                if (word == QLatin1String("DONE"))
+                    touched(finish(*task, task->exited && task->exit_code != 0
+                                              ? QStringLiteral("failed")
+                                              : QStringLiteral("completed")));
+                else if (cancelled.match(content).hasMatch() ||
+                         word.startsWith(QLatin1String("CANCEL")) ||
+                         word == QLatin1String("KILLED"))
+                    touched(finish(*task, QStringLiteral("stopped")));
+            }
             touched(task->item);
         }
     } else if (name == QLatin1String("manage_subagents")) {
@@ -344,18 +440,36 @@ int AntigravityReader::system_note(const QString& content) {
         if (!rest.trimmed().isEmpty())
             task->last_check = clip(without_escapes(rest).trimmed(), result_preview_chars);
         const bool canceled = match.captured(2) != QLatin1String("finished");
-        return end_task(*task,
-                        canceled                               ? QStringLiteral("stopped")
-                        : task->exited && task->exit_code != 0 ? QStringLiteral("failed")
-                                                               : QStringLiteral("completed"),
-                        at_ms_);
+        return finish(*task, canceled                               ? QStringLiteral("stopped")
+                             : task->exited && task->exit_code != 0 ? QStringLiteral("failed")
+                                                                    : QStringLiteral("completed"));
     }
     // "[Message] timestamp=... sender=<conversation> priority=...": a
-    // subagent's message to its parent, its report; it has finished.
+    // subagent's message to its parent, its report; it has finished. From
+    // a schedule task, "... content=<its prompt>": the timer fired.
     static const QRegularExpression message(QStringLiteral(R"(\[Message\][^\n]*sender=(\S+))"));
     if (const auto match = message.match(content); match.hasMatch()) {
         auto* task = task_named(match.captured(1));
-        if (task == nullptr || task->type != Task::Type::subagent)
+        if (task == nullptr)
+            return -1;
+        if (task->type == Task::Type::monitor) {
+            if (!task->status.isEmpty())
+                return -1;
+            const auto from = content.indexOf(QLatin1String("content="), match.capturedEnd());
+            const auto asked =
+                from < 0
+                    ? QString{}
+                    : content.mid(from + 8).remove(QStringLiteral("</SYSTEM_MESSAGE>")).trimmed();
+            ++task->checks;
+            task->seen_ms = std::max(task->seen_ms, at_ms_);
+            if (!asked.isEmpty())
+                task->last_check = clip(asked, result_preview_chars);
+            const int at = static_cast<int>(task - tasks_.data());
+            // A cron fires again; a one-shot timer has done its work.
+            return recurring_.contains(at) ? task->item
+                                           : finish(*task, QStringLiteral("completed"));
+        }
+        if (task->type != Task::Type::subagent)
             return -1;
         const auto body = content.mid(content.indexOf(QLatin1Char('\n'), match.capturedEnd()) + 1);
         task->report = clip(QString(body).remove(QStringLiteral("</SYSTEM_MESSAGE>")).trimmed(),
@@ -364,6 +478,20 @@ int AntigravityReader::system_note(const QString& content) {
                                       : task->item;
     }
     return -1;
+}
+
+int AntigravityReader::finish(Task& task, const QString& status) {
+    int first = end_task(task, status, at_ms_);
+    // A timer set to fire when this task ends goes with it; agy writes no
+    // end of its own for it.
+    const auto waiters = waits_on_.values(task.id);
+    waits_on_.remove(task.id);
+    for (const int waiter : waiters) {
+        auto& timer = tasks_[static_cast<size_t>(waiter)];
+        if (timer.status.isEmpty())
+            first = std::min(first, end_task(timer, QStringLiteral("completed"), at_ms_));
+    }
+    return first;
 }
 
 void AntigravityReader::wake(const QString& why) {
@@ -417,6 +545,7 @@ int AntigravityReader::add(const QByteArray& line) {
             waiting_.clear(); // results never written for calls before this
             called_.clear();
             spawned_.clear();
+            scheduled_.clear();
             turn_since_ms_ = at_ms_;
         }
         turn_open_ = true;
@@ -426,6 +555,7 @@ int AntigravityReader::add(const QByteArray& line) {
             prompt.starts_turn = !steers;
             prompt.steered = steers;
             taken(prompt);
+            mark_peer(prompt);
             push(std::move(prompt));
             shown = true;
         }
@@ -461,6 +591,16 @@ int AntigravityReader::add(const QByteArray& line) {
                       clip(thought_text(thinking), body_chars)));
         if (!reply.isEmpty())
             push(make(Kind::reply, {}, clip(reply, body_chars)));
+        if (!calls.isEmpty()) {
+            // agy writes a response's results before its next response; a
+            // call still waiting got none, and must not take this one's.
+            for (const int stale : waiting_) {
+                called_.remove(stale);
+                scheduled_.remove(stale);
+                spawned_.remove(stale);
+            }
+            waiting_.clear();
+        }
         for (const auto& value : calls)
             call(value.toObject());
         step_at_ms_ = calls.isEmpty() ? 0 : at_ms_;

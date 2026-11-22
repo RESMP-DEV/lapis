@@ -661,6 +661,18 @@ void real_input_boxes_are_read() {
                                 "cycle)"),
                  wide, agy_footer}),
          {}},
+        {"agy idle, truncated Auto mode placeholder on narrow terminal",
+         Format::antigravity,
+         top({wide,
+              QStringLiteral("> Auto mode: edits & safe commands auto-approved (shift+tab to "
+                             "cy..."),
+              wide, agy_footer}),
+         {}},
+        {"agy idle, truncated Auto mode placeholder with ellipsis",
+         Format::antigravity,
+         top({wide, QStringLiteral("> Auto mode: edits & safe commands auto-app…"), wide,
+              agy_footer}),
+         {}},
         {"agy idle, Plan mode placeholder",
          Format::antigravity,
          top({wide, QStringLiteral("> Plan mode: research & plan only (shift+tab to cycle)"), wide,
@@ -1482,8 +1494,11 @@ void model_follows_file() {
     TranscriptModel model;
     model.setPath(path);
     model.loadNow();
-    // The only turn opens with its steps: prompt, "Worked" header, the step.
-    require(model.rowCount() == 3, "loaded two items, the step under its header");
+    // The only turn starts folded: prompt and its "Worked" header; opened,
+    // the step shows under it.
+    require(model.rowCount() == 2, "loaded two items, the step folded under its header");
+    model.toggleWork(1);
+    require(model.rowCount() == 3, "opened, the step shows under its header");
     int changed = 0, inserted = 0;
     QObject::connect(&model, &QAbstractItemModel::dataChanged, [&changed] { ++changed; });
     QObject::connect(&model, &QAbstractItemModel::rowsInserted, [&inserted] { ++inserted; });
@@ -1614,7 +1629,14 @@ void turns_fold() {
     const auto kind = [&model](int row) {
         return model.data(model.index(row), TranscriptModel::KindRole).toString();
     };
-    // The latest finished turn and the open one start with their steps shown.
+    // Every turn starts folded to its header, the open one too.
+    require(model.rowCount() == 5 && kind(1) == QStringLiteral("work") &&
+                kind(2) == QStringLiteral("reply") && kind(4) == QStringLiteral("work") &&
+                !model.data(model.index(1), TranscriptModel::ExpandedRole).toBool() &&
+                !model.data(model.index(4), TranscriptModel::ExpandedRole).toBool(),
+            "a finished turn and the open one start folded to their headers");
+    model.toggleWork(1);
+    model.toggleWork(6);
     require(model.rowCount() == 8 && kind(0) == QStringLiteral("prompt") &&
                 kind(1) == QStringLiteral("work") && kind(2) == QStringLiteral("thinking") &&
                 kind(3) == QStringLiteral("tool") && kind(4) == QStringLiteral("reply") &&
@@ -1622,7 +1644,7 @@ void turns_fold() {
                 kind(7) == QStringLiteral("tool") &&
                 model.data(model.index(3), TranscriptModel::InWorkRole).toBool() &&
                 model.data(model.index(1), TranscriptModel::ExpandedRole).toBool(),
-            "the latest finished turn and the open one show their steps under their headers");
+            "opened, both show their steps under their headers");
     model.setLive(true);
     const auto& steps = *qobject_cast<lapis::desktop::LiveStepsModel*>(model.liveSteps());
     require(model.rowCount() == 8 && kind(6) == QStringLiteral("live") &&
@@ -1705,6 +1727,9 @@ void live_box_follows_claude() {
         return out.join('|');
     };
     require(kinds() == "prompt|live" && steps.rowCount() == 0, "a new turn: prompt and live box");
+    require(!model.data(model.index(1), TranscriptModel::ExpandedRole).toBool(),
+            "the live header starts folded");
+    model.toggleWork(1);
     int resets = 0, inserted = 0, redrawn = 0;
     QObject::connect(&steps, &QAbstractItemModel::modelReset, [&resets] { ++resets; });
     QObject::connect(&steps, &QAbstractItemModel::rowsInserted, [&inserted] { ++inserted; });
@@ -1748,23 +1773,23 @@ void live_box_follows_claude() {
         R"({"type":"assistant","uuid":"a5","timestamp":"2026-11-07T10:00:31.000Z","message":{"content":[{"type":"tool_use","id":"t3","name":"Read","input":{"file_path":"/x/a.cpp"}}]}})");
     model.readMore();
     require(steps.rowCount() == 1 &&
-                kinds() == "prompt|work|thinking|tool|reply|tool|prompt|live|tool",
-            "the live header lists the steps after the steering prompt");
+                kinds() == "prompt|work|thinking|tool|reply|tool|prompt|live" &&
+                !model.data(model.index(7), TranscriptModel::ExpandedRole).toBool(),
+            "the new live header counts the steps after the steering prompt, folded");
     append(
         R"({"type":"assistant","uuid":"a6","timestamp":"2026-11-07T10:00:40.000Z","message":{"content":[{"type":"text","text":"Done with tabs."}]}})");
     append(R"({"type":"system","subtype":"turn_duration","durationMs":40000})");
     model.readMore();
-    require(kinds() == "prompt|work|thinking|tool|reply|tool|prompt|work|tool|reply" &&
+    require(kinds() == "prompt|work|thinking|tool|reply|tool|prompt|work|reply" &&
                 steps.rowCount() == 0,
-            "finished: prompt, work, steering prompt, work, reply");
+            "finished: prompt, work, steering prompt, folded work, reply");
     require(model.data(model.index(1), TranscriptModel::TitleRole).toString() == "Worked for 20s" &&
                 model.data(model.index(7), TranscriptModel::TitleRole).toString() ==
                     "Worked for 20s",
             "each part is timed from its prompt");
     model.toggleWork(7);
-    require(kinds() == "prompt|work|thinking|tool|reply|tool|prompt|work|reply",
-            "the second part folds on its own");
-    model.toggleWork(7);
+    require(kinds() == "prompt|work|thinking|tool|reply|tool|prompt|work|tool|reply",
+            "the second part opens on its own");
     model.toggleWork(1);
     require(kinds() == "prompt|work|prompt|work|tool|reply",
             "the first part folds its steps and interim reply on its own");
@@ -1818,10 +1843,13 @@ void older_turns_start_folded() {
             out << model.data(model.index(row), TranscriptModel::KindRole).toString();
         return out.join('|');
     };
-    require(lapis::desktop::transcript::expanded_finished_turns == 1,
-            "one finished turn opens by default");
+    require(lapis::desktop::transcript::expanded_finished_turns == 0,
+            "no finished turn opens by default");
+    require(kinds() == "prompt|work|reply|prompt|work|reply|prompt|work|reply",
+            "every turn starts folded, the latest too");
+    model.toggleWork(7);
     require(kinds() == "prompt|work|reply|prompt|work|reply|prompt|work|tool|reply",
-            "older turns start folded; the latest shows its step");
+            "the latest opened shows its step");
     const int step = 8;
     model.toggleStep(step);
     require(model.data(model.index(step), TranscriptModel::OpenedRole).toBool(),
@@ -1829,14 +1857,14 @@ void older_turns_start_folded() {
     turn(4);
     model.readMore();
     require(kinds() ==
-                "prompt|work|reply|prompt|work|reply|prompt|work|tool|reply|prompt|work|tool|reply",
-            "a new turn shows its step and leaves the one before it shown");
+                "prompt|work|reply|prompt|work|reply|prompt|work|tool|reply|prompt|work|reply",
+            "a new turn starts folded and leaves the one opened before it shown");
     require(model.data(model.index(step), TranscriptModel::OpenedRole).toBool() &&
                 !model.data(model.index(12), TranscriptModel::OpenedRole).toBool(),
             "the opened step stays opened as rows arrive; the new one starts closed");
     model.setPath(other);
     model.setPath(path);
-    require(model.rowCount() == 14 &&
+    require(model.rowCount() == 13 &&
                 model.data(model.index(step), TranscriptModel::OpenedRole).toBool(),
             "switching away and back keeps the step opened");
     model.toggleStep(step);
@@ -1845,6 +1873,27 @@ void older_turns_start_folded() {
     model.toggleWork(1);
     require(kinds().startsWith("prompt|work|tool|reply|prompt|work|reply"),
             "an older turn's header shows its steps when clicked");
+
+    // The running turn's live header starts folded too, under the default
+    // and under expand_from's own answer; a click opens it.
+    namespace transcript = lapis::desktop::transcript;
+    std::vector<transcript::Item> items(3);
+    items[0].kind = Kind::prompt;
+    items[0].starts_turn = true;
+    items[1].kind = Kind::thinking;
+    items[1].body = QStringLiteral("Plan the parser.");
+    items[2].kind = Kind::tool;
+    const auto live_row = [](const transcript::Layout& layout) {
+        const auto row = std::ranges::find_if(layout.rows, [](const auto& r) { return r.live; });
+        return row == layout.rows.end() ? transcript::Row{} : *row;
+    };
+    const auto folded = transcript::lay_out(items, {}, true);
+    require(transcript::expand_from(folded) == transcript::expand_none && live_row(folded).live &&
+                !live_row(folded).expanded && folded.rows.size() == 2,
+            "a running turn starts as its live header alone");
+    const auto opened = transcript::lay_out(items, {0}, true, transcript::expand_from(folded));
+    require(live_row(opened).expanded && opened.rows.size() == 4,
+            "clicked, the live header lists its thought and step");
 }
 
 // Code colors by its language: the role at a column of a line.
@@ -2618,6 +2667,165 @@ void tasks_resume_and_end() {
             "a command that ran long becomes a background task from its start");
     require(tasks[1].status == "stopped", "a new session ends the commands left open");
 }
+
+// agy 1.5.12's background work, in the shapes its transcript_full.jsonl
+// writes: a command and a timer waiting on it, a cron, all with bare task
+// ids; a check with transcript.jsonl's quoted arguments; a kill; a timer
+// that fires.
+void antigravity_background_and_schedules() {
+    using lapis::desktop::transcript::AntigravityReader;
+    using lapis::desktop::transcript::Task;
+    AntigravityReader reader;
+    const auto feed = [&reader](std::initializer_list<const char*> lines) {
+        for (const char* line : lines)
+            (void)reader.add(line);
+    };
+    feed({
+        R"({"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-11-11T16:00:00Z","content":"<USER_REQUEST>\nBuild it\n</USER_REQUEST>"})",
+        R"({"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:00:01Z","tool_calls":[{"name":"run_command","args":{"CommandLine":"make all","Cwd":"/work/demo","WaitMsBeforeAsync":500}},{"name":"schedule","args":{"DurationSeconds":10800,"Prompt":"Check the build","TimerCondition":"conv/task-2"}}]})",
+        R"({"step_index":2,"source":"MODEL","type":"GENERIC","status":"RUNNING","created_at":"2026-11-11T16:00:02Z","content":"Created At: 2026-11-11T10:00:01-06:00\nTool is running as a background task with task id: conv/task-2\nTask Description: make all\nTask logs are available at: file:///nowhere/conv/.system_generated/tasks/task-2.log\nYOU MUST TAKE ONE OF THE FOLLOWING TWO ACTIONS: A) proceed, B) end the turn.\n DO NOTHING ELSE."})",
+        R"({"step_index":3,"source":"MODEL","type":"GENERIC","status":"RUNNING","created_at":"2026-11-11T16:00:02Z","content":"Created At: 2026-11-11T10:00:01-06:00\nTool is running as a background task with task id: conv/task-3\nTask Description: Timer: 3h, Prompt: Check the build\nTask logs are available at: file:///nowhere/conv/.system_generated/tasks/task-3.log\nYOU MUST TAKE ONE OF THE FOLLOWING TWO ACTIONS: A) proceed, B) end the turn.\n DO NOTHING ELSE."})",
+        R"({"step_index":4,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:00:10Z","tool_calls":[{"name":"schedule","args":{"CronExpression":"*/2 * * * *","Prompt":"Poll the lanes","toolSummary":"Schedule lane poll"}}]})",
+        R"({"step_index":5,"source":"MODEL","type":"GENERIC","status":"RUNNING","created_at":"2026-11-11T16:00:11Z","content":"Created At: 2026-11-11T10:00:10-06:00\nTool is running as a background task with task id: conv/task-5\nTask Description: Cron: */2 * * * *, Prompt: Poll the lanes\nTask logs are available at: file:///nowhere/conv/.system_generated/tasks/task-5.log\nYOU MUST TAKE ONE OF THE FOLLOWING TWO ACTIONS."})",
+        R"({"step_index":6,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:00:12Z","content":"Started the build; I will check back."})",
+    });
+    const auto& tasks = reader.tasks();
+    const auto& items = reader.items();
+    require(tasks.size() == 3, "agy 1.5.12: a command, a timer and a cron, with bare task ids");
+    if (tasks.size() != 3)
+        return;
+    require(tasks[0].type == Task::Type::background && tasks[0].id == "conv/task-2" &&
+                tasks[0].description == "make all" &&
+                tasks[0].file == "/nowhere/conv/.system_generated/tasks/task-2.log" &&
+                items[static_cast<size_t>(tasks[0].item)].title == "Started in background",
+            "agy: a command left running, its log a local path");
+    require(tasks[1].type == Task::Type::monitor && tasks[1].id == "conv/task-3" &&
+                tasks[1].description == "Check the build" &&
+                tasks[1].expires_ms == tasks[1].started_ms + qint64{10800} * 1000 &&
+                items[static_cast<size_t>(tasks[1].item)].title == "Scheduled a wakeup" &&
+                items[static_cast<size_t>(tasks[1].item)].detail == "in 3h 0m",
+            "agy: a timer is a monitor due when it fires");
+    require(tasks[2].type == Task::Type::monitor && tasks[2].expires_ms == 0 &&
+                tasks[2].description == "Poll the lanes" &&
+                items[static_cast<size_t>(tasks[2].item)].title == "Scheduled a recurring check" &&
+                items[static_cast<size_t>(tasks[2].item)].detail == "*/2 * * * *",
+            "agy: a cron is a monitor with no expiry");
+    // Two hours of quiet: the timer is still waiting; the silence rule
+    // would have dropped it.
+    const auto later = at("2026-11-11T18:00:00.000Z");
+    require(lapis::desktop::transcript::task_running(tasks[1], tasks[1].started_ms, later),
+            "a timer set for three hours runs through two quiet ones");
+    require(!lapis::desktop::transcript::task_running(tasks[1], tasks[1].started_ms,
+                                                      tasks[1].expires_ms),
+            "a timer is over once due");
+
+    feed({
+        R"({"step_index":7,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","created_at":"2026-11-11T16:02:00Z","content":"The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-11T16:02:00Z sender=conv/task-5 priority=MESSAGE_PRIORITY_HIGH content=Poll the lanes\n</SYSTEM_MESSAGE>"})",
+        R"({"step_index":8,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:02:05Z","tool_calls":[{"name":"manage_task","args":{"Action":"\"status\"","TaskId":"\"conv/task-2\""}}]})",
+        R"({"step_index":9,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"2026-11-11T16:02:06Z","content":"Created At: 2026-11-11T10:02:05-06:00\nCompleted At: 2026-11-11T10:02:06-06:00\nTask: conv/task-2\nStatus: RUNNING\nLog: file:///nowhere/conv/.system_generated/tasks/task-2.log\n"})",
+        R"({"step_index":10,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:02:07Z","content":"Still building."})",
+    });
+    require(tasks[2].status.isEmpty() && tasks[2].checks == 1 &&
+                tasks[2].last_check == "Poll the lanes" &&
+                tasks[2].seen_ms == at("2026-11-11T16:02:00.000Z"),
+            "agy: a cron firing is an event; the cron runs on");
+    require(
+        tasks[0].checks == 1 && tasks[0].status.isEmpty() &&
+            std::ranges::count_if(
+                items, [](const auto& item) { return item.quiet && item.kind == Kind::tool; }) == 1,
+        "agy: a check named with quoted arguments folds into the command's step");
+
+    feed({
+        R"({"step_index":11,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","created_at":"2026-11-11T16:03:00Z","content":"<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-11T16:03:00Z sender=conv/task-2 priority=MESSAGE_PRIORITY_HIGH content=Task id \"conv/task-2\" finished with result:\nCommand exited with code 0.\n</SYSTEM_MESSAGE>"})",
+        R"({"step_index":12,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:03:05Z","tool_calls":[{"name":"manage_task","args":{"Action":"kill","TaskId":"conv/task-5"}}]})",
+        R"({"step_index":13,"source":"MODEL","type":"GENERIC","status":"DONE","created_at":"2026-11-11T16:03:06Z","content":"Created At: 2026-11-11T10:03:05-06:00\nCompleted At: 2026-11-11T10:03:06-06:00\nTask \"conv/task-5\" cancelled."})",
+    });
+    require(tasks[0].status == "completed" && tasks[0].exited && tasks[0].exit_code == 0,
+            "agy: the finished message ends the command");
+    require(tasks[1].status == "completed" && tasks[1].ended_ms == at("2026-11-11T16:03:00.000Z"),
+            "agy: a timer waiting on a task goes when the task ends");
+    require(tasks[2].status == "stopped", "agy: a killed cron is stopped");
+    require(items.back().title == "Stopped task", "agy: a kill reads as one");
+
+    feed({
+        R"({"step_index":14,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:04:00Z","tool_calls":[{"name":"schedule","args":{"DurationSeconds":40,"Prompt":"Look again"}}]})",
+        R"({"step_index":15,"source":"MODEL","type":"GENERIC","status":"RUNNING","created_at":"2026-11-11T16:04:01Z","content":"Tool is running as a background task with task id: conv/task-15\nTask Description: Timer: 40s, Prompt: Look again\nTask logs are available at: file:///nowhere/task-15.log"})",
+        R"({"step_index":16,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:04:02Z","content":"Waiting."})",
+        R"({"step_index":17,"source":"SYSTEM","type":"SYSTEM_MESSAGE","status":"DONE","created_at":"2026-11-11T16:04:41Z","content":"<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-11T16:04:41Z sender=conv/task-15 priority=MESSAGE_PRIORITY_HIGH content=Look again\n</SYSTEM_MESSAGE>"})",
+    });
+    require(tasks.size() == 4 && tasks[3].type == Task::Type::monitor &&
+                tasks[3].status == "completed" && tasks[3].checks == 1 &&
+                tasks[3].last_check == "Look again",
+            "agy: a one-shot timer that fired is done");
+
+    // A call agy wrote no result for (as in 143 of 49k real responses)
+    // must not take the next call's result.
+    feed({
+        R"({"step_index":18,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:05:00Z","tool_calls":[{"name":"grep_search","args":{"Query":"TODO","SearchPath":"/work/demo"}}]})",
+        R"({"step_index":19,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-11T16:05:10Z","tool_calls":[{"name":"schedule","args":{"DurationSeconds":60,"Prompt":"Once more"}}]})",
+        R"({"step_index":20,"source":"MODEL","type":"GENERIC","status":"RUNNING","created_at":"2026-11-11T16:05:11Z","content":"Tool is running as a background task with task id: conv/task-20\nTask Description: Timer: 1m, Prompt: Once more\nTask logs are available at: file:///nowhere/task-20.log"})",
+    });
+    require(tasks.size() == 5 && tasks[4].type == Task::Type::monitor &&
+                items[static_cast<size_t>(tasks[4].item)].title == "Scheduled a wakeup" &&
+                tasks[4].expires_ms == tasks[4].started_ms + 60'000 &&
+                tasks[4].started_ms == at("2026-11-11T16:05:10.000Z"),
+            "agy: a result goes to its own call when an earlier call got none");
+}
+
+// Codex 0.169 code mode: one cell starting two commands that run on, their
+// ends, a process id reused by a later command, a poll, and wait_agent.
+void codex_background_processes() {
+    using lapis::desktop::transcript::CodexReader;
+    using lapis::desktop::transcript::Task;
+    CodexReader reader;
+    for (
+        const char* line : {
+            R"({"timestamp":"2026-11-11T16:00:00.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}})",
+            R"({"timestamp":"2026-11-11T16:00:01.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"c1","input":"const rs = await Promise.all([tools.exec_command({cmd: \"make a\", yield_time_ms: 250}), tools.exec_command({cmd: \"make b\", yield_time_ms: 250})]);"}})",
+            R"({"timestamp":"2026-11-11T16:00:02.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":[{"type":"input_text","text":"Script completed\nWall time 0.5 seconds\nOutput:\n"},{"type":"input_text","text":"{\"chunk_id\":\"a1\",\"wall_time_seconds\":0.25,\"session_id\":101,\"original_token_count\":0,\"output\":\"a so far\"}"},{"type":"input_text","text":"{\"chunk_id\":\"a2\",\"wall_time_seconds\":0.25,\"session_id\":102,\"original_token_count\":0,\"output\":\"\"}"}]}})",
+            R"({"timestamp":"2026-11-11T16:01:00.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"e1","process_id":"101","command":["/bin/zsh","-lc","make a"],"cwd":"/work/demo","status":"completed","exit_code":0,"aggregated_output":"a done","duration":{"secs":59,"nanos":0}}}})",
+            R"x({"timestamp":"2026-11-11T16:02:00.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"c2","input":"text(await tools.exec_command({cmd: \"make c\", yield_time_ms: 250}))"}})x",
+            R"({"timestamp":"2026-11-11T16:02:01.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c2","output":[{"type":"input_text","text":"{\"chunk_id\":\"a3\",\"wall_time_seconds\":0.25,\"session_id\":101,\"original_token_count\":0,\"output\":\"\"}"}]}})",
+            R"({"timestamp":"2026-11-11T16:02:30.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c3","output":[{"type":"input_text","text":"{\"chunk_id\":\"a4\",\"wall_time_seconds\":5.0,\"session_id\":101,\"original_token_count\":0,\"output\":\"c half\"}"}]}})",
+            R"({"timestamp":"2026-11-11T16:02:40.000Z","type":"event_msg","payload":{"type":"item_completed","started_at_ms":1794412960000,"item":{"type":"CollabAgentToolCall","id":"k1","tool":"spawn_agent","status":"completed","receiver_agents":[{"thread_id":"child-1","agent_nickname":"Ada"}],"prompt":"Map it","agents_states":{"child-1":"running"}}}})",
+            R"({"timestamp":"2026-11-11T16:02:50.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CollabAgentToolCall","id":"k2","tool":"wait_agent","status":"completed","receiver_thread_ids":["child-1"],"agents_states":{"child-1":"running"}}}})",
+        })
+        (void)reader.add(line);
+    const auto& tasks = reader.tasks();
+    const auto& items = reader.items();
+    require(tasks.size() == 4,
+            "codex: two commands from one cell, a reused id's command, a subagent");
+    if (tasks.size() != 4)
+        return;
+    require(tasks[0].id == "process 101" && tasks[1].id == "process 102" &&
+                tasks[0].type == Task::Type::background &&
+                tasks[1].type == Task::Type::background && tasks[0].last_check == "a done" &&
+                tasks[1].last_check.isEmpty(),
+            "codex: each command a cell left running is its own task, with its own output");
+    require(tasks[0].status == "completed" && tasks[0].description == "make a" &&
+                tasks[1].status.isEmpty(),
+            "codex: one ends by its item; the other runs on");
+    require(tasks[2].id == "process 101" && tasks[2].description == "make c" &&
+                tasks[2].status.isEmpty() && tasks[2].checks == 1 &&
+                tasks[2].last_check == "c half",
+            "codex: a reused process id starts a new task, and polls land on it");
+    require(tasks[3].type == Task::Type::subagent && tasks[3].status.isEmpty() &&
+                items.back().title == "Waited for" && items.back().body == "Ada",
+            "codex: wait_agent waits for the subagent it names");
+
+    // As Codex 0.169 writes a cell of several commands: one's end comes
+    // first, then the cell's output still calls it running.
+    for (
+        const char* line : {
+            R"({"timestamp":"2026-11-11T16:03:00.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","call_id":"c4","input":"const rs = await Promise.allSettled([tools.exec_command({cmd: \"make d\"}), tools.exec_command({cmd: \"make e\"})]);"}})",
+            R"({"timestamp":"2026-11-11T16:03:05.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"e4","process_id":"201","command":["/bin/zsh","-lc","make d"],"cwd":"/work/demo","status":"completed","exit_code":0,"aggregated_output":"d done"}}})",
+            R"({"timestamp":"2026-11-11T16:03:06.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c4","output":[{"type":"input_text","text":"{\"status\":\"fulfilled\",\"value\":{\"chunk_id\":\"b1\",\"wall_time_seconds\":0.25,\"session_id\":201,\"original_token_count\":0,\"output\":\"\"}}"},{"type":"input_text","text":"{\"status\":\"fulfilled\",\"value\":{\"chunk_id\":\"b2\",\"wall_time_seconds\":0.25,\"session_id\":202,\"original_token_count\":0,\"output\":\"\"}}"}]}})",
+        })
+        (void)reader.add(line);
+    require(tasks.size() == 5 && tasks[4].id == "process 202" && tasks[4].status.isEmpty(),
+            "codex: a process whose end came before the cell's output is not left running");
+}
+
 // A Claude Code thought: trimmed, blank-line runs one break, its time kept.
 void thoughts_are_clean() {
     ClaudeReader reader;
@@ -2717,6 +2925,14 @@ void peer_turns_fold() {
     require(items.size() == 13 && !items[0].peer && items[0].body.startsWith("Ship the parser") &&
                 items[4].peer && items[4].body == QStringLiteral("Can you share the parser API?"),
             "the person's prompt (quoting an envelope) is untouched; a peer's body is kept");
+    // Every part's work starts folded, the person's own last turn too.
+    require(model.rowCount() == 7 && kind(1) == QStringLiteral("work") &&
+                kind(6) == QStringLiteral("work") &&
+                !role(1, TranscriptModel::ExpandedRole).toBool() &&
+                !role(6, TranscriptModel::ExpandedRole).toBool(),
+            "the person's last turn starts folded like the rest");
+    model.toggleWork(1);
+    model.toggleWork(7);
     // The person's turn, two folded peer rows, and the peer turn asking the
     // person a question shown whole.
     require(model.rowCount() == 9 && kind(0) == QStringLiteral("prompt") &&
@@ -2726,7 +2942,7 @@ void peer_turns_fold() {
                 kind(7) == QStringLiteral("work") && kind(8) == QStringLiteral("tool"),
             "peer turns fold to one row each; one with a question for the person does not");
     require(role(1, TranscriptModel::ExpandedRole).toBool(),
-            "the person's last turn opens by default, not a peer turn");
+            "the person's last turn opens when clicked");
     const auto first = role(4, TranscriptModel::PeerRole).toMap();
     require(role(4, TranscriptModel::TitleRole).toString() == QStringLiteral("Example agent") &&
                 role(4, TranscriptModel::BodyRole).toString() ==
@@ -2767,13 +2983,13 @@ void peer_turns_fold() {
 
     // Opened in place: the message, its work and the reply under the row.
     model.togglePeer(4);
-    require(model.rowCount() == 11 && kind(4) == QStringLiteral("peer") &&
+    require(model.rowCount() == 10 && kind(4) == QStringLiteral("peer") &&
                 role(4, TranscriptModel::ExpandedRole).toBool() &&
                 kind(5) == QStringLiteral("prompt") &&
                 !role(5, TranscriptModel::PeerRole).isNull() && kind(6) == QStringLiteral("work") &&
-                kind(7) == QStringLiteral("tool") && kind(8) == QStringLiteral("reply") &&
-                kind(9) == QStringLiteral("peer"),
-            "clicking a peer row shows the whole exchange under it");
+                !role(6, TranscriptModel::ExpandedRole).toBool() &&
+                kind(7) == QStringLiteral("reply") && kind(8) == QStringLiteral("peer"),
+            "clicking a peer row shows the whole exchange under it, its work folded");
     require(model.personAnchor() == -1, "an opened exchange is not folded traffic");
     model.togglePeer(4);
     require(model.rowCount() == 7 && !role(4, TranscriptModel::ExpandedRole).toBool(),
@@ -2926,6 +3142,10 @@ void peer_wakes_fold() {
                 wake_at->body == QStringLiteral("Can you share the parser API?") &&
                 wake_at->from.title == QStringLiteral("Example agent"),
             "the wake is the peer's message, starting its turn");
+    require(model.rowCount() == 4 && kind(1) == QStringLiteral("work") &&
+                !role(1, TranscriptModel::ExpandedRole).toBool(),
+            "the person's turn starts folded");
+    model.toggleWork(1);
     require(model.rowCount() == 5 && kind(0) == QStringLiteral("prompt") &&
                 kind(1) == QStringLiteral("work") && kind(2) == QStringLiteral("tool") &&
                 kind(3) == QStringLiteral("reply") && kind(4) == QStringLiteral("peer"),
@@ -2941,13 +3161,13 @@ void peer_wakes_fold() {
                 !role(4, TranscriptModel::ExpandedRole).toBool(),
             "a wake's row: the same sender card and reply's first line");
     require(role(1, TranscriptModel::ExpandedRole).toBool() && model.personAnchor() == 3,
-            "the person's last turn stays open and is where the view rests");
+            "the person's last turn, opened, is where the view rests");
     model.togglePeer(4);
-    require(model.rowCount() == 9 && kind(5) == QStringLiteral("prompt") &&
+    require(model.rowCount() == 8 && kind(5) == QStringLiteral("prompt") &&
                 !role(5, TranscriptModel::PeerRole).isNull() &&
                 role(5, TranscriptModel::BodyRole).toString() ==
                     QStringLiteral("Can you share the parser API?") &&
-                kind(8) == QStringLiteral("reply"),
+                kind(6) == QStringLiteral("work") && kind(7) == QStringLiteral("reply"),
             "opened, the wake shows as the peer's message, never the hook's text");
 }
 } // namespace
@@ -3117,6 +3337,8 @@ int run(int argc, char** argv) {
     math_is_styled();
     subagents_and_background_work();
     tasks_resume_and_end();
+    antigravity_background_and_schedules();
+    codex_background_processes();
     thoughts_are_clean();
     peer_messages_are_read();
     peer_turns_fold();

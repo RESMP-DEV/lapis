@@ -4070,6 +4070,47 @@ void check_sidebar_slide(QQuickWindow& window, lapis::desktop::AppWindow& previe
     QObject::disconnect(connection);
 }
 
+// The sidebar's solid dot: a confirmed finished turn off the stage shows a
+// small accent dot at the row's right, gone once the agent is looked at.
+void check_sidebar_dot(QQuickWindow& window, lapis::desktop::Workspace& workspace,
+                       const QString& captures) {
+    auto* focused = workspace.focusedAgent();
+    CHECK(focused != nullptr);
+    const auto id = focused->agentId() == QStringLiteral("renderer") ? QStringLiteral("notes")
+                                                                     : QStringLiteral("renderer");
+    auto* other = workspace.agent(id);
+    CHECK(other != nullptr && !other->dotVisible());
+    auto* dot = required_visual(window, QStringLiteral("sidebarDot_") + id);
+    CHECK(!dot->isVisible());
+    finish_turn(*other);
+    pump(40);
+    CHECK(other->unseen() && other->dotVisible());
+    CHECK(dot->isVisible());
+    CHECK(qAbs(dot->width() - 7) < 0.5 && qAbs(dot->height() - 7) < 0.5);
+    auto chrome = QQmlProperty::read(&window, QStringLiteral("chrome"));
+    if (chrome.canConvert<QJSValue>())
+        chrome = chrome.value<QJSValue>().toVariant();
+    const auto accent = chrome.toMap().value(QStringLiteral("accent")).value<QColor>();
+    CHECK(accent.isValid());
+    CHECK(QQmlProperty::read(dot, QStringLiteral("color")).value<QColor>() == accent);
+    // Vertically centred in its row's title.
+    auto* title = required_visual(window, QStringLiteral("sidebarTitle_") + id);
+    const auto dot_centre = dot->mapToScene({dot->width() / 2, dot->height() / 2}).y();
+    const auto title_centre = title->mapToScene({0, title->height() / 2}).y();
+    CHECK(qAbs(dot_centre - title_centre) <= 1.0);
+    // Nothing else lit: the stage agent has no dot.
+    CHECK(
+        !required_visual(window, QStringLiteral("sidebarDot_") + focused->agentId())->isVisible());
+    if (!captures.isEmpty())
+        CHECK(window.grabWindow().save(QDir(captures).filePath(QStringLiteral("sidebar-dot.png"))));
+    // Looking at it clears the dot.
+    CHECK(workspace.selectAgent(id));
+    pump(40);
+    CHECK(!other->dotVisible() && !dot->isVisible());
+    CHECK(workspace.selectAgent(focused->agentId()));
+    pump(40);
+}
+
 // Light mode and the Settings window, on a config of its own.
 int run_settings_window_tests() {
     using namespace lapis::desktop;
@@ -4094,6 +4135,7 @@ int run_settings_window_tests() {
     const auto captures = qEnvironmentVariable("LAPIS_SETTINGS_CAPTURE_DIR");
     check_appearance_toggle(*window, workspace, config_model, directory, captures);
     check_sidebar_theme(*window, workspace, config_model, directory, captures);
+    check_sidebar_dot(*window, workspace, captures);
     check_hidden_sidebar_title(*window, workspace, config_model, directory, captures);
     check_peer_thread(*window, workspace, config_model, directory, captures);
     check_quote_bars(*window, workspace, config_model, directory, captures);

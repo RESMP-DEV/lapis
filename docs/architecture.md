@@ -321,6 +321,20 @@ a finished turn or new request marks it once unless the person is looking
 (stage agent, window active, input within two minutes); looking by any path
 clears it for good; transient statuses and reconnects never re-mark a seen turn.
 
+The one drawn exception is the sidebar's solid dot (`Agent::dotVisible`, Nov
+20, 2026): unseen marks from quiet output (`Need::quiet`, 65% of them in
+`attention.jsonl`, firing mid-turn while agy and Codex run tools) re-flagged
+agents falsely, so the dot lights only for a confirmed end: an observer's
+finished turn (`Need::finished`), a finished-while-away turn an observer
+reported, or agy's transcript. For agy, `Workspace` stats `transcript.jsonl`
+(else `transcript_full.jsonl`, or a remote agent's existing mirror) every two
+seconds and reads only the last 64 KB when it grew: a last complete line that is
+a `PLANNER_RESPONSE` with status `DONE`, text and no tool calls at a new
+`step_index` is a finished turn; a new `USER_INPUT` clears the dot. History
+present on first sight marks nothing. The dot clears with the unseen mark or
+when the status turns to working, and `saveMarks` keeps it (`"dot"`), so a
+restart restores confirmed dots only.
+
 ### Terminal rendering and pacing
 
 The service screen is authoritative; desktop snapshots are replaceable caches.
@@ -412,7 +426,19 @@ a file over 4 MB sends its end first into `<id>.tail.jsonl`, shown until the
 mirror has caught up past it. The conversation is the one the agent's hooks
 last reported through its terminal, a `relayed` resume record the session
 service now keeps, which also makes restarts resume it by rewriting the
-remote command's `s=<id>`. Paths in a remote thread are never resolved on this
+remote command's `s=<id>`. Decision (2026-11-18): an Antigravity (agy) agent
+on another machine is mirrored the same way, into
+`<runtime>/remote/<host>/<id>/transcript_full.jsonl` (agy's file name, so
+`format_of` reads it as agy's). agy never names its conversation, so its
+helper runs with `--discover` and finds it there: the presence lock an agy
+process working in the agent's folder holds open (Linux `/proc`), else that
+process's one open conversation database, else agy's
+`cache/last_conversations.json` entry for the folder. An open database or that
+record never takes a conversation another agy process holds locked, never
+moves a followed one, and several agy agents in one folder decide nothing; a
+lock that differs from the followed conversation sends a `C` frame and lapis
+restarts the helper on it. A `--conversation <id>` in the launch is the
+initial guess. Paths in a remote thread are never resolved on this
 Mac (`TranscriptModel::remote`): no media lookup, no Command-click on files,
 no task files, no fork; attachments are uploaded to the agent's machine
 first, the only thing lapis writes there. Alternatives rejected: a parser

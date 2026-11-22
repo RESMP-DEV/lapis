@@ -5,9 +5,6 @@
 #include <utility>
 namespace lapis::desktop {
 namespace {
-// Pages kept within this many screens of the view.
-constexpr std::uint64_t kept_screens = 4;
-
 // One row of `source` into row `row` of `out`, cut or padded to its width.
 void copy_row(const session::TerminalSnapshot& source, std::size_t source_row,
               session::TerminalSnapshot& out, std::size_t row, std::size_t& hyperlink_bytes) {
@@ -97,13 +94,13 @@ bool blank_row(const session::TerminalSnapshot& snapshot, std::size_t row) {
 HistoryStrip::HistoryStrip(session::TerminalSnapshot screen, std::uint64_t archived)
     : screen_(std::move(screen)), archived_(archived), top_(archived) {}
 
-void HistoryStrip::addPage(session::TerminalSnapshot page) {
+void HistoryStrip::addPage(session::TerminalSnapshot page, std::uint64_t id) {
     if (page.size.rows == 0 || page.size.columns == 0)
         return;
     const auto first = static_cast<std::uint64_t>(page.history.viewport_offset);
     if (first >= archived_)
         return; // archived after browsing began: below the screen kept here
-    pages_.insert_or_assign(first, std::move(page));
+    pages_.insert_or_assign(first, Page{id, std::move(page)});
     if (!seam_settled_)
         settleSeam();
     forget();
@@ -156,10 +153,10 @@ void HistoryStrip::prependPage(session::TerminalSnapshot page) {
     const std::uint64_t rows = page.size.rows;
     if (rows == 0 || page.size.columns == 0)
         return;
-    std::map<std::uint64_t, session::TerminalSnapshot> moved;
+    std::map<std::uint64_t, Page> moved;
     for (auto& [first, kept] : pages_)
         moved.emplace(first + rows, std::move(kept));
-    moved.emplace(0, std::move(page));
+    moved.emplace(0, Page{0, std::move(page)});
     pages_ = std::move(moved);
     archived_ += rows;
     top_ += rows;
@@ -178,17 +175,15 @@ const session::TerminalSnapshot* HistoryStrip::holding(std::uint64_t row,
     if (found == pages_.begin())
         return nullptr;
     --found;
-    if (row >= found->first + found->second.size.rows)
+    if (row >= found->first + found->second.snapshot.size.rows)
         return nullptr;
     *first = found->first;
-    return &found->second;
+    return &found->second.snapshot;
 }
 
-std::optional<std::uint64_t> HistoryStrip::missing() const {
-    if (seam_missing_)
-        return seam_missing_;
-    const auto end = std::min(archived_, top_ + rows());
-    for (auto row = top_; row < end;) {
+std::optional<std::uint64_t> HistoryStrip::firstMissing(std::uint64_t from,
+                                                        std::uint64_t to) const {
+    for (auto row = from; row < std::min(to, archived_);) {
         std::uint64_t first{};
         const auto* page = holding(row, &first);
         if (page == nullptr)
@@ -196,6 +191,59 @@ std::optional<std::uint64_t> HistoryStrip::missing() const {
         row = first + page->size.rows;
     }
     return std::nullopt;
+}
+
+std::optional<std::uint64_t> HistoryStrip::ahead(std::uint64_t above, std::uint64_t below) const {
+    if (missing())
+        return std::nullopt;
+    const auto screen = std::max<std::uint64_t>(1, rows());
+    for (std::uint64_t band = 0; band < std::max(above, below); ++band) {
+        // The screen `band + 1` above: its nearest missing row is its last.
+        if (band < above && top_ > band * screen) {
+            const auto to = top_ - band * screen;
+            const auto from = to > screen ? to - screen : 0;
+            for (auto row = to; row > from; --row) {
+                std::uint64_t first{};
+                const auto* page = holding(row - 1, &first);
+                if (page == nullptr)
+                    return row - 1;
+                row = first + 1; // skip the rest of this page
+            }
+        }
+        if (band < below) {
+            const auto from = top_ + rows() + band * screen;
+            if (const auto row = firstMissing(from, from + screen))
+                return row;
+        }
+    }
+    return std::nullopt;
+}
+
+std::uint64_t HistoryStrip::keptRows() const {
+    std::uint64_t total{};
+    for (const auto& [first, page] : pages_)
+        total += page.snapshot.size.rows;
+    return total;
+}
+
+std::vector<HistoryStrip::Page> HistoryStrip::takePages(std::uint64_t screens) {
+    forget(screens);
+    std::vector<Page> taken;
+    taken.reserve(pages_.size());
+    for (auto& [first, page] : pages_) {
+        if (page.id == 0)
+            continue;
+        page.snapshot.history.viewport_offset = first;
+        taken.push_back(std::move(page));
+    }
+    pages_.clear();
+    return taken;
+}
+
+std::optional<std::uint64_t> HistoryStrip::missing() const {
+    if (seam_missing_)
+        return seam_missing_;
+    return firstMissing(top_, top_ + rows());
 }
 
 // Positional contract; callers and tests pin the order.
@@ -239,12 +287,25 @@ std::optional<session::TerminalSnapshot> HistoryStrip::rowAbove() const {
     return out;
 }
 
-void HistoryStrip::forget() {
-    const auto reach = kept_screens * std::max<std::uint64_t>(1, rows());
-    const auto low = top_ > reach ? top_ - reach : 0;
-    const auto high = top_ + rows() + reach;
-    std::erase_if(pages_, [low, high](const auto& entry) {
-        return entry.first + entry.second.size.rows <= low || entry.first >= high;
-    });
+void HistoryStrip::forget(std::uint64_t screens) {
+    const auto budget = screens * std::max<std::uint64_t>(1, rows());
+    auto kept = keptRows();
+    const auto view_end = top_ + rows();
+    // Pages do not overlap, so the furthest from the view is at one end.
+    const auto distance = [this, view_end](const auto& entry) -> std::uint64_t {
+        const auto end = entry.first + entry.second.snapshot.size.rows;
+        if (end <= top_)
+            return top_ - end + 1;
+        return entry.first >= view_end ? entry.first - view_end + 1 : 0;
+    };
+    while (kept > budget && !pages_.empty()) {
+        const auto low = pages_.begin();
+        const auto high = std::prev(pages_.end());
+        const auto far = distance(*low) >= distance(*high) ? low : high;
+        if (distance(*far) == 0)
+            break; // only pages in view remain
+        kept -= far->second.snapshot.size.rows;
+        pages_.erase(far);
+    }
 }
 } // namespace lapis::desktop

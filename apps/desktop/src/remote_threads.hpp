@@ -21,15 +21,21 @@ class QProcess;
 
 namespace lapis::desktop {
 
-// The visual view for a Claude Code agent on another machine. The agent's
-// conversation file lives there, so a helper (remote_thread.py, sent to that
-// machine's python3 on ssh's standard input, nothing installed or written
-// there) streams it into a private cache on this Mac, which the view reads
-// as it reads a local transcript:
+// The visual view for a Claude Code or Antigravity (agy) agent on another
+// machine. The agent's conversation file lives there, so a helper
+// (remote_thread.py, sent to that machine's python3 on ssh's standard input,
+// nothing installed or written there) streams it into a private cache on
+// this Mac, which the view reads as it reads a local transcript:
 //
 //   <runtime>/remote/<machine>/<conversation>.jsonl       the mirror
 //   <runtime>/remote/<machine>/<conversation>.tail.jsonl  its end, shown first
 //   <runtime>/remote/<machine>/<conversation>.meta.json   identity to resume
+//
+// An agy conversation's copies keep agy's file name, which says their format:
+// <conversation>/transcript_full.jsonl and <conversation>/tail/transcript_full.jsonl.
+// agy never names its conversation, so its helper also finds which one the
+// agent's process holds there (remote_thread.py --discover) and says when
+// that changes; the mirror then moves to it.
 //
 // Folders are 0700 and files 0600. One helper runs per conversation the view
 // shows (or asked for in the last few seconds), stopped shortly after it is
@@ -49,16 +55,20 @@ class RemoteThreads final : public QObject {
   public:
     // What a remote agent's view needs: its ssh host, its folder there as
     // its command names it (~ is that machine's home), the conversation id
-    // (a UUID) and the ssh program its own command uses.
+    // (a UUID; for agy only lapis's guess, possibly empty, which the helper
+    // corrects), the ssh program its own command uses and its CLI ("claude"
+    // or "agy").
     struct Target {
         QString machine;
         QString folder;
         QString conversation;
         QString ssh;
+        QString harness{QStringLiteral("claude")};
         friend bool operator==(const Target&, const Target&) = default;
     };
     // The current target of an agent, or nullopt when it is not a Claude
-    // Code agent on another machine (or has no conversation id).
+    // Code or agy agent on another machine (or a Claude Code one has no
+    // conversation id).
     using Resolve = std::function<std::optional<Target>(const QString& agent)>;
     // `root` is the runtime folder (beside the workspace registry); the cache
     // is root/remote. An empty root disables mirroring.
@@ -72,6 +82,9 @@ class RemoteThreads final : public QObject {
     // data. Asking counts as wanting the thread: its helper starts (or keeps
     // running), and moves to another conversation when the agent's changed.
     [[nodiscard]] QString file(const QString& agent);
+    // The thread's mirror already on this Mac, without wanting it: no helper
+    // starts. Empty when none was mirrored.
+    [[nodiscard]] QString mirroredFile(const QString& agent) const;
     // The agent whose thread shows now ("" for none): its helper keeps
     // running; the others stop once not asked for a while.
     void setShown(const QString& agent);
@@ -104,6 +117,9 @@ class RemoteThreads final : public QObject {
     // The cache files, for tests and tools.
     [[nodiscard]] QString cacheFolder(const QString& machine) const;
     [[nodiscard]] bool running(const QString& agent) const;
+    // The conversation the agent's mirror follows: the target's, or for agy
+    // the one its helper found there. Empty while none is known.
+    [[nodiscard]] QString conversation(const QString& agent) const;
     // Shorter waits for tests: how long a thread no longer shown keeps its
     // helper, each reconnect wait, how often conversations are checked, and
     // the tail sizes the helper is asked for.

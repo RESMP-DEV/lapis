@@ -35,6 +35,14 @@ constexpr int upload_timeout_ms = 120'000;
 bool uuid(const QString& text) {
     return QUuid::fromString(text).toString(QUuid::WithoutBraces) == text && text == text.toLower();
 }
+bool agy(const RemoteThreads::Target& target) { return target.harness == QLatin1String("agy"); }
+// A target the helper can follow: Claude Code needs its conversation; agy
+// may leave it for the helper to find.
+bool followable(const RemoteThreads::Target& target) {
+    if (target.harness != QLatin1String("claude") && !agy(target))
+        return false;
+    return uuid(target.conversation) || (agy(target) && target.conversation.isEmpty());
+}
 // A machine name as a folder name: its own characters (validMachine allows
 // letters, digits, '.', '_', ':' and '-'), ':' made '_'.
 QString machineFolder(const QString& machine) {
@@ -130,14 +138,31 @@ struct RemoteThreads::Mirror {
     QTimer retry;
     qint64 wanted_ms{};
     QString shown_path; // what file() last returned
+    QString discovered; // agy: the conversation the helper found there
+    QString moving_to;  // agy: the one the helper just named (C), until it ends
+    [[nodiscard]] QString conversation() const {
+        return discovered.isEmpty() ? target.conversation : discovered;
+    }
+    // No files before an agy conversation is known.
     [[nodiscard]] QString full() const {
-        return folder + QLatin1Char('/') + target.conversation + QStringLiteral(".jsonl");
+        if (conversation().isEmpty())
+            return {};
+        return agy(target) ? folder + QLatin1Char('/') + conversation() +
+                                 QStringLiteral("/transcript_full.jsonl")
+                           : folder + QLatin1Char('/') + conversation() + QStringLiteral(".jsonl");
     }
     [[nodiscard]] QString tail() const {
-        return folder + QLatin1Char('/') + target.conversation + QStringLiteral(".tail.jsonl");
+        if (conversation().isEmpty())
+            return {};
+        return agy(target)
+                   ? folder + QLatin1Char('/') + conversation() +
+                         QStringLiteral("/tail/transcript_full.jsonl")
+                   : folder + QLatin1Char('/') + conversation() + QStringLiteral(".tail.jsonl");
     }
     [[nodiscard]] QString meta() const {
-        return folder + QLatin1Char('/') + target.conversation + QStringLiteral(".meta.json");
+        if (conversation().isEmpty())
+            return {};
+        return folder + QLatin1Char('/') + conversation() + QStringLiteral(".meta.json");
     }
     [[nodiscard]] bool active() const { return process != nullptr || retry.isActive(); }
 };
@@ -199,6 +224,8 @@ RemoteThreads::Mirror& RemoteThreads::ensure(const QString& agent, const Target&
     }
     auto& mirror = *existing;
     mirror.target = target;
+    mirror.discovered.clear();
+    mirror.moving_to.clear();
     mirror.folder = cacheFolder(target.machine);
     mirror.phase = Mirror::Phase::idle;
     mirror.reason.clear();
@@ -212,9 +239,21 @@ void RemoteThreads::open(Mirror& mirror) {
     QDir().mkpath(mirror.folder);
     QFile::setPermissions(QDir(root_).filePath(QStringLiteral("remote")), owner_folder);
     QFile::setPermissions(mirror.folder, owner_folder);
-    mirror.size = QFileInfo(mirror.full()).size();
     mirror.complete = false;
     mirror.inode = 0;
+    mirror.tail_active = false;
+    mirror.tail_base = mirror.tail_size = mirror.tail_goal = 0;
+    if (mirror.conversation().isEmpty()) {
+        mirror.size = 0; // agy's not found yet
+        return;
+    }
+    if (agy(mirror.target)) {
+        const auto own = mirror.folder + QLatin1Char('/') + mirror.conversation();
+        QDir().mkpath(own + QStringLiteral("/tail"));
+        QFile::setPermissions(own, owner_folder);
+        QFile::setPermissions(own + QStringLiteral("/tail"), owner_folder);
+    }
+    mirror.size = QFileInfo(mirror.full()).size();
     QFile meta(mirror.meta());
     if (mirror.size > 0 && meta.open(QIODevice::ReadOnly)) {
         const auto saved = QJsonDocument::fromJson(meta.read(4096)).object();
@@ -224,14 +263,12 @@ void RemoteThreads::open(Mirror& mirror) {
     }
     // A tail from an earlier run is fetched again with the rest.
     QFile::remove(mirror.tail());
-    mirror.tail_active = false;
-    mirror.tail_base = mirror.tail_size = mirror.tail_goal = 0;
     // Shown now: the least recently shown conversations leave the cache first.
     saveMeta(mirror);
 }
 
 void RemoteThreads::saveMeta(const Mirror& mirror) const {
-    if (mirror.folder.isEmpty())
+    if (mirror.folder.isEmpty() || mirror.conversation().isEmpty())
         return;
     QFile meta(mirror.meta());
     if (!meta.open(QIODevice::WriteOnly | QIODevice::Truncate))
@@ -252,11 +289,16 @@ QString RemoteThreads::path(const Mirror& mirror) const {
     return {};
 }
 
+QString RemoteThreads::mirroredFile(const QString& agent) const {
+    const auto* found = mirror(agent);
+    return found == nullptr ? QString() : path(*found);
+}
+
 QString RemoteThreads::file(const QString& agent) {
     if (root_.isEmpty() || !resolve_)
         return {};
     const auto target = resolve_(agent);
-    if (!target || !uuid(target->conversation) || cacheFolder(target->machine).isEmpty())
+    if (!target || !followable(*target) || cacheFolder(target->machine).isEmpty())
         return {};
     auto& mirror = ensure(agent, *target);
     mirror.wanted_ms = QDateTime::currentMSecsSinceEpoch();
@@ -279,11 +321,15 @@ void RemoteThreads::setShown(const QString& agent) {
 }
 
 QStringList RemoteThreads::helperArguments(const Mirror& mirror) const {
-    QStringList words{
-        QStringLiteral("python3"),  QStringLiteral("-"),         QStringLiteral("follow"),
-        QStringLiteral("--cli"),    QStringLiteral("claude"),    QStringLiteral("--conversation"),
-        mirror.target.conversation, QStringLiteral("--folder"),  mirror.target.folder,
-        QStringLiteral("--offset"), QString::number(mirror.size)};
+    QStringList words{QStringLiteral("python3"), QStringLiteral("-"), QStringLiteral("follow"),
+                      QStringLiteral("--cli"), mirror.target.harness};
+    // agy with none known yet: the helper finds it.
+    if (!mirror.conversation().isEmpty())
+        words << QStringLiteral("--conversation") << mirror.conversation();
+    if (agy(mirror.target))
+        words << QStringLiteral("--discover");
+    words << QStringLiteral("--folder") << mirror.target.folder << QStringLiteral("--offset")
+          << QString::number(mirror.size);
     if (mirror.size > 0) {
         words << QStringLiteral("--head") << headHash(mirror.full(), mirror.size);
         if (mirror.inode > 0)
@@ -388,6 +434,11 @@ void RemoteThreads::killForTesting(const QString& agent) {
 bool RemoteThreads::running(const QString& agent) const {
     const auto* found = mirror(agent);
     return found != nullptr && found->process != nullptr;
+}
+
+QString RemoteThreads::conversation(const QString& agent) const {
+    const auto* found = mirror(agent);
+    return found == nullptr ? QString() : found->conversation();
 }
 
 void RemoteThreads::receive(Mirror& mirror) {
@@ -508,6 +559,19 @@ bool RemoteThreads::handle(Mirror& mirror, char type, const QByteArray& payload)
         return true;
     case 'K':
         return true;
+    case 'C': {
+        // agy's conversation there is another one: the helper ends, and
+        // finished() starts it again on that one.
+        const auto moved = QJsonDocument::fromJson(payload)
+                               .object()
+                               .value(QStringLiteral("conversation"))
+                               .toString();
+        if (!agy(mirror.target) || !uuid(moved))
+            return false;
+        if (moved != mirror.conversation())
+            mirror.moving_to = moved;
+        return true;
+    }
     default:
         return false;
     }
@@ -529,6 +593,21 @@ void RemoteThreads::finished(Mirror& mirror, int code, bool crashed) {
     mirror.process.clear();
     if (mirror.stopping) {
         mirror.phase = Mirror::Phase::idle;
+        return;
+    }
+    if (!mirror.moving_to.isEmpty()) {
+        // The helper named agy's conversation and ended: follow that one
+        // now, from whatever of it is cached.
+        if (mirror.complete)
+            saveMeta(mirror);
+        mirror.discovered = std::exchange(mirror.moving_to, QString());
+        mirror.phase = Mirror::Phase::connecting;
+        mirror.reason.clear();
+        mirror.attempts = 0;
+        open(mirror);
+        start(mirror);
+        mirror.shown_path = path(mirror);
+        emit changed(mirror.agent);
         return;
     }
     if (mirror.complete)
@@ -578,7 +657,7 @@ void RemoteThreads::check() {
         // The agent's CLI moved to another conversation (/clear, /resume):
         // the mirror follows it.
         if (const auto target = resolve_ ? resolve_(mirror.agent) : std::nullopt;
-            target && uuid(target->conversation) && !(*target == mirror.target)) {
+            target && followable(*target) && !(*target == mirror.target)) {
             auto& moved = ensure(mirror.agent, *target);
             moved.wanted_ms = now;
             start(moved);
@@ -666,8 +745,13 @@ void RemoteThreads::trimCache() {
     QDirIterator files(remote.path(), QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
     while (files.hasNext()) {
         const auto info = files.nextFileInfo();
-        const auto key = info.absolutePath() + QLatin1Char('/') +
-                         info.fileName().section(QLatin1Char('.'), 0, 0);
+        // <machine>/<conversation>.*, or an agy conversation's
+        // <machine>/<conversation>/...: keyed <machine>/<conversation>.
+        const auto parts = remote.relativeFilePath(info.absoluteFilePath()).split(QLatin1Char('/'));
+        if (parts.size() < 2)
+            continue;
+        const auto key =
+            parts.at(0) + QLatin1Char('/') + parts.at(1).section(QLatin1Char('.'), 0, 0);
         auto& entry = conversations[key];
         entry.bytes += info.size();
         entry.files << info.absoluteFilePath();
@@ -679,7 +763,8 @@ void RemoteThreads::trimCache() {
     QSet<QString> followed;
     for (const auto& mirror : mirrors_)
         if (mirror->active() || mirror->agent == shown_)
-            followed.insert(mirror->folder + QLatin1Char('/') + mirror->target.conversation);
+            followed.insert(machineFolder(mirror->target.machine) + QLatin1Char('/') +
+                            mirror->conversation());
     QList<std::pair<qint64, QString>> order;
     for (auto entry = conversations.cbegin(); entry != conversations.cend(); ++entry)
         order.append({entry->shown, entry.key()});
@@ -692,6 +777,9 @@ void RemoteThreads::trimCache() {
         const auto& entry = conversations[key];
         for (const auto& file : entry.files)
             QFile::remove(file);
+        // An agy conversation's own folder, now empty.
+        if (QDir own(remote.filePath(key)); own.exists())
+            own.removeRecursively();
         total -= entry.bytes;
     }
 }

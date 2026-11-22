@@ -287,7 +287,8 @@ if(BUILD_TESTING)
     target_link_libraries(lapis_remote_thread_tests PRIVATE lapis_project_options lapis_desktop_core
         Qt6::QuickControls2)
     target_compile_definitions(lapis_remote_thread_tests PRIVATE
-        LAPIS_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml")
+        LAPIS_QML_DIR="${CMAKE_CURRENT_SOURCE_DIR}/qml"
+        LAPIS_REMOTE_THREAD_SCRIPT="${CMAKE_CURRENT_SOURCE_DIR}/src/remote_thread.py")
     add_dependencies(lapis_remote_thread_tests lapis_session_service)
     add_test(NAME remote-thread COMMAND lapis_remote_thread_tests)
     set_tests_properties(remote-thread PROPERTIES TIMEOUT 120

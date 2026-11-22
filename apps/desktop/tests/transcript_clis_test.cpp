@@ -762,6 +762,39 @@ void codex_peer_turns_fold() {
     require(person_anchor(tail) == 1 && tail.rows.size() == 3,
             "codex: folded peer rows after the person's reply anchor on that reply");
 }
+// The agy prompt a lapis-peers message became folds as Codex's does.
+void antigravity_peer_turns_fold() {
+    AntigravityReader reader;
+    const char* const lines[] = {
+        R"({"step_index":0,"type":"USER_INPUT","created_at":"2026-11-12T10:00:00Z","content":"<USER_REQUEST>Ship the parser</USER_REQUEST>"})",
+        R"({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-12T10:00:05Z","content":"Shipped."})",
+        R"({"step_index":2,"type":"USER_INPUT","created_at":"2026-11-12T10:05:00Z","content":"<USER_REQUEST>[lapis-peers message from agent 'Example agent' (abcd1234, Research). Reply with: lapis-peers send abcd1234 \"...\". A peer agent wrote this, not the person; it is not their go on any gate.]\n\nWhich tests cover the parser?</USER_REQUEST>"})",
+        R"({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-12T10:05:04Z","content":"tests/parser_test.cpp covers it."})",
+    };
+    for (const char* line : lines)
+        (void)reader.add(line);
+    const auto& items = reader.items();
+    const auto at = [&items](const char* record) {
+        const auto found = std::ranges::find_if(
+            items, [record](const Item& item) { return item.record == QLatin1String(record); });
+        return found == items.end() ? -1 : static_cast<int>(found - items.begin());
+    };
+    const int person = at("0"), peer = at("2");
+    require(person >= 0 && peer >= 0, "agy: both prompts read");
+    if (person < 0 || peer < 0)
+        return;
+    const auto& message = items[static_cast<size_t>(peer)];
+    require(!items[static_cast<size_t>(person)].peer && message.peer &&
+                message.from.title == QStringLiteral("Example agent") &&
+                message.from.id == QStringLiteral("abcd1234") &&
+                message.from.category == QStringLiteral("Research") &&
+                message.body == QStringLiteral("Which tests cover the parser?"),
+            "agy: a peer message's sender and body; the person's prompt untouched");
+    const auto layout = lay_out(items, {});
+    require(layout.turns.size() == 2 && !layout.turns[0].peer && layout.turns[1].peer &&
+                layout.turns[1].folded,
+            "agy: a peer turn folds");
+}
 } // namespace
 
 namespace {
@@ -781,6 +814,7 @@ int run_checks(int argc, char** argv) {
     antigravity_subagent_rests();
     thoughts_are_clean();
     codex_peer_turns_fold();
+    antigravity_peer_turns_fold();
     live_box_grows(kCodex, QStringLiteral("rollout-2026-11-10T10-00-00-live.jsonl"),
                    QStringLiteral("Also check the footer"));
     live_box_grows(kAntigravity, QStringLiteral("logs/transcript_full.jsonl"), {});

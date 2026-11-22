@@ -19,6 +19,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QRegularExpression>
@@ -277,6 +279,7 @@ std::size_t itemsIn(const QString& path) {
 struct View {
     Workspace& workspace;
     QString agent;
+    QString harness{QStringLiteral("claude")};
     [[nodiscard]] lapis::desktop::TranscriptModel* model() const {
         return qobject_cast<lapis::desktop::TranscriptModel*>(workspace.transcript());
     }
@@ -285,7 +288,7 @@ struct View {
     QString show() const {
         const auto path = workspace.conversationFile(agent);
         model()->setShown({{QStringLiteral("agent"), agent},
-                           {QStringLiteral("harness"), QStringLiteral("claude")},
+                           {QStringLiteral("harness"), harness},
                            {QStringLiteral("path"), path}});
         model()->readMore();
         return path;
@@ -346,10 +349,10 @@ while True:
     }
     RemoteFixture(const RemoteFixture&) = delete;
     RemoteFixture& operator=(const RemoteFixture&) = delete;
-    QString agent(const QString& title) {
-        require(workspace->createAgent(QStringLiteral("~/proj"), title, QStringLiteral("claude"),
-                                       {}, {}, QStringLiteral("buildbox")),
-                "a Claude Code agent on another machine");
+    QString agent(const QString& title, const QString& harness = QStringLiteral("claude")) {
+        require(workspace->createAgent(QStringLiteral("~/proj"), title, harness, {}, {},
+                                       QStringLiteral("buildbox")),
+                "an agent on another machine");
         auto* item = workspace->focusedAgent();
         require(item != nullptr, "the agent is shown");
         return item->agentId();
@@ -365,6 +368,24 @@ while True:
     }
     [[nodiscard]] QString cache(const QString& conversation) const {
         return root.filePath(QStringLiteral("runtime/remote/buildbox/%1.jsonl").arg(conversation));
+    }
+    // Where agy there appends `conversation`'s steps, and its mirror here.
+    [[nodiscard]] QString agyTranscript(const QString& conversation) const {
+        return root.filePath(QStringLiteral("home/.gemini/antigravity-cli/brain/%1/"
+                                            ".system_generated/logs/transcript_full.jsonl")
+                                 .arg(conversation));
+    }
+    [[nodiscard]] QString agyCache(const QString& conversation) const {
+        return root.filePath(
+            QStringLiteral("runtime/remote/buildbox/%1/transcript_full.jsonl").arg(conversation));
+    }
+    // agy's record there of ~/proj's last conversation.
+    void agyLast(const QString& conversation) const {
+        writeFile(
+            root.filePath(QStringLiteral("home/.gemini/antigravity-cli/cache/"
+                                         "last_conversations.json")),
+            QJsonDocument(QJsonObject{{root.filePath(QStringLiteral("home/proj")), conversation}})
+                .toJson(QJsonDocument::Compact));
     }
     void marker(const QString& name, const QByteArray& body = {}) const {
         writeFile(root.filePath(name), body);
@@ -798,6 +819,206 @@ Item {
     require(sent().size() == 2, "a copy there is never mentioned to an agent here");
 }
 
+// agy steps `from`..`to`: a request and its answer each.
+QByteArray agySteps(int from, int to) {
+    QByteArray out;
+    for (int n = from; n <= to; ++n)
+        out += (n % 2 == 1 ? QStringLiteral(R"({"step_index":%1,"type":"USER_INPUT",)"
+                                            R"("created_at":"2026-11-18T10:00:00Z",)"
+                                            R"("content":"<USER_REQUEST>ask %1</USER_REQUEST>"})")
+                           : QStringLiteral(R"({"step_index":%1,"type":"PLANNER_RESPONSE",)"
+                                            R"("created_at":"2026-11-18T10:00:01Z",)"
+                                            R"("content":"reply %1"})"))
+                   .arg(n)
+                   .toUtf8() +
+               '\n';
+    return out;
+}
+
+// An Antigravity (agy) agent on another machine shows as a thread: with no
+// conversation from its launch, the helper finds the one agy uses in its
+// folder there (here, with no process table to read, agy's record of the
+// folder's last conversation) and the mirror follows it under agy's own file
+// name, so the view reads it as agy's.
+void remoteAgyThreadFindsItsConversation() {
+    RemoteFixture fixture;
+    auto& workspace = *fixture.workspace;
+    const auto id = fixture.agent(QStringLiteral("agy far"), QStringLiteral("agy"));
+    View view{workspace, id, QStringLiteral("agy")};
+    require(workspace.visualSupported(id), "a remote agy agent can show as a thread");
+    require(workspace.visualUnavailable(id).isEmpty(), "nothing says it cannot");
+    auto* threads = workspace.remoteThreads();
+    require(waitFor(
+                [&] {
+                    return view.show().isEmpty() && threads->running(id) &&
+                           view.state().value(QStringLiteral("phase")) == QStringLiteral("waiting");
+                },
+                10000),
+            "before agy saved a conversation there, the helper waits for one");
+    require(fixture.machine->call(fixture.machine->calls())
+                .contains(QStringLiteral("python3 - follow --cli agy --discover --folder '~/proj' "
+                                         "--offset 0")),
+            "it is asked to find the conversation");
+
+    const auto conversation = QStringLiteral("a9e00000-0000-4000-8000-000000000001");
+    const auto remote = fixture.agyTranscript(conversation);
+    writeFile(remote, agySteps(1, 4));
+    fixture.agyLast(conversation);
+    require(waitFor(
+                [&] {
+                    return view.show() == fixture.agyCache(conversation) &&
+                           view.items() == itemsIn(remote) && view.items() > 0;
+                },
+                10000),
+            "the conversation found there shows");
+    require(view.model()->formatName() == QStringLiteral("antigravity"),
+            "the mirror reads as agy's format");
+    require(threads->conversation(id) == conversation, "the mirror says which it follows");
+    require(fixture.machine->call(fixture.machine->calls())
+                .contains(QStringLiteral("python3 - follow --cli agy --conversation %1 --discover "
+                                         "--folder '~/proj' --offset 0")
+                              .arg(conversation)),
+            "the helper starts again on it");
+
+    appendFile(remote, agySteps(5, 6));
+    require(waitFor(
+                [&] {
+                    return view.show() == fixture.agyCache(conversation) &&
+                           view.items() == itemsIn(remote) &&
+                           readFile(fixture.agyCache(conversation)) == readFile(remote);
+                },
+                10000),
+            "what agy appends there arrives");
+
+    // A later record of another conversation never moves a followed one: only
+    // a presence lock agy holds does (remoteAgyDiscovery).
+    const auto other = QStringLiteral("a9e00000-0000-4000-8000-000000000002");
+    writeFile(fixture.agyTranscript(other), agySteps(1, 2));
+    fixture.agyLast(other);
+    QThread::msleep(2500);
+    require(view.show() == fixture.agyCache(conversation) &&
+                threads->conversation(id) == conversation,
+            "the followed conversation stays");
+
+    // The budget keeps the followed agy conversation, and removes an old one
+    // with its folder.
+    const auto stale = fixture.root.filePath(
+        QStringLiteral("runtime/remote/buildbox/a9e00000-0000-4000-8000-0000000000ff"));
+    writeFile(stale + QStringLiteral("/transcript_full.jsonl"),
+              QByteArray(qsizetype{700} * 1024, 's'));
+    writeFile(stale + QStringLiteral(".meta.json"), "{}");
+    workspace.setRemoteCacheMB(0);
+    require(!QFileInfo::exists(stale) && !QFileInfo::exists(stale + QStringLiteral(".meta.json")) &&
+                QFileInfo::exists(fixture.agyCache(conversation)),
+            "an old agy conversation leaves the cache whole; the followed one stays");
+    workspace.setRemoteCacheMB(2048);
+    view.hide();
+}
+
+// Which agy conversation the helper picks, against a stand-in process table:
+// the presence lock an agy process in the agent's folder holds wins (and
+// moves a followed conversation); an open database counts only when it is
+// that process's one and no other agy holds it locked; several agy agents in
+// one folder decide nothing unless one holds the followed conversation; with
+// no process table, agy's record of the folder's last conversation.
+void remoteAgyDiscovery() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-remote-agy-XXXXXX"));
+    require(directory.isValid(), "agy discovery directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto home = root.filePath(QStringLiteral("home"));
+    const auto agy = home + QStringLiteral("/.gemini/antigravity-cli");
+    const auto folder = home + QStringLiteral("/proj");
+    require(QDir().mkpath(folder) && QDir().mkpath(home + QStringLiteral("/elsewhere")),
+            "folders there");
+    const auto proc = root.filePath(QStringLiteral("proc"));
+    const auto ids = [](int n) {
+        return QStringLiteral("a9e00000-0000-4000-8000-%1").arg(n, 12, 10, QLatin1Char('0'));
+    };
+    // One process: its parent, folder and open files.
+    const auto process = [&](int pid, int parent, const QString& cwd, const QStringList& files) {
+        const auto base = proc + QLatin1Char('/') + QString::number(pid);
+        require(QDir().mkpath(base + QStringLiteral("/fd")), "a stand-in process");
+        writeFile(base + QStringLiteral("/stat"),
+                  QStringLiteral("%1 (agy) S %2 %1 0\n").arg(pid).arg(parent).toUtf8());
+        QFile::link(cwd, base + QStringLiteral("/cwd"));
+        int fd = 3;
+        for (const auto& file : files)
+            QFile::link(agy + QLatin1Char('/') + file,
+                        base + QStringLiteral("/fd/") + QString::number(fd++));
+    };
+    const auto lock = [&](int n) { return QStringLiteral("presence/%1.lock").arg(ids(n)); };
+    const auto db = [&](int n) { return QStringLiteral("conversations/%1.db").arg(ids(n)); };
+    const auto discover = [&](const QString& pin = {}, const QString& table = {}) {
+        QProcess python;
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert(QStringLiteral("HOME"), home);
+        python.setProcessEnvironment(environment);
+        QStringList arguments{QStringLiteral(LAPIS_REMOTE_THREAD_SCRIPT),
+                              QStringLiteral("discover"),
+                              QStringLiteral("--folder"),
+                              QStringLiteral("~/proj"),
+                              QStringLiteral("--proc"),
+                              table.isEmpty() ? proc : table};
+        if (!pin.isEmpty())
+            arguments << QStringLiteral("--conversation") << pin;
+        python.start(QStringLiteral("python3"), arguments);
+        require(python.waitForFinished(10000) && python.exitCode() == 0, "the helper answers");
+        const auto found = QJsonDocument::fromJson(python.readAllStandardOutput()).object();
+        return found.value(QStringLiteral("conversation")).toString() + QLatin1Char('/') +
+               found.value(QStringLiteral("how")).toString();
+    };
+    const auto reset = [&] { QDir(proc).removeRecursively(); };
+    writeFile(agy + QStringLiteral("/cache/last_conversations.json"),
+              QJsonDocument(QJsonObject{{folder, ids(9)}}).toJson(QJsonDocument::Compact));
+
+    // The login shell (folder) and agy below it holding its lock.
+    process(100, 1, folder, {});
+    process(101, 100, folder, {lock(1), db(1), db(7)});
+    require(discover() == ids(1) + QStringLiteral("/locked"), "the lock agy holds there");
+    require(discover(ids(2)) == ids(1) + QStringLiteral("/locked"),
+            "it moves a followed conversation");
+    // An agy elsewhere and its lock never count here.
+    process(200, 1, home + QStringLiteral("/elsewhere"), {lock(3)});
+    require(discover() == ids(1) + QStringLiteral("/locked"), "only the agent's folder counts");
+
+    // Before agy holds a lock: its one open database, unless another holds it.
+    reset();
+    process(100, 1, folder, {});
+    process(101, 100, folder, {db(4)});
+    require(discover() == ids(4) + QStringLiteral("/open"), "its one open database");
+    require(discover(ids(5)).startsWith(QLatin1Char('/')),
+            "an open database never moves a followed conversation");
+    process(200, 1, home + QStringLiteral("/elsewhere"), {lock(4)});
+    require(discover() == QStringLiteral("/"),
+            "a database another agy holds locked is never taken");
+    reset();
+    process(100, 1, folder, {});
+    process(101, 100, folder, {db(4), db(6)});
+    require(discover() == QStringLiteral("/"), "several open databases name none");
+
+    // Two agy agents in the folder.
+    reset();
+    process(100, 1, folder, {});
+    process(101, 100, folder, {lock(1)});
+    process(300, 1, folder, {});
+    process(301, 300, folder, {lock(2)});
+    require(discover() == QStringLiteral("/"), "two agents there: neither is chosen");
+    require(discover(ids(2)) == ids(2) + QStringLiteral("/locked"),
+            "unless one holds the followed conversation");
+
+    // No agy running: the folder's last conversation, unless another holds it.
+    reset();
+    QDir().mkpath(proc);
+    require(discover() == ids(9) + QStringLiteral("/cached"), "agy's record of the folder");
+    require(discover({}, root.filePath(QStringLiteral("no-proc"))) ==
+                ids(9) + QStringLiteral("/cached"),
+            "and where no process table can be read");
+    process(200, 1, home + QStringLiteral("/elsewhere"), {lock(9)});
+    require(discover() == QStringLiteral("/"), "never one another agy holds locked");
+    require(discover(ids(5)).startsWith(QLatin1Char('/')),
+            "a record never moves a followed conversation");
+}
+
 // The mirrors' disk budget removes the least recently shown conversations,
 // never the one followed.
 void remoteCacheKeepsItsBudget() {
@@ -842,6 +1063,8 @@ int main(int argc, char** argv) {
             {"attachments", remoteAttachmentsUploadFirst},
             {"cache", remoteCacheKeepsItsBudget},
             {"composer", composerMentionsOnlyRemoteCopies},
+            {"agy", remoteAgyThreadFindsItsConversation},
+            {"agy-discovery", remoteAgyDiscovery},
         };
         for (const auto& [name, run] : cases) {
             if (!only.isEmpty() && only != QLatin1String(name))
