@@ -85,6 +85,10 @@ class TerminalSurface : public QQuickItem {
     Q_PROPERTY(
         lapis::desktop::Agent* document READ document WRITE setDocument NOTIFY documentChanged)
     Q_PROPERTY(bool interactive READ interactive WRITE setInteractive NOTIFY interactiveChanged)
+    // Keeps the live terminal sized to this surface even while interactive is
+    // false (e.g. when Visual View covers the stage), so revealing the terminal
+    // never triggers a delayed resize/redraw. Previews leave this false.
+    Q_PROPERTY(bool drivesSize READ drivesSize WRITE setDrivesSize NOTIFY drivesSizeChanged)
     // Minimum milliseconds between redraws caused by output; 0 redraws every
     // snapshot. Previews use it so a noisy agent cannot flood the renderer.
     Q_PROPERTY(
@@ -192,6 +196,8 @@ class TerminalSurface : public QQuickItem {
     void setDocument(Agent* document);
     [[nodiscard]] bool interactive() const { return interactive_; }
     void setInteractive(bool enabled);
+    [[nodiscard]] bool drivesSize() const { return drives_size_; }
+    void setDrivesSize(bool enabled);
     [[nodiscard]] int frameInterval() const { return frame_interval_; }
     [[nodiscard]] qreal minimumScale() const { return minimum_scale_; }
     [[nodiscard]] bool holdResize() const { return hold_resize_; }
@@ -235,6 +241,7 @@ class TerminalSurface : public QQuickItem {
   signals:
     void documentChanged();
     void interactiveChanged();
+    void drivesSizeChanged();
     void frameIntervalChanged();
     void minimumScaleChanged();
     void holdResizeChanged();
@@ -360,6 +367,7 @@ class TerminalSurface : public QQuickItem {
     int font_pixel_size_{kTerminalFontSizeDefault};
     QSize grid_size_;
     bool interactive_{};
+    bool drives_size_{};
     bool hold_resize_{};
     // The item size when holdScreen began; the screen is laid out in it.
     std::optional<QSizeF> held_viewport_;

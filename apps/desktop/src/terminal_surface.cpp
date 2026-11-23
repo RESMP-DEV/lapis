@@ -1226,6 +1226,17 @@ void TerminalSurface::setInteractive(bool enabled) {
     emit interactiveChanged();
 }
 
+void TerminalSurface::setDrivesSize(bool enabled) {
+    if (drives_size_ == enabled)
+        return;
+    drives_size_ = enabled;
+    if (enabled) {
+        requestResize();
+        claimSize();
+    }
+    emit drivesSizeChanged();
+}
+
 void TerminalSurface::setFrameInterval(int milliseconds) {
     const int bounded = std::clamp(milliseconds, 0, 5000);
     if (frame_interval_ == bounded)
@@ -1318,7 +1329,8 @@ void TerminalSurface::requestResize() {
         grid_size_ = grid;
         emit gridSizeChanged();
     }
-    if (!interactive_ || hold_resize_ || !document_ || !document_->live() || grid.isEmpty())
+    if ((!interactive_ && !drives_size_) || hold_resize_ || !document_ || !document_->live() ||
+        grid.isEmpty())
         return;
     document_->resizeTerminal(
         {static_cast<std::uint16_t>(grid.width()), static_cast<std::uint16_t>(grid.height())});
@@ -1327,7 +1339,7 @@ void TerminalSurface::requestResize() {
 // phone) takes the terminal size back: activating the window, showing the
 // agent on the stage, or moving the pointer over it.
 void TerminalSurface::claimSize() {
-    if (interactive_ && document_ && document_->live())
+    if ((interactive_ || drives_size_) && document_ && document_->live())
         document_->claimTerminalSize();
 }
 void TerminalSurface::hoverMoveEvent(QHoverEvent* event) {

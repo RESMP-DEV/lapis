@@ -2030,6 +2030,44 @@ void selection_and_scroll() {
     require(replacement.document.sendText(QByteArray("s")), "Replacement input was refused");
     require(text_frames(restarted_peer, 1) == QByteArray("s"), "Replacement input was lost");
 }
+
+// A stage terminal covered by Visual View has interactive == false but
+// drivesSize == true: it keeps the PTY sized to the stage so revealing the
+// terminal triggers no resize/redraw, while a preview surface (both false)
+// never resizes the PTY.
+void covered_stage_keeps_size_and_switches_without_resize() {
+    Fixture f;
+    QQuickWindow window;
+    window.setGeometry(100, 100, 640, 360);
+    lapis::desktop::TerminalSurface preview(window.contentItem());
+    preview.setSize(QSizeF(320, 180));
+    f.document.startLive(f.endpoint, f.launch, wire::AttachMode::discover);
+    preview.setDocument(&f.document);
+    auto peer = f.accept();
+    static_cast<void>(f.request(peer));
+    f.hello(peer);
+    f.screen(peer);
+    require(resize_frames(peer).empty(), "A preview surface must not resize the terminal");
+
+    lapis::desktop::TerminalSurface stage(window.contentItem());
+    stage.setSize(QSizeF(640, 360));
+    stage.setDrivesSize(true);
+    stage.setDocument(&f.document);
+    const lapis::session::TerminalSize desk{static_cast<std::uint16_t>(stage.gridSize().width()),
+                                            static_cast<std::uint16_t>(stage.gridSize().height())};
+    const auto initial = resize_frames(peer);
+    require(!initial.empty() && initial.back() == desk,
+            "A covered stage with drivesSize did not resize the terminal to its grid");
+    f.terminal.resize(desk);
+    peer.send(wire::Kind::snapshot,
+              wire::encode_snapshot_message({{f.identity, 1}, 2, f.terminal.snapshot()}));
+    until([&] { return f.document.snapshot().size == desk; });
+
+    // Switching from Visual View to Terminal View flips interactive true.
+    stage.setInteractive(true);
+    require(resize_frames(peer).empty(),
+            "Switching from Visual View to Terminal View sent a redundant resize");
+}
 } // namespace
 int main(int argc, char** argv) {
     const bool background = argc == 2 && std::string_view(argv[1]) == "--background";
@@ -2061,6 +2099,7 @@ int main(int argc, char** argv) {
         command_links_open();
         size_returns_to_this_window();
         held_resize_sends_once();
+        covered_stage_keeps_size_and_switches_without_resize();
         if (background)
             std::cout << "Background Qt/software mode; native macOS input and GPU not exercised\n";
         std::cout << "Qt IME commit/cancel, replacement rejection, paste, long paste, suggestions, "

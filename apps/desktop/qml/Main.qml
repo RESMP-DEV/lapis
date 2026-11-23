@@ -3701,6 +3701,10 @@ ApplicationWindow {
                     holdScreen: window.sidebarSliding
                     visible: document !== null
                     enabled: visible
+                    // Keep the terminal sized to the stage even while Visual
+                    // View covers it, so switching back to Terminal View never
+                    // triggers a delayed resize/redraw.
+                    drivesSize: visible && window.visible && document !== null
                     // A history page stays interactive for the wheel, selection and
                     // typing back to live; input reaches the agent only when live.
                     interactive: visible && window.visible && !window.inputBlocked && document !== null
@@ -3739,12 +3743,22 @@ ApplicationWindow {
                         return predicting && workspace.nextPriorityAttention(nextPrompt.readyAgents())
                     }
                     // New and restarted agents start at this grid, not resized
-                    // just after they drew.
-                    onGridSizeChanged: workspace.setLaunchSize(gridSize)
+                    // just after they drew. Wait until the window is visible so
+                    // transient startup layout sizes (e.g. 62x3) never launch
+                    // sessions at a tiny grid.
+                    function syncLaunchSize() {
+                        if (window.visible && gridSize.width > 0 && gridSize.height > 0)
+                            workspace.setLaunchSize(gridSize)
+                    }
+                    onGridSizeChanged: syncLaunchSize()
                     Component.onCompleted: {
-                        workspace.setLaunchSize(gridSize)
+                        syncLaunchSize()
                         if (focus)
                             forceActiveFocus()
+                    }
+                    Connections {
+                        target: window
+                        function onVisibleChanged() { liveTerminal.syncLaunchSize() }
                     }
 
                     // While history shows, a wide translucent bar down the right
