@@ -334,7 +334,7 @@ class SessionService final : public QObject {
         return claude_observer_ ? claude_observer_->diagnostic()
                : notify_turns_  ? notify_turns_->diagnostic()
                                 : QStringLiteral("Codex notify turns are not connected; status is "
-                                                 "estimated from output");
+                                                  "estimated from output");
     }
     QJsonObject attention_details(const attention::RequestId& id) const {
         return claude_observer_ ? claude_observer_->details(id) : QJsonObject{};
@@ -779,8 +779,9 @@ class SessionService final : public QObject {
         return page;
     }
     bool archive_history(bool force) {
-        // A width change's redraw is sorted out by finish_rewidth.
-        if (rewidth_)
+        // A width change's redraw is sorted out by finish_rewidth. A hold
+        // alone archives as usual.
+        if (rewidth_ && !rewidth_->hold_only)
             return true;
         if (pending_rewidth_archive_)
             return try_rewidth_archive();
@@ -890,25 +891,37 @@ class SessionService final : public QObject {
         feed_output_bytes(safe);
         return true;
     }
-    // Feeds pending PTY output into the terminal parser under a bounded
-    // budget. Returns true when the parser waits for the rest of a
-    // synchronized marker.
+    // Feeds pending PTY output into the terminal parser for at most
+    // parse_budget_ns of wall clock per pass, at least one chunk. Each chunk
+    // stays row-bounded (output_chunk_size) so archive_history keeps up, and
+    // the event loop gets control back between passes. A count of chunks
+    // instead throttled wide terminals: at 200 columns 16 chunks are 640
+    // bytes, about 38 KB/s at one pass per frame. Returns true when the
+    // parser waits for the rest of a synchronized marker.
     bool feed_pending_output() {
-        int budget = 16;
+        const quint64 deadline = monotonic_ns() + parse_budget_ns;
         bool parser_waiting = false;
-        while (!pending_output_.isEmpty() && budget-- > 0) {
+        // Once a scan finds no DEC 2026 marker, none of what is left has one:
+        // nothing is appended during a pass. Rescanning the whole backlog for
+        // every chunk would make a large backlog quadratic.
+        bool marker_free = false;
+        bool first = true;
+        while (!pending_output_.isEmpty() && (first || monotonic_ns() < deadline)) {
+            first = false;
             if (!archive_history(false)) {
                 output_waiting_ = true;
                 break;
             }
             const auto chunk = output_chunk_size();
-            const auto sync_limit = synchronized_output_limit(pending_output_);
+            const auto sync_limit =
+                marker_free ? pending_output_.size() : synchronized_output_limit(pending_output_);
             if (sync_limit < 0) {
                 if (feed_synchronized_holdback(chunk))
                     continue;
                 parser_waiting = true;
                 break;
             }
+            marker_free = sync_limit == pending_output_.size();
             // `sync_limit` ends at a complete DEC 2026 marker. Feeding only
             // `chunk` bytes could split that marker and lose both edges.
             const auto size = sync_limit < pending_output_.size()
@@ -1296,8 +1309,26 @@ class SessionService final : public QObject {
     // rewidth_limit_ms), and finish_rewidth keeps each part once. Narrowing
     // archives the kept rows first, at the width they were drawn. Returns
     // false when the resize must wait for that archive.
+    //
+    // Every other harness (Codex, agy, Grok, OMP, a shell) redraws on its own
+    // after SIGWINCH, and the frames in between are half old layout, half
+    // new. Those get only the hold: publication waits until the redraw has
+    // been quiet for rewidth_quiet_ms (see rewidth_wait_ms); the terminal's
+    // own reflow and history stay as they are.
     bool begin_rewidth(TerminalSize size) {
-        if (!claude_ || rewidth_ || size.columns == current_size_.columns)
+        if (rewidth_ || size == current_size_)
+            return true;
+        if (!claude_) {
+            if (process_started_)
+                rewidth_ = Rewidth{.old_screen = {},
+                                   .widening = size.columns > current_size_.columns,
+                                   .history_rows = 0,
+                                   .since = {},
+                                   .saw_output = false,
+                                   .hold_only = true};
+            return true;
+        }
+        if (size.columns == current_size_.columns)
             return true;
         // A failed archive cannot preserve the old rows that narrowing would
         // set aside. Keep the terminal's reflow copy instead of optimizing the
@@ -1326,18 +1357,21 @@ class SessionService final : public QObject {
         if (!rewidth_)
             return 0;
         const qint64 held = rewidth_->since.elapsed();
+        const qint64 limit = rewidth_->hold_only ? resize_hold_limit_ms : rewidth_limit_ms;
         if (!rewidth_->saw_output || terminal_.synchronizing()) {
             // The resize's local erase and mark_dirty are not redraw activity.
             // Wait for a PTY-fed byte (or a complete frame), while bounding a
             // renderer that never answers.
-            if (held < rewidth_limit_ms)
-                return std::min(qint64{50}, rewidth_limit_ms - held);
+            const qint64 wait_limit =
+                rewidth_->hold_only && !rewidth_->saw_output ? resize_hold_first_output_ms : limit;
+            if (held < wait_limit)
+                return std::min(qint64{50}, wait_limit - held);
             finish_rewidth();
             return 0;
         }
         const qint64 quiet = last_output_.isValid() ? last_output_.elapsed() : rewidth_quiet_ms;
-        if (quiet < rewidth_quiet_ms && held < rewidth_limit_ms)
-            return std::min(rewidth_quiet_ms - quiet, rewidth_limit_ms - held);
+        if (quiet < rewidth_quiet_ms && held < limit)
+            return std::min(rewidth_quiet_ms - quiet, limit - held);
         finish_rewidth();
         return 0;
     }
@@ -1401,6 +1435,13 @@ class SessionService final : public QObject {
             return;
         const auto state = std::move(*rewidth_);
         rewidth_.reset();
+        if (state.hold_only) {
+            // The held screen is shown as the program left it.
+            mark_dirty();
+            if (pending_resize_)
+                QTimer::singleShot(0, this, [this] { process_output(); });
+            return;
+        }
         try {
             const auto screen = terminal_.snapshot();
             const auto metadata = terminal_.history_metadata();
@@ -2116,6 +2157,8 @@ class SessionService final : public QObject {
     QTimer settle_timer_;
     QTimer output_admission_timer_;
     static constexpr qint64 frame_ms = 16;
+    // Wall clock one parser pass may take (see feed_pending_output).
+    static constexpr quint64 parse_budget_ns = quint64{4} * 1000 * 1000;
     QElapsedTimer attention_clock_;
     wire::UpdatePace attention_pace_{frame_ms};
     QElapsedTimer snapshot_clock_;
@@ -2168,11 +2211,20 @@ class SessionService final : public QObject {
         std::size_t history_rows{}; // kept rows from before the resize
         QElapsedTimer since;
         bool saw_output{}; // only bytes fed from the PTY, not the local erase
+        // Only holds the screen: no blank, no archive work at the end. Every
+        // harness but Claude Code (see begin_rewidth).
+        bool hold_only{};
     };
     std::optional<Rewidth> rewidth_;
     std::optional<std::vector<TerminalSnapshot>> pending_rewidth_archive_;
     static constexpr qint64 rewidth_quiet_ms = 120;
     static constexpr qint64 rewidth_limit_ms = 1000;
+    // A held resize of another harness: redraws that keep streaming (a
+    // spinner) are shown after at most resize_hold_limit_ms, and a program
+    // that does not redraw on SIGWINCH at all (a shell, cat) after
+    // resize_hold_first_output_ms.
+    static constexpr qint64 resize_hold_limit_ms = 2500;
+    static constexpr qint64 resize_hold_first_output_ms = 300;
     wire::SnapshotTiming timing_;
     std::unique_ptr<attention::State> claude_state_;
     std::unique_ptr<lapis::claude::Observer> claude_observer_;

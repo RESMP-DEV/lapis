@@ -532,6 +532,15 @@ void Agent::resizeTerminal(session::TerminalSize size) {
     }
     live_->resize(size);
 }
+bool Agent::fitTerminalInBackground(session::TerminalSize size) {
+    if (!live_)
+        return false;
+    if (history_active_ || history_request_pending_) {
+        live_->setWantedSize(size);
+        return false;
+    }
+    return live_->fitInBackground(size);
+}
 
 void Agent::reconnect() {
     if (live_)
@@ -873,6 +882,27 @@ void LiveConnection::claimSize() {
         return;
     claimed_over_ = shown_size_;
     sendResize(wanted_size_);
+}
+
+bool LiveConnection::fitInBackground(session::TerminalSize size) {
+    if (!ready_ || failed_) {
+        if (!failed_)
+            setWantedSize(size); // sent once the attachment is ready
+        return false;
+    }
+    if (size == shown_size_ && size == wanted_size_)
+        return false;
+    // Another view resized it after this one's size landed (or after it
+    // attached, for a view that never asked): leave it there.
+    const bool another_holds = shown_size_ != wanted_size_ && pending_resize_ != wanted_size_;
+    if (another_holds) {
+        setWantedSize(size);
+        return false;
+    }
+    if (pending_resize_ == size && last_sequence_ == resize_sent_after_sequence_)
+        return false;
+    resize(size);
+    return pending_resize_ == size;
 }
 
 void LiveConnection::setWantedSize(session::TerminalSize size) {

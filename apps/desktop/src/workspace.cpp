@@ -2827,6 +2827,44 @@ void Workspace::setLaunchSize(QSize size) {
                                          static_cast<std::uint16_t>(size.height())};
     if (!unsized_starts_.empty())
         startUnsized();
+    queueBackgroundFits();
+}
+void Workspace::queueBackgroundFits() {
+    if (fixture_mode_ || headless_ || !launch_size_)
+        return;
+    // The newest grid replaces any fits still waiting; the focused agent is
+    // sized by the stage itself.
+    background_fits_.clear();
+    const auto* focused = focusedAgent();
+    for (const auto& item : items_)
+        if (item && item.get() != focused && item->live())
+            background_fits_.emplace_back(item.get());
+    if (background_fits_.empty()) {
+        background_fit_timer_.stop();
+        return;
+    }
+    if (!background_fit_timer_.isActive()) {
+        background_fit_timer_.setSingleShot(true);
+        connect(&background_fit_timer_, &QTimer::timeout, this, &Workspace::fitNextInBackground,
+                Qt::UniqueConnection);
+        // The stage's own resize goes first.
+        background_fit_timer_.start(background_fit_interval_ms);
+    }
+}
+void Workspace::fitNextInBackground() {
+    if (!launch_size_)
+        return;
+    const auto* focused = focusedAgent();
+    while (!background_fits_.empty()) {
+        const QPointer<Agent> next = background_fits_.front();
+        background_fits_.erase(background_fits_.begin());
+        // One resize, then the next one later; an agent already at the grid
+        // (or held by a phone) costs no wait.
+        if (next && next != focused && next->live() && next->fitTerminalInBackground(*launch_size_))
+            break;
+    }
+    if (!background_fits_.empty())
+        background_fit_timer_.start(background_fit_interval_ms);
 }
 void Workspace::startUnsized() {
     unsized_timer_.stop();

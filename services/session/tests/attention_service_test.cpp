@@ -557,12 +557,18 @@ void startup_settling_does_not_block_the_parser() {
     Access::defer_next_snapshot(service);
     Access::mark_process_started(service);
 
+    // A pass is bounded by wall clock, so the first burst may parse whole.
     Access::feed_output(service, QByteArray(32 * 1024LL, 'x'));
-    require(!Access::pending_output(service).isEmpty());
     require(Access::publish_timer_active(service));
     Access::publish_paced_output(service);
     require(Access::settle_timer_active(service));
     require(!Access::publish_timer_active(service));
+    for (int pass = 0; !Access::pending_output(service).isEmpty(); ++pass) {
+        require(pass < 64);
+        Access::process_output(service);
+    }
+    // More of the burst arrives while the first frame settles.
+    Access::feed_output(service, QByteArray(32 * 1024LL, 'y'));
     // Drive the parser directly in bounded passes. The settle timer cannot
     // fire during a synchronous call, so sanitizer scheduling cannot turn this
     // into a race between parser progress and the settle cap.
@@ -906,6 +912,113 @@ void failed_history_preserves_the_terminal_reflow_path() {
     require(!Access::rewidth_active(service));
 }
 
+// A wide terminal parses a bulk burst at the parser's own speed. A pass is
+// bounded by wall clock, not by a count of row-bounded chunks: 16 chunks at
+// 200 columns were 640 bytes, about 38 KB/s at one pass per frame.
+void bulk_output_parses_fast_at_two_hundred_columns() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-bulk-parse-XXXXXX")};
+    require(directory.isValid());
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {200, 50},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QByteArray burst;
+    for (int line = 0; burst.size() < 512 * 1024; ++line)
+        burst += QStringLiteral("line %1 of a bulk transcript burst, wide enough to matter at two "
+                                "hundred columns: the quick brown fox jumps over the lazy dog\r\n")
+                     .arg(line)
+                     .toUtf8();
+    const auto total = burst.size();
+    QElapsedTimer pass;
+    pass.start();
+    Access::feed_output(service, burst);
+    const auto first_pass_ns = pass.nsecsElapsed();
+    const auto first_pass_bytes = total - Access::pending_output(service).size();
+    // The old cap: 16 chunks of 32768 / (4 * 200) = 40 bytes.
+    require(first_pass_bytes > 4 * 16 * 40);
+    require(first_pass_ns < qint64{50} * 1000 * 1000); // the event loop gets control back
+    QElapsedTimer drain;
+    drain.start();
+    for (int passes = 0; !Access::pending_output(service).isEmpty(); ++passes) {
+        require(passes < 100000 && drain.elapsed() < 10000);
+        Access::process_output(service);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 1);
+    }
+    const auto drain_ns = std::max<qint64>(1, pass.nsecsElapsed());
+    const double per_frame_kbps =
+        (static_cast<double>(first_pass_bytes) / 1024.0) / (static_cast<double>(16) / 1000.0);
+    const double drain_mbps =
+        (static_cast<double>(total) / (1024.0 * 1024.0)) / (static_cast<double>(drain_ns) / 1e9);
+    std::cout << "bulk parse at 200 columns: first pass " << first_pass_bytes << " bytes in "
+              << static_cast<double>(first_pass_ns) / 1e6 << " ms (" << per_frame_kbps
+              << " KB/s at one pass per 16 ms frame; was 39 KB/s); " << total << " bytes in "
+              << static_cast<double>(drain_ns) / 1e6 << " ms (" << drain_mbps << " MB/s)\n";
+    require(drain_mbps > 0.5);
+}
+
+// Every harness but Claude Code holds a resize's redraw too: the frames
+// between SIGWINCH and a quiet screen are never published.
+void other_harnesses_hold_a_resize_until_the_redraw_is_quiet() {
+    using Access = lapis::session::AttentionServiceTestAccess;
+    QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-resize-hold-XXXXXX")};
+    require(directory.isValid());
+    const auto endpoint =
+        lapis::session::posix::prepare_endpoint(directory.filePath(QStringLiteral("service.sock")));
+    const LaunchSpec launch{.program = QStringLiteral("/bin/cat"),
+                            .arguments = {},
+                            .directory = directory.path(),
+                            .size = {80, 24},
+                            .agent = AgentMode::terminal};
+    SessionService service{endpoint, QByteArray(32, '1'), launch, QByteArray(32, '2')};
+    QLocalSocket client;
+    client.connectToServer(endpoint);
+    require(client.waitForConnected(5000));
+    Access::use_client(service, &client);
+    Access::mark_process_started(service);
+    // Synchronous throughout, as in the tests above: this socket stands in
+    // for an attached client, and the event loop would let the service's
+    // end of it read the frames written to it.
+    Access::feed_output(service, QByteArrayLiteral("screen before resize"));
+    for (int waits = 0; Access::settle_wait(service) > 0; ++waits) { // startup settling
+        require(waits < 100);
+        QThread::msleep(10);
+    }
+
+    Access::resize(service, {100, 30});
+    require(Access::rewidth_active(service));
+    const quint64 held_at = Access::snapshot_sequence(service);
+    // Half-drawn redraw frames arrive, a little apart.
+    Access::feed_output(service, QByteArrayLiteral("\x1b[H\x1b[Jhalf of the redraw"));
+    require(Access::rewidth_saw_output(service));
+    Access::publish_paced_output(service);
+    require(Access::settle_timer_active(service));
+    require(Access::snapshot_sequence(service) == held_at);
+    QThread::msleep(60);
+    Access::feed_output(service, QByteArrayLiteral("\r\nthe rest of the redraw"));
+    require(Access::rewidth_wait(service) > 0);
+    Access::publish_paced_output(service);
+    require(Access::snapshot_sequence(service) == held_at);
+    // Quiet: the whole redraw is shown once.
+    QThread::msleep(140);
+    require(Access::rewidth_wait(service) == 0);
+    require(!Access::rewidth_active(service));
+    Access::publish_paced_output(service);
+    require(Access::snapshot_sequence(service) == held_at + 1);
+    const auto shown = Access::terminal_snapshot(service);
+    require(shown.size.columns == 100 && shown.size.rows == 30);
+
+    // A program that does not redraw at all is not held for long.
+    Access::resize(service, {90, 30});
+    require(Access::rewidth_active(service) && Access::rewidth_wait(service) > 0);
+    QThread::msleep(320);
+    require(Access::rewidth_wait(service) == 0 && !Access::rewidth_active(service));
+}
+
 void resize_after_terminal_close_is_ignored_during_final_drain() {
     using Access = lapis::session::AttentionServiceTestAccess;
     QTemporaryDir directory{QStringLiteral("/private/tmp/lapis-drain-resize-XXXXXX")};
@@ -972,6 +1085,8 @@ int main(int argc, char** argv) {
         narrowing_leading_chrome_shifts_the_archive_window();
         width_archive_backpressure_keeps_the_terminal_copy();
         failed_history_preserves_the_terminal_reflow_path();
+        bulk_output_parses_fast_at_two_hundred_columns();
+        other_harnesses_hold_a_resize_until_the_redraw_is_quiet();
         resize_after_terminal_close_is_ignored_during_final_drain();
         retired_sockets_evict_in_arrival_order();
         std::cout << "attention-service: ok\n";

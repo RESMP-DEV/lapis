@@ -3743,14 +3743,17 @@ ApplicationWindow {
                         return predicting && workspace.nextPriorityAttention(nextPrompt.readyAgents())
                     }
                     // New and restarted agents start at this grid, not resized
-                    // just after they drew. Wait until the window is visible so
-                    // transient startup layout sizes (e.g. 62x3) never launch
-                    // sessions at a tiny grid.
+                    // just after they drew, and the workspace sizes the live
+                    // agents off the stage to it in the background. Wait until
+                    // the window is visible so transient startup layout sizes
+                    // (e.g. 62x3) never reach a session, and until a sidebar
+                    // slide ends so its passing sizes do not either.
                     function syncLaunchSize() {
-                        if (window.visible && gridSize.width > 0 && gridSize.height > 0)
+                        if (window.visible && !holdResize && gridSize.width > 0 && gridSize.height > 0)
                             workspace.setLaunchSize(gridSize)
                     }
                     onGridSizeChanged: syncLaunchSize()
+                    onHoldResizeChanged: syncLaunchSize()
                     Component.onCompleted: {
                         syncLaunchSize()
                         if (focus)

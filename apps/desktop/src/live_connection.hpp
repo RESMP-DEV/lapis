@@ -48,6 +48,12 @@ class LiveConnection final : public QObject {
     // Takes the size back after another device (a joined phone) resized the
     // agent: sends this view's size again, once per size shown.
     void claimSize();
+    // Sizes an agent that is not on the stage to the stage's grid, so showing
+    // it later needs no resize and redraw. A size another device (a joined
+    // phone) holds is not taken back: the grid only becomes this view's
+    // wanted size, which claimSize sends when someone comes back. True when
+    // a resize went out.
+    bool fitInBackground(session::TerminalSize size);
     void setWantedSize(session::TerminalSize size);
     void applyWantedSize();
     // Sends the wanted size when the terminal has another; a new snapshot

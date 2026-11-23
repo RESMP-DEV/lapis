@@ -3581,6 +3581,61 @@ void agentsStartAtTheStageSize() {
     qputenv("PATH", path);
 }
 
+// When the stage's grid changes, the live agents off the stage are sized to it
+// in the background, one at a time, so switching to one never resizes and
+// redraws it then. The agent on the stage is the stage's own to size.
+void agentsOffTheStageFollowTheStageGrid() {
+    QTemporaryDir directory(QStringLiteral("/tmp/lapis-bgfit-XXXXXX"));
+    require(directory.isValid(), "background fit directory");
+    const QDir root(QFileInfo(directory.path()).canonicalFilePath());
+    const auto path = installStandInGrok(root);
+    WorkspaceOptions options;
+    options.storagePath = root.filePath(QStringLiteral("workspace.json"));
+    {
+        Workspace workspace(WorkspaceMode::live, options);
+        const lapis::session::TerminalSize first_grid{91, 27};
+        const lapis::session::TerminalSize stage_grid{120, 33};
+        workspace.setLaunchSize(QSize(first_grid.columns, first_grid.rows));
+        std::vector<lapis::desktop::Agent*> items;
+        for (const auto* name : {"one", "two", "three"}) {
+            require(workspace.createAgent(root.filePath(QStringLiteral("project")),
+                                          QString::fromLatin1(name), QStringLiteral("grok")),
+                    "an agent");
+            items.push_back(workspace.focusedAgent());
+        }
+        auto* staged = workspace.focusedAgent();
+        require(staged == items.back(), "the last agent is on the stage");
+        for (auto* item : items)
+            require(item != nullptr && waitFor([item] { return item->inputReady(); }, 10000) &&
+                        waitFor([item, first_grid] { return item->snapshot().size == first_grid; },
+                                5000),
+                    "each agent starts at the first grid");
+        QElapsedTimer fitting;
+        fitting.start();
+        workspace.setLaunchSize(QSize(stage_grid.columns, stage_grid.rows));
+        std::vector<qint64> fitted(2, -1);
+        require(waitFor(
+                    [&] {
+                        for (std::size_t index = 0; index < 2; ++index)
+                            if (fitted[index] < 0 && items[index]->snapshot().size == stage_grid)
+                                fitted[index] = fitting.elapsed();
+                        return fitted[0] >= 0 && fitted[1] >= 0;
+                    },
+                    10000),
+                "the agents off the stage are sized to the new grid");
+        // Staggered, not all at once (each lands after its service's resize
+        // hold, so only the order and the spacing are certain).
+        require(std::max(fitted[0], fitted[1]) - std::min(fitted[0], fitted[1]) >= 100,
+                "one agent at a time");
+        require(staged->snapshot().size == first_grid,
+                "the agent on the stage waits for the stage to size it");
+        for (auto* item : items)
+            require(workspace.closeAgent(item->agentId(), true), "close the agent");
+        require(waitFor([&workspace] { return closedFully(workspace); }, 10000), "they close");
+    }
+    qputenv("PATH", path);
+}
+
 // An agent restarted as the window opens waits for the stage's grid, so a
 // resumed conversation is drawn at the width it is shown in, not the
 // service's default that the window then widens.
@@ -7800,13 +7855,12 @@ void agyResumedAgentKeepsItsConversation() {
     // An unlocked database alone never names a conversation for a fresh agent;
     // agy holds its presence lock once a conversation actually starts.
     services.holdAll(fresh, {db(newer)});
-    require(waitFor(
-                [&] {
-                    return held_conversation(QStringLiteral("agy"), endpoint(fresh), {}).isEmpty();
-                },
-                5000) &&
-                workspace.conversationFile(fresh).isEmpty(),
-            "an unlocked database never pins a fresh agent");
+    require(
+        waitFor(
+            [&] { return held_conversation(QStringLiteral("agy"), endpoint(fresh), {}).isEmpty(); },
+            5000) &&
+            workspace.conversationFile(fresh).isEmpty(),
+        "an unlocked database never pins a fresh agent");
     services.holdAll(fresh, {lock(newer), db(newer)});
     require(waitFor([&] { return workspace.conversationFile(fresh) == transcript(newer); }, 5000),
             "a fresh agent takes its conversation once it holds the lock");
@@ -8134,6 +8188,7 @@ int main(int argc, char** argv) {
                 // Windowless: a stand-in CLI under a real session service.
                 agentsStartAtTheStageSize();
                 restoredAgentsStartAtTheStageSize();
+                agentsOffTheStageFollowTheStageGrid();
             } else if (selected == QStringLiteral("launch-policy")) {
                 modelessAgentsGetTheDefaultMode();
                 resumingAConversationStartsItsCli();
@@ -8273,6 +8328,7 @@ int main(int argc, char** argv) {
         reloadStartsAgentsAgain();
         agentsStartAtTheStageSize();
         restoredAgentsStartAtTheStageSize();
+        agentsOffTheStageFollowTheStageGrid();
         reloadFailuresRemainRetryable();
         batchReloadRetainsEarlierFailures();
         startupUpdatesShareOneInstaller();

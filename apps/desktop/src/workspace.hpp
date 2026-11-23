@@ -217,6 +217,10 @@ class Agent final : public QObject {
     // Sends queued scroll-back debt forward in bounded wheel messages.
     void returnProgramToBottom();
     void resizeTerminal(session::TerminalSize size);
+    // Off the stage: sizes the agent to the stage's grid unless another
+    // device holds it (see LiveConnection::fitInBackground). True when a
+    // resize went out.
+    bool fitTerminalInBackground(session::TerminalSize size);
     // Someone is at this window: take the size back from another device.
     void claimTerminalSize();
     [[nodiscard]] QString statusLabel() const;
@@ -1093,6 +1097,15 @@ class Workspace final : public QObject {
     QTimer unsized_timer_;
     static constexpr int unsized_wait_ms = 3000;
     void startUnsized();
+    // When the stage's grid is told (at startup and after the window or the
+    // sidebar resize), live agents off the stage are sized to it too, one
+    // every background_fit_interval_ms, so switching to one shows it at once
+    // instead of resizing and redrawing it then.
+    std::vector<QPointer<Agent>> background_fits_;
+    QTimer background_fit_timer_;
+    static constexpr int background_fit_interval_ms = 200;
+    void queueBackgroundFits();
+    void fitNextInBackground();
     std::chrono::milliseconds reconnect_first_hold_{std::chrono::seconds(20)};
     std::optional<std::chrono::milliseconds> reconnect_wait_;
     void reconnectIfDropped(const QString& id);
