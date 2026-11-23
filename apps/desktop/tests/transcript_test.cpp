@@ -116,6 +116,9 @@ void status_follows_commands() {
         R"({"type":"user","message":{"content":"<local-command-stdout>Set model to \u001b[1mFable 5.1\u001b[22m and saved as your default for new sessions</local-command-stdout>"}})");
     require(reader.status().model == "claude-fable-5-1", "a /model change applies at once");
     (void)reader.add(
+        R"({"type":"user","message":{"content":"<local-command-stdout>Set model to `glm-5.4` for this session</local-command-stdout>"}})");
+    require(reader.status().model == "glm-5.4", "a glm /model change applies at once");
+    (void)reader.add(
         R"({"type":"user","message":{"content":"<local-command-stdout>Set model to `Opus 5.5 (1M context) (default)` and saved as your default</local-command-stdout>"}})");
     require(reader.status().model == "claude-opus-5-5[1m]", "a display name with its window");
     (void)reader.add(

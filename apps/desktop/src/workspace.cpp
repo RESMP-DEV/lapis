@@ -1893,6 +1893,14 @@ void Agent::setHarnessId(const QString& id) {
     emit identityChanged();
     emit statusChanged();
 }
+QString configured_model_label(const QString& id) {
+    static const QRegularExpression glm(QStringLiteral(R"(^glm-(\d+(?:\.\d+)?)(.*)$)"),
+                                        QRegularExpression::CaseInsensitiveOption);
+    if (const auto match = glm.match(id); match.hasMatch())
+        return QStringLiteral("GLM ") + match.captured(1) + match.captured(2);
+    return id;
+}
+
 // The models a CLI offers the person. A list in the config replaces the CLI's
 // as written, in its order and named as the CLI names them; none is the CLI's
 // default, so the form picks the first and passes it as the model.
@@ -1911,7 +1919,8 @@ std::vector<ModelChoice> Workspace::modelChoices(const QString& harness) const {
         const auto known = std::find_if(found.begin(), found.end(),
                                         [&](const ModelChoice& model) { return model.id == name; });
         if (known == found.end())
-            picked.push_back({.id = name, .name = name, .isDefault = false});
+            picked.push_back(
+                {.id = name, .name = configured_model_label(name), .isDefault = false});
         else
             picked.push_back({.id = name,
                               .name = known->name,

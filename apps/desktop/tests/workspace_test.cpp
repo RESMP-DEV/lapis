@@ -4420,9 +4420,13 @@ void askedEffortReachesTheCli() {
     workspace.setSshConfigForTesting(config.fileName());
     const QString configured_model = QStringLiteral("custom model [v2]");
     lapis::desktop::AgentDefaults defaults;
-    defaults.models.insert(QStringLiteral("claude"), {configured_model});
+    defaults.models.insert(QStringLiteral("claude"), {configured_model, QStringLiteral("glm-5.4")});
     defaults.models.insert(QStringLiteral("codex"), {configured_model});
     workspace.setAgentDefaults(defaults);
+    const auto claude_choices = workspace.modelChoices(QStringLiteral("claude"));
+    require(claude_choices.size() == 2 && claude_choices[1].id == QStringLiteral("glm-5.4") &&
+                claude_choices[1].name == QStringLiteral("GLM 5.4"),
+            "configured glm-5.4 model displays as GLM 5.4");
     const auto close_owned = qScopeGuard([&] {
         for (const auto& value : workspace.agents())
             if (auto* item = value.value<lapis::desktop::Agent*>())

@@ -828,6 +828,9 @@ FocusScope {
     // ("claude-fable-5-2[1m]"); that reads as its short name too. A model
     // the picker does not know shows as its CLI reported it.
     function tidyModel(id) {
+        const glm = /^glm-(\d+(?:\.\d+)?)(.*)$/i.exec(id || "")
+        if (glm)
+            return "GLM " + glm[1] + glm[2]
         const m = /^(?:claude-([a-z]+)-(\d+)(?:-(\d{1,2})(?!\d))?|(opus|sonnet|haiku|fable)(?=\[|$))/.exec(id || "")
         if (!m)
             return ""

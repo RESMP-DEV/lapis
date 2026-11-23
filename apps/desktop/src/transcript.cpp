@@ -306,8 +306,13 @@ using namespace detail;
 // is "claude-opus-5-5[1m]"; an API name stays as it is.
 QString model_id(QString shown) {
     shown = without_escapes(shown).remove(QLatin1Char('`')).trimmed();
-    if (shown.startsWith(QLatin1String("claude-")))
+    if (shown.startsWith(QLatin1String("claude-")) ||
+        shown.startsWith(QLatin1String("glm-"), Qt::CaseInsensitive))
         return shown.section(QLatin1Char(' '), 0, 0);
+    static const QRegularExpression glm(QStringLiteral(R"(^GLM (\d+(?:\.\d+)?))"),
+                                        QRegularExpression::CaseInsensitiveOption);
+    if (const auto match = glm.match(shown); match.hasMatch())
+        return QStringLiteral("glm-") + match.captured(1);
     static const QRegularExpression name(QStringLiteral(R"(^([A-Za-z]+) (\d+)(?:\.(\d+))?)"));
     const auto match = name.match(shown);
     if (!match.hasMatch())

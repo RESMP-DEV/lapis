@@ -538,7 +538,7 @@ int run_new_session(const QString& captures) {
     require(short_name("claude-fable-5-2[1m]") == "Fable 5.2 (1M)" &&
                 short_name("claude-fable-5-2") == "Fable 5.2" &&
                 short_name("claude-opus-4-20250514") == "Opus 4" &&
-                short_name("gpt-6-astra") == "gpt-6-astra",
+                short_name("glm-5.4") == "GLM 5.4" && short_name("gpt-6-astra") == "gpt-6-astra",
             "raw model ids read as short names: " +
                 short_name("claude-fable-5-2[1m]").toStdString());
     require(ticked() == "opus" &&
