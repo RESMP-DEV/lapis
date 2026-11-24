@@ -1,0 +1,33 @@
+schema_version: 1
+module_path: ios_app
+title: Lapis iOS Apps (Lapis & Ultra Tab)
+scope:
+    - apps/ios/
+source_files: []
+depends_on: []
+related_to:
+    - path: android_app
+      reason: Android's LapisGateway and iOS Gateway.swift both call the Python gateway at apps/remote/lapis_remote.py for agent listing, starting, and SSE polling.
+    - path: ultratab_app
+      reason: iOS UltraTab's DeckGateway calls GET /api/deck and POST /api/agents/<id>/submit on the Mac gateway served by apps/remote/lapis_remote.py.
+similar_to:
+    - path: android_app
+      reason: Both companion apps connect to the Mac gateway (lapis_remote.py) over Tailscale/ZeroTier; Android uses Compose+OkHttp, iOS uses SwiftUI+URLSession.
+kk_module_id: 0aaeb39e-bedc-476f-9e5e-12fcbf251fc0
+kk_ordinal: 2
+kk_cards:
+    architecture_design:
+        id: 41874fd7-33ee-410c-a78f-4f39c0cc68a1
+        title: Lapis iOS Apps (Lapis & Ultra Tab)
+    coding_conventions:
+        id: ece3fab8-ecc5-48b1-86d9-164f267b2f05
+        title: Lapis iOS Apps (Lapis & Ultra Tab)
+    overview:
+        id: db6b8153-5bdb-4c59-a809-256ce5b45849
+        title: Lapis iOS Apps (Lapis & Ultra Tab)
+    tech_stack:
+        id: 7cecdc63-43e8-49dc-8db9-5df56791f001
+        title: Lapis iOS Apps (Lapis & Ultra Tab)
+    unique_setup_and_commands:
+        id: 0212c1b5-5a4a-49b1-826d-6ec632c92536
+        title: Lapis iOS Apps (Lapis & Ultra Tab)

@@ -1,0 +1,4 @@
+- State-transition methods validate input and return an `Outcome` enum (`applied`, `rejected`, `duplicate`, `desynchronized`) instead of throwing, with desynchronization triggered by any malformed or out-of-order input.
+- Identity-like strings are validated through the local `bounded(value, limit, empty_ok)` helper using a uniform 256-byte cap, while longer fields like `summary` use a 4096-byte cap.
+- Append-only journal records are serialized via little-endian helpers (`put_u8/u32/u64`, `put_bytes`, `put_id`, `put_request`) and verified on read with a reflected CRC-32, distinguishing torn vs corrupt records through a `Reader` that tracks `starved_` and `invalid_` flags.
+- Audit entry construction is centralized in small free functions (`asked_entry`, `closed_entry`) returning pre-initialized aggregate structs, keeping caller code focused on choosing kind/origin rather than field assembly.

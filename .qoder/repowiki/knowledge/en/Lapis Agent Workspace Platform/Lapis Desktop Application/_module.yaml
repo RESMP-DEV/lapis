@@ -1,0 +1,25 @@
+schema_version: 1
+module_path: desktop_app
+title: Lapis Desktop Application
+scope:
+    - apps/desktop/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 55877fda-1bf8-4917-829c-11b68a39c17a
+kk_cards:
+    architecture_design:
+        id: 4a6bbf65-56fb-466f-a144-2f776cf6dc67
+        title: Lapis Desktop Application
+    coding_conventions:
+        id: e90f037b-8eb7-42ab-85c8-840a101bdb4f
+        title: Lapis Desktop Application
+    overview:
+        id: 7af6c32e-99ca-4907-8aed-bdece86873a9
+        title: Lapis Desktop Application
+    tech_stack:
+        id: 0afc5875-ccae-40d0-96c4-ced13ac2f772
+        title: Lapis Desktop Application
+    unique_setup_and_commands:
+        id: e2dc0631-7102-4304-b337-1d0cde214331
+        title: Lapis Desktop Application

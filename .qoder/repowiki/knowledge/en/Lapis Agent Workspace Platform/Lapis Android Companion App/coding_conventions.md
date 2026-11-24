@@ -1,0 +1,5 @@
+- Long-lived async work is scoped to a process-level `CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)` exposed from `LapisApplication.sessionScope`, rather than using `rememberCoroutineScope()` inside composables.
+- Network calls run off the main thread via `withContext(ioContext)` or `Dispatchers.IO`, while UI state is published through `MutableStateFlow` / `StateFlow` collected with `collectAsStateWithLifecycle`.
+- The `LapisGateway` exposes an injectable `GatewayTransport` interface so the default `OkHttpTransport` can be replaced in tests without touching higher layers.
+- Host configuration and the latest listing are persisted to disk via `DiskCache` keyed by a SHA-256 of the lowercased host, and restored on launch before network refresh.
+- Errors from the gateway are normalised into typed `GatewayError` variants (InvalidHost, UnsupportedScheme, Refused, Unreadable) and surfaced to users via the shared `describe` helper.

@@ -1,0 +1,1 @@
+Qt framework (QCoreApplication, QLocalServer/Socket, QCryptographicHash, QTimer) for the service host; POSIX PTY for process emulation; CRC-32 checksums for on-disk journal integrity.

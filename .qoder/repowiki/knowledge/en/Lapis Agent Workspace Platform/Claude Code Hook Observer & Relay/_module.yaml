@@ -1,0 +1,26 @@
+schema_version: 1
+module_path: claude_adapter
+title: Claude Code Hook Observer & Relay
+scope:
+    - adapters/claude/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: ff200668-415f-4713-8ef7-e1fc929a0b62
+kk_ordinal: 6
+kk_cards:
+    architecture_design:
+        id: 3b4b0ab1-a39c-45fd-9605-8e10848b96e6
+        title: Claude Code Hook Observer & Relay
+    coding_conventions:
+        id: 0aab90f9-93f2-41cc-baae-8379388830ed
+        title: Claude Code Hook Observer & Relay
+    overview:
+        id: 035477eb-aec8-4010-bad8-7d6786b6d16f
+        title: Claude Code Hook Observer & Relay
+    tech_stack:
+        id: 319efc90-abfe-46f9-906c-540bf075443f
+        title: Claude Code Hook Observer & Relay
+    unique_setup_and_commands:
+        id: 25e2b51f-66e5-4ed4-8801-8854b726c3d8
+        title: Claude Code Hook Observer & Relay

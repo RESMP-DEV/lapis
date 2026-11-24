@@ -1,0 +1,26 @@
+schema_version: 1
+module_path: desktop_app/agent_state_and_search
+title: Agent State Publishing & Cmd+K Search
+scope:
+    - apps/desktop/src/agent_state.cpp
+    - apps/desktop/src/agent_state.hpp
+    - apps/desktop/src/agent_search.cpp
+    - apps/desktop/src/agent_search.hpp
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: bdf239a5-13dc-4578-8829-88ef0ab4c5a4
+kk_ordinal: 1
+kk_cards:
+    architecture_design:
+        id: 4a27dcc0-9106-4351-ba48-8c4104da2248
+        title: Agent State Publishing & Cmd+K Search
+    coding_conventions:
+        id: 49d5ca75-d853-49a4-9b08-fa9017d972db
+        title: Agent State Publishing & Cmd+K Search
+    overview:
+        id: 7152afb5-5651-4720-8221-0cabaceb04cc
+        title: Agent State Publishing & Cmd+K Search
+    tech_stack:
+        id: 2bf7f7a6-0ac3-4929-9118-50f6c08aa0cf
+        title: Agent State Publishing & Cmd+K Search

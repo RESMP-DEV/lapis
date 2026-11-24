@@ -1,0 +1,6 @@
+- Modal dialogs expose their data through `required property` inputs plus a single action signal (`requested`, `chosen`, `themeChosen`, etc.) and manage internal selection via a `pending*` field cleared on close.
+- Each dialog shares a uniform visual palette (`surfaceColor`, `textColor`, `mutedColor`, `accentColor`, `selectionColor`, `hoverColor`, `borderColor`) and typography (`monoFamily`, `uiFont`, `readoutFont`, `chromeRadius`, `motionDuration`, `motionEnabled`) passed down from the parent so all modals look identical.
+- Search/filter lists implement a consistent interaction pattern: an `onOpened` handler focuses the TextField, a `run()` method queries the injected `engine`, up/down arrow calls a shared `step(delta)` that wraps around the result index, and pressing Return triggers `choose(index)`.
+- Visual feedback uses `Behavior` blocks wrapping `ColorAnimation` with `Easing.OutCubic` driven by the shared `motionEnabled`/`motionDuration` flags, applied consistently to backgrounds and borders.
+- Text content is localized through `qsTr(...)` strings, while user-facing prose inside components stays as plain text nodes.
+- Component identity and testability are provided via stable `objectName` values (e.g. `workspaceWindow`, `commandsDialog`, `settingsDialog`, `command_`, `play-*`) rather than relying solely on `id`.

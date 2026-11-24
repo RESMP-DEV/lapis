@@ -1,0 +1,26 @@
+schema_version: 1
+module_path: supervisor_service
+title: Lapis Supervisor Runtime
+scope:
+    - services/supervisor/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 768b11bb-caac-4c3a-8078-7bee48c31ae4
+kk_ordinal: 5
+kk_cards:
+    architecture_design:
+        id: f9bc817e-5a11-47dc-b3a4-0783f593d73f
+        title: Lapis Supervisor Runtime
+    coding_conventions:
+        id: dc551240-2466-4b12-abb5-6bf3f5725681
+        title: Lapis Supervisor Runtime
+    overview:
+        id: de18ccdc-fb32-4fef-ad79-a286569b8d21
+        title: Lapis Supervisor Runtime
+    tech_stack:
+        id: 8ecc8d1c-a3c5-428f-821c-670fcb6d1424
+        title: Lapis Supervisor Runtime
+    unique_setup_and_commands:
+        id: 1f430d5a-623f-40f4-80f7-953d79c1b89c
+        title: Lapis Supervisor Runtime

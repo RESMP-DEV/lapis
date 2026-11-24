@@ -1,0 +1,1 @@
+Headless supervisor that owns a single Lapis session service process, persists its desired state, and exposes an authenticated local control socket for start/stop/disable.

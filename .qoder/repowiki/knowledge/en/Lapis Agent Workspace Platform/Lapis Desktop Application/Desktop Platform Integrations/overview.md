@@ -1,0 +1,1 @@
+Cross-platform platform-layer abstractions and macOS-specific implementations for the Lapis desktop app, covering update process management, chime/file utilities, reset journaling, notification hotkeys, and system preferences.

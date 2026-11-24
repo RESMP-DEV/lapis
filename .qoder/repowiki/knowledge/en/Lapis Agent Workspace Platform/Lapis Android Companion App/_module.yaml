@@ -1,0 +1,29 @@
+schema_version: 1
+module_path: android_app
+title: Lapis Android Companion App
+scope:
+    - apps/android/
+source_files: []
+depends_on: []
+related_to: []
+similar_to:
+    - path: ultratab_app
+      reason: Both Android and iOS UltraTab apps implement a deck of cards UI backed by GET /api/deck from the same Mac gateway, but target different platforms.
+kk_module_id: 342e95cb-b641-4087-b192-ec51d7119d36
+kk_ordinal: 1
+kk_cards:
+    architecture_design:
+        id: 5e79fe73-d025-4dcb-a8a7-cd9418a6ae1e
+        title: Lapis Android Companion App
+    coding_conventions:
+        id: 9a249104-7f5c-4369-b45a-91ed86e60477
+        title: Lapis Android Companion App
+    overview:
+        id: 56259dd5-11d8-480c-af84-c5ae74c9114b
+        title: Lapis Android Companion App
+    tech_stack:
+        id: 430332c8-6712-4a30-a17b-b7215127aa64
+        title: Lapis Android Companion App
+    unique_setup_and_commands:
+        id: 57045b6e-ad14-4dfd-a5dc-097e18c4cf41
+        title: Lapis Android Companion App

@@ -1,0 +1,27 @@
+schema_version: 1
+module_path: session_service/session_core/attention_journal
+title: Attention State Machine & Journaling
+scope:
+    - services/session/src/attention.cpp
+    - services/session/src/attention_audit.cpp
+    - services/session/src/attention_journal.cpp
+source_files: []
+depends_on: []
+related_to:
+    - path: claude_adapter
+      reason: Claude adapter forwards hook events to lapis_attention, which implements the same attention state machine and journal as the session service.
+kk_module_id: d80efe5a-5c15-41bb-99ff-387ae7aee0b8
+kk_ordinal: 1
+kk_cards:
+    architecture_design:
+        id: 4823a019-4bfd-4b0d-84be-f7185c51d1a4
+        title: Attention State Machine & Journaling
+    coding_conventions:
+        id: 194f327c-b41e-484d-84b0-8bf3fcd79f41
+        title: Attention State Machine & Journaling
+    overview:
+        id: 36c836fc-047a-4855-bcf8-526aba1d9f41
+        title: Attention State Machine & Journaling
+    tech_stack:
+        id: c1c58b1e-f774-40d6-a74e-8a6c4ede8948
+        title: Attention State Machine & Journaling

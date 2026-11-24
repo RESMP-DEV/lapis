@@ -1,0 +1,1 @@
+Qt Quick QML view layer for the Lapis desktop shell, providing the main window chrome and a family of modal dialogs for commands, search, resume, settings, tools, usage, and agent marks.

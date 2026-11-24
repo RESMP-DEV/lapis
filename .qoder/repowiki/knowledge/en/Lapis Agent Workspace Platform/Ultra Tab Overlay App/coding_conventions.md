@@ -1,0 +1,4 @@
+- Public interfaces in `src/*.hpp` live alongside their `.cpp` implementation files, keeping each component (published, cards, deck, composer, settings, session_sender, hotkey, overlay_view) in its own pair.
+- Cross-platform behavior is hidden behind the `platform::` namespace declared in `platform_overlay.hpp` and implemented per-OS (currently only `platform_overlay_mac.mm`), so Qt code never calls platform APIs directly.
+- Long-running async work (model calls, timeouts, debounced composition) is expressed through Qt signals/slots and `QTimer`/`QElapsedTimer` rather than raw threads, with `ComposeRunner` providing a virtual interface for testability.
+- User-facing persistent JSON files are placed under the Lapis `runtime/` directory with explicit size limits and rotation (e.g., answer log rotates at 16 MB into `.1` dated archives, composed-card log capped at 1 MB).

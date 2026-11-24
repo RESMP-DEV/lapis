@@ -1,0 +1,1 @@
+Qt 6 (QML, QQmlApplicationEngine, QQuickWindow, QObject, QTimer, QElapsedTimer) with std::thread for the background writer; logs are plain JSON Lines written directly via POSIX file descriptors.

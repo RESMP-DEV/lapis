@@ -1,0 +1,4 @@
+- Shared wire-format constants (event names, identity/derived field arrays, contract version) are declared as `inline constexpr` members of the `lapis::claude` namespace rather than in a separate header, keeping the protocol definition colocated with its consumers.
+- Relay-side failures are handled by returning `0` from `run_hook_relay` without throwing, ensuring the hook process fails open and never influences Claude's permission decision or prompt text.
+- Bounded I/O uses explicit limits — `input_limit` (1 MiB), `relay_frame_limit` (16 KiB), and `relay_deadline_ms` (1 s) — enforced around STDIN reads and socket writes before any network operation proceeds.
+- Backward compatibility is expressed through the `relay_contract` string: derived fields are only included when the caller passes `relay_contract`, letting older services fall back to the legacy identity-only shape.

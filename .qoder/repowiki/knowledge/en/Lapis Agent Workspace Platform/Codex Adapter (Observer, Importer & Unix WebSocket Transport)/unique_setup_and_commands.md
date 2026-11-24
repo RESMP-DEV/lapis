@@ -1,0 +1,1 @@
+Tests are optional and gated by `BUILD_TESTING`; running them requires `cmake -DBUILD_TESTING=ON ...` and then `ctest` targets `codex-transport` (20s timeout), `codex-observer` (30s), and `codex-importer` (30s). Live qualification of the pinned Codex binaries uses the repository-wide runner `scripts/check_codex_attention.py --live-glm --with-tui` described in CONTRIBUTING.md.

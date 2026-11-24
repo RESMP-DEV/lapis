@@ -1,0 +1,1 @@
+C++ with Qt event loop integration (`QProcess`, `QSocketNotifier`, `QObject` signals/slots) for PTY I/O multiplexing; raw POSIX syscalls (`fork`, `exec`, `setsid`, `setpgid`, `tcgetattr`, `tcsetattr`, `pipe`, `fcntl`) for process groups and PTY control.

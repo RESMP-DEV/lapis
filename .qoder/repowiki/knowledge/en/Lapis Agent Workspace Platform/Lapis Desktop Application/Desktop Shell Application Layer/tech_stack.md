@@ -1,0 +1,1 @@
+Qt6 (QGuiApplication, QQmlEngine, QTimer, QStandardPaths) plus a Python helper `remote_hook_relay.py` used by macOS integration; audio is synthesized at runtime as 16-bit mono WAV rather than shipped files.

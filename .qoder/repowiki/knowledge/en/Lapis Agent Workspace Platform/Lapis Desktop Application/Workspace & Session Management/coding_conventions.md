@@ -1,0 +1,3 @@
+- Cross-process messages are encoded as one JSON object per line sent over a `QLocalServer`/`QLocalSocket` pair, with a separate handler method dispatched by request kind.
+- State visible to QML is published through `Q_PROPERTY` declarations paired with `NOTIFY` signals, while mutating entry points are exposed via `Q_INVOKABLE` methods rather than direct setters.
+- Asynchronous background work (socket I/O, descriptor writes, history retrieval) is driven by Qt timers (`QTimer`) and `QFutureWatcher` instead of threads, keeping all callbacks on the event loop.

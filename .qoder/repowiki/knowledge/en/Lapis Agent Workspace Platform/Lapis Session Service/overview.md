@@ -1,0 +1,1 @@
+Orchestrates the in-process terminal, POSIX PTY backend, and local IPC transport to launch agent processes and exchange attention snapshots over Unix-domain sockets.

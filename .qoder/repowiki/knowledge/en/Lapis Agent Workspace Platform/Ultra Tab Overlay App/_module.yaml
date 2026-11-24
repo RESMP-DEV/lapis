@@ -1,0 +1,26 @@
+schema_version: 1
+module_path: ultratab_app
+title: Ultra Tab Overlay App
+scope:
+    - apps/ultratab/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: b407d8e7-4a63-4602-8b30-f870e9e43e05
+kk_ordinal: 3
+kk_cards:
+    architecture_design:
+        id: 87572e72-38cc-4ec8-811c-35c69618ef4f
+        title: Ultra Tab Overlay App
+    coding_conventions:
+        id: f1aa8159-0e47-430e-a103-131789f4666b
+        title: Ultra Tab Overlay App
+    overview:
+        id: 0cd78cc4-3660-4aec-8411-945a19edb824
+        title: Ultra Tab Overlay App
+    tech_stack:
+        id: f18f11c3-fc10-4e79-8b44-c11e1620a3f2
+        title: Ultra Tab Overlay App
+    unique_setup_and_commands:
+        id: 4ffc44ca-2c74-411d-b3af-67d640c67e51
+        title: Ultra Tab Overlay App

@@ -1,0 +1,1 @@
+Repository documentation and machine-generated evidence artifacts (JSON review records, milestone probes, architecture triage) supporting the project's build, usage, and agent workflows.

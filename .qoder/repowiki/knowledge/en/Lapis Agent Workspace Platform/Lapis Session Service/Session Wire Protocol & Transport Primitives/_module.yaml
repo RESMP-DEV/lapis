@@ -1,0 +1,23 @@
+schema_version: 1
+module_path: session_service/transport_protocols
+title: Session Wire Protocol & Transport Primitives
+scope:
+    - services/session/src/transport/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 99f2f62a-aff2-49b7-9a3e-15d7f77aa617
+kk_ordinal: 1
+kk_cards:
+    architecture_design:
+        id: d70c3ff7-d506-4645-91c3-6cd78b8ac7fb
+        title: Session Wire Protocol & Transport Primitives
+    coding_conventions:
+        id: e46d1a1a-888f-4395-b62a-42589c5be673
+        title: Session Wire Protocol & Transport Primitives
+    overview:
+        id: 2aab13f5-6818-4114-a761-74a0f382eefd
+        title: Session Wire Protocol & Transport Primitives
+    tech_stack:
+        id: fcc94f4a-b81c-4428-96a4-3174c67a787d
+        title: Session Wire Protocol & Transport Primitives

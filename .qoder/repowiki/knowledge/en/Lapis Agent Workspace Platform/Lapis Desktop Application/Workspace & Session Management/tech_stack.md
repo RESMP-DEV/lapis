@@ -1,0 +1,1 @@
+Qt Core/Multimedia event loop (`QObject`, `QLocalServer`, `QLocalSocket`, `QFileSystemWatcher`, `QFutureWatcher`) over the Lapis session wire protocol; inter-process communication uses line-delimited JSON over local Unix sockets and files under the workspace registry directory.

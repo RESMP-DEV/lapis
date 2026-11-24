@@ -1,0 +1,1 @@
+Python 3 scripts driven by `uv run --no-project python ...`; C++ terminal probe built with CMake; macOS release signing uses `codesign`/`notarytool`/`stapler` and Sparkle update metadata; GUI QA harness uses `python-xlib` against a synthetic X11 display.

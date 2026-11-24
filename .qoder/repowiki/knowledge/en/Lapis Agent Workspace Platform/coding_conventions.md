@@ -1,0 +1,3 @@
+- Native targets are composed through top-level CMake feature flags rather than ad-hoc subdirectory inclusion.
+- Shared project options (standard, warnings, compile commands) are centralized in `cmake/ProjectOptions.cmake` and included by each child.
+- Cross-repo tooling is invoked through `scripts/lapis.py` wrappers instead of invoking linters/builders directly.

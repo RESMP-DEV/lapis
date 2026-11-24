@@ -1,0 +1,5 @@
+- Public Qt classes use the PIMPL pattern — a private nested `class Impl` and a `std::unique_ptr<Impl> impl_` member hide all implementation details behind the header.
+- Asynchronous I/O is exposed exclusively through Qt signals (`opened`, `message`, `failed`, `initialized`, `changed`, etc.) rather than callbacks or return values, with long-running work intended to run on the owning thread.
+- Long-lived mutable state is guarded so that every public call and signal handler shares a single thread, documented in class comments (e.g. 'All calls and signals share its thread').
+- External inputs and wire data are treated as potentially hostile: payload sizes are bounded (1024 events / 1 MiB), unknown binary digests fail closed, and malformed or timed-out operations terminate the task without retry.
+- Reconciliation with external state is explicit rather than automatic: reconnection, response replay, and decision submission require explicit `reconnect()`/`decide()` calls and are never retried automatically.

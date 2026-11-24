@@ -1,0 +1,1 @@
+Captures user interaction events into a JSONL log, and hosts an isolated QML preview window for desktop scenarios including scripted capture.

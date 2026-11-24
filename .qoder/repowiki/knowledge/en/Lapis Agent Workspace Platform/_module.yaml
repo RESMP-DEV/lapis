@@ -1,0 +1,67 @@
+schema_version: 1
+module_path: root
+title: Lapis Agent Workspace Platform
+scope:
+    - README.md
+    - CONTRIBUTING.md
+    - AGENTS.md
+    - CMakeLists.txt
+    - CMakePresets.json
+    - justfile
+    - lapis.json
+    - .clang-format
+    - .clang-tidy
+    - .clangd
+    - .editorconfig
+    - .gitignore
+    - .gitattributes
+    - Brewfile
+    - ruff.toml
+    - .github/
+    - cmake/
+    - site/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 62a020ff-0087-4c63-a09f-f1f4eff8df4f
+kk_cards:
+    architecture_design:
+        id: 8c751b49-251c-4d4b-82de-3cc7f52060eb
+        title: Lapis Agent Workspace Platform
+    coding_conventions:
+        id: eea2903c-2d0e-4ae6-9fbd-f03e007f4a21
+        title: Lapis Agent Workspace Platform
+    overview:
+        id: ad2c9a67-400e-4ad2-b296-1477d74848b9
+        title: Lapis Agent Workspace Platform
+    tech_stack:
+        id: da998016-d459-4f79-8bc1-c99755a72ac1
+        title: Lapis Agent Workspace Platform
+    unique_setup_and_commands:
+        id: 41dbdc79-2acc-4983-ba04-b39e5a95f099
+        title: Lapis Agent Workspace Platform
+    build_system:
+        id: 9ff4a957-627b-4c06-a4cb-fd1ad8f5cd14
+        title: CMake + Python Orchestrator Build & Release System
+    configuration_system:
+        id: 275730d9-b519-4955-8d1b-c57fec4a713a
+        title: Configuration System — LAPIS JSON, Environment Overrides, and Supervisor State
+    dependency_management:
+        id: 888aea9e-84c0-4f92-ae7f-b792217829be
+        title: Dependency Management Across C++/Qt, Android, and macOS Toolchains
+    error_handling:
+        id: c59b359c-0bda-47c9-af46-5feff6311e19
+        title: Exception-Based Error Handling with Bounded Failures and Signal Propagation
+    frontend_style:
+        id: 7301f95f-313c-4638-87a0-f4f66e9f3617
+        title: "Multi-Platform Frontend Styling: QML Themes, Compose Material3, SwiftUI Dark"
+    logging_system:
+        id: 0fdc4733-7be5-4113-a557-6f1d2afa5c6b
+        title: Qt Debug Logging and Desktop Interaction Log
+kk_repo_cards:
+    - build_system
+    - configuration_system
+    - dependency_management
+    - error_handling
+    - frontend_style
+    - logging_system

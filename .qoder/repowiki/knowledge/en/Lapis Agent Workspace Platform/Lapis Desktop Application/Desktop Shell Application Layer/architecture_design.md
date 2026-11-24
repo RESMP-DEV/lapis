@@ -1,0 +1,8 @@
+Entry point is `main.cpp`, which parses CLI options (`--codex`, `--claude`, `--ui-preview`, `--capture`, etc.), resolves app paths via `app_paths.{cpp,hpp}`, sets up the Qt/QML engine, and starts the GUI loop. Cross-cutting concerns are split into small, single-responsibility modules:
+- `gui_state.{cpp,hpp}` — versioned JSON persistence of window-local state, with a publisher/owner registry and rate-limited async writer.
+- `platform_desktop.hpp` — compile-time (`Q_OS_MACOS`) facade over macOS-specific services (notifications, login item, Sparkle updater, secure event input, Claude Code keychain access); non-mac builds inline to no-ops so upper layers stay portable.
+- `desktop_actions.{cpp,hpp}` + `keymap.{cpp,hpp}` — keyboard shortcut resolution and action dispatch bridging Qt accelerators to application commands.
+- `alerts.{cpp,hpp}` + `chime_sounds.{cpp,hpp}` — notification display and synthesized WAV chimes (`needsYou`, `finished`) played on background threads.
+- `shell_environment.{cpp,hpp}` — adopts the user's interactive login shell environment on macOS when launched from Finder/Dock/LaunchAgent.
+- `attention_view.cpp`, `next_prompt.{cpp,hpp}`, `attention_order.hpp` — derive per-agent status labels and next-prompt hints from the session attention wire protocol for QML consumption.
+Dependency direction: `main.cpp` → these helpers → shared `session::` / `workspace::` / `terminal_surface::` libraries; nothing in this module depends on QML except through QObject invocations exposed by `GuiState`.

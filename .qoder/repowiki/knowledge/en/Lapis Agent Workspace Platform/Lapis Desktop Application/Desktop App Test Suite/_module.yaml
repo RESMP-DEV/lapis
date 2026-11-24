@@ -1,0 +1,26 @@
+schema_version: 1
+module_path: desktop_app/tests
+title: Desktop App Test Suite
+scope:
+    - apps/desktop/tests/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 120cf913-6fe5-4d66-aeba-f4c3486502f0
+kk_ordinal: 10
+kk_cards:
+    architecture_design:
+        id: bae5afa9-f6eb-42ee-a21c-7d7dd4f5fcab
+        title: Desktop App Test Suite
+    coding_conventions:
+        id: c257c4a7-076d-40ae-993e-587141331e2f
+        title: Desktop App Test Suite
+    overview:
+        id: 49555315-bcf5-4be8-907c-2e27655c4a1b
+        title: Desktop App Test Suite
+    tech_stack:
+        id: 8110f95b-b11c-45cd-a930-b636d6cb3a17
+        title: Desktop App Test Suite
+    unique_setup_and_commands:
+        id: ee4ac9bb-5332-4a25-b98b-2abe08bca984
+        title: Desktop App Test Suite

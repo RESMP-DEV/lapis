@@ -1,0 +1,23 @@
+schema_version: 1
+module_path: session_service/session_core/transport_and_platform
+title: Local Transport Protocol and POSIX Platform Abstractions
+scope:
+    - services/session/src/transport/
+    - services/session/src/platform/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: bc56df9a-fe09-4a3a-abfd-3698966091e0
+kk_cards:
+    architecture_design:
+        id: 9a0e7b56-c61d-49e9-ba46-2e8f6a9459a9
+        title: Local Transport Protocol and POSIX Platform Abstractions
+    coding_conventions:
+        id: 8e795ad4-9135-4055-8706-5bbaaa41ba90
+        title: Local Transport Protocol and POSIX Platform Abstractions
+    overview:
+        id: 3d821ba0-8dc4-4c35-b1e3-e67b6b8848ed
+        title: Local Transport Protocol and POSIX Platform Abstractions
+    tech_stack:
+        id: 0ab75e18-9be5-410e-bf90-7333da7b891c
+        title: Local Transport Protocol and POSIX Platform Abstractions

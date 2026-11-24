@@ -1,0 +1,28 @@
+schema_version: 1
+module_path: codex_adapter
+title: Codex Adapter (Observer, Importer & Unix WebSocket Transport)
+scope:
+    - adapters/codex/
+source_files: []
+depends_on: []
+related_to:
+    - path: session_service/session_core/attention_journal
+      reason: Codex adapter forwards approvals/user-input into session::attention::State, sharing the attention state machine with Claude.
+kk_module_id: 4d6a4e1f-99b9-45cd-a9d4-c6e91f12e81c
+kk_ordinal: 7
+kk_cards:
+    architecture_design:
+        id: 30eb5d92-a313-494e-afaa-1f8ad3b875d2
+        title: Codex Adapter (Observer, Importer & Unix WebSocket Transport)
+    coding_conventions:
+        id: f0531da6-384c-4178-86a7-0a14faa7aced
+        title: Codex Adapter (Observer, Importer & Unix WebSocket Transport)
+    overview:
+        id: a273cf04-013e-491c-b16a-23b5b45d235b
+        title: Codex Adapter (Observer, Importer & Unix WebSocket Transport)
+    tech_stack:
+        id: 727af10f-14a8-40b5-9975-b043c9b08d4c
+        title: Codex Adapter (Observer, Importer & Unix WebSocket Transport)
+    unique_setup_and_commands:
+        id: 1028d43d-48b6-4876-9574-8b1497816b3e
+        title: Codex Adapter (Observer, Importer & Unix WebSocket Transport)

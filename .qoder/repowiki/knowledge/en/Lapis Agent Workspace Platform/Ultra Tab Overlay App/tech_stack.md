@@ -1,0 +1,1 @@
+C++17 with Qt 6.11.2 (QML Quick for the overlay, Network for session transport, Svg for icons). Python 3 subprocess invoked for model-assisted card composition via `compose/compose.py`. macOS-only Objective-C++ bridge using AppKit, Carbon, and ServiceManagement frameworks.

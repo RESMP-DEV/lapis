@@ -1,0 +1,1 @@
+Qt/QML (`QQuickItem`, `QObject`, MOC, `QVariantList`, `QJSValue`) for the UI surface; C++17 with `std::optional`/`std::shared_ptr`; `TabRanker` uses a linear softmax model persisted as JSONL decisions plus a fitted weights file.

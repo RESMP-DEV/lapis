@@ -1,0 +1,4 @@
+- Platform-specific implementations live in `src/platform/` as separate `.cpp` / `.mm` files paired with a single cross-platform header used by all children.
+- Scripted logic is kept in Python files under `src/` and compiled into the binary via `*_script.hpp.in` templates generated at build time rather than shipped as text resources.
+- Services exposed to QML are registered through `QQmlContext` properties from the shell's bootstrap code instead of being constructed inside QML.
+- Tests mirror the source tree structure one-to-one, using shared fixtures (`wire_fixture.hpp`, `model_change_recorder.hpp`) to drive C++ services without a running UI.

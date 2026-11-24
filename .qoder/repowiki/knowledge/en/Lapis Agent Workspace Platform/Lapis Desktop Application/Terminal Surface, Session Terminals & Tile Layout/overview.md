@@ -1,0 +1,1 @@
+Desktop GUI layer that renders terminal sessions as QML surfaces, manages per-machine persistent shell sessions, ranks agent tabs for Tab navigation, and tiles agents into split panes.

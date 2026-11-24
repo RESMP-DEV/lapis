@@ -1,0 +1,30 @@
+schema_version: 1
+module_path: desktop_app/interaction_logging
+title: Desktop Interaction Logging, UI Capture & Preview
+scope:
+    - apps/desktop/src/interaction_log.cpp
+    - apps/desktop/src/interaction_log.hpp
+    - apps/desktop/src/interaction_recorder.cpp
+    - apps/desktop/src/interaction_recorder.hpp
+    - apps/desktop/src/ui_capture.cpp
+    - apps/desktop/src/ui_capture.hpp
+    - apps/desktop/src/ui_preview.cpp
+    - apps/desktop/src/ui_preview.hpp
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: b7dbca92-7728-4d3e-81ee-47eb520a37a2
+kk_ordinal: 5
+kk_cards:
+    architecture_design:
+        id: 07b61fd7-48ec-4dd7-a910-8e2f6dd86137
+        title: Desktop Interaction Logging, UI Capture & Preview
+    coding_conventions:
+        id: 800a5b35-7b91-4adc-949e-d7c426340593
+        title: Desktop Interaction Logging, UI Capture & Preview
+    overview:
+        id: f7e6267e-5d09-4beb-8e25-3fde324a017e
+        title: Desktop Interaction Logging, UI Capture & Preview
+    tech_stack:
+        id: b3d0d412-64f5-4d73-8cec-00a5f21c0dfe
+        title: Desktop Interaction Logging, UI Capture & Preview

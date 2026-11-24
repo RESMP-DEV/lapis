@@ -1,0 +1,5 @@
+Three cooperating subsystems under `lapis::desktop`:
+- Conversation scanning: `ConversationIndex` (QObject + QThreadPool) owns a background scan loop that walks `claude_home_` / `codex_home_`, parses session files via `read_claude` / `read_codex`, caches results by file size+time through `ScanMemory`, and exposes Qt-invokable queries (`recent`, `orderFolders`) plus the `changed` signal. Utility helpers in the nested `conversations` namespace handle title elision, folder heat decay (`0.5^(age/14d)`), age formatting, and child ordering.
+- History strip: `HistoryStrip` models a single scrolling view over a terminal's output split into an archived prefix and a live screen; pages are added/prepended and held in a `std::map` keyed by first row, with seam settlement between archive and screen handled lazily.
+- Cell shapes: `CellShapes` describes fills and strokes for Unicode block/box-drawing glyphs so they render at device-pixel precision without relying on font glyphs, mirroring the iPhone `CellGlyphs` geometry.
+Dependency direction is one-way: consumers call into these units; there is no cross-dependency among the three subsystems.

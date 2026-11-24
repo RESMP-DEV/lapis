@@ -1,0 +1,1 @@
+C++ with direct POSIX I/O (`open`, `write`, `fcntl` locks, `sys/stat.h`); self-contained reflected IEEE CRC-32 implementation (no external crypto library) for record integrity verification.

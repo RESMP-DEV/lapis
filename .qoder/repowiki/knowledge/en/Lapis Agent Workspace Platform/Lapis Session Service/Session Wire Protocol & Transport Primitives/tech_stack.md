@@ -1,0 +1,1 @@
+Qt C++ (`QByteArray`, `QString`, `QJsonObject`, `quint*`) with explicit big-endian field encoding; protocol versioning is tracked via a `constexpr quint32 version = 6` and per-field capability bits rather than separate message families.

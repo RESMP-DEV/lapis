@@ -1,0 +1,1 @@
+Two SwiftUI iPhone apps that connect to the Lapis gateway on a Mac over Tailscale/ZeroTier: the main agent manager and the Ultra Tab card-deck UI.

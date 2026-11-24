@@ -1,0 +1,34 @@
+schema_version: 1
+module_path: desktop_app/workspace_management
+title: Workspace & Session Management
+scope:
+    - apps/desktop/src/workspace.cpp
+    - apps/desktop/src/workspace.hpp
+    - apps/desktop/src/workspace_control.cpp
+    - apps/desktop/src/workspace_control.hpp
+    - apps/desktop/src/open_request.cpp
+    - apps/desktop/src/open_request.hpp
+    - apps/desktop/src/live_connection.cpp
+    - apps/desktop/src/live_connection.hpp
+source_files: []
+depends_on: []
+related_to:
+    - path: supervisor_service
+      reason: Desktop workspace_control listens on workspace-control.sock and dispatches JSON-line requests — counterpart to the supervisor's authenticated control socket.
+    - path: ultratab_app
+      reason: Desktop's OpenRequests watches runtime JSON files written by Ultra Tab, decoupling overlay bootstrapping from UI — file-driven IPC counterpart.
+kk_module_id: 56526111-2a80-4ac7-8640-63e84641e8cb
+kk_ordinal: 3
+kk_cards:
+    architecture_design:
+        id: a385d09f-ece7-4174-9c17-02700262d1ee
+        title: Workspace & Session Management
+    coding_conventions:
+        id: eb686a87-9a85-4509-bcbf-79cb988d1d4b
+        title: Workspace & Session Management
+    overview:
+        id: ffe44420-9356-4353-813a-d6b0f7b47e6f
+        title: Workspace & Session Management
+    tech_stack:
+        id: bbbd5251-7857-419a-9d6b-58627ac6b030
+        title: Workspace & Session Management

@@ -1,0 +1,4 @@
+- Every serializable struct gets a matching pair of free functions `encode_<struct>` returning `QByteArray` and `decode_<struct>` taking `const QByteArray&`, defined at namespace scope in `local_protocol.hpp`.
+- Big-endian numeric fields are written via `append_quint32`/`append_quint64` and read via `read_quint32`/`read_quint64` operating on an advancing `unsigned char*& cursor`, never via manual byte shifts at call sites.
+- Optional client capabilities are advertised through individual boolean flags on `AttachRequest` (hyperlinks, attention_phase, paste_transactions) and checked before accepting or sending corresponding frames.
+- Identity validation is centralized: `valid_identity` checks both 16-byte UUIDs are nonzero, and `encode_attachment`/`decode_attachment` throw `std::runtime_error` on violations instead of silently propagating invalid data.

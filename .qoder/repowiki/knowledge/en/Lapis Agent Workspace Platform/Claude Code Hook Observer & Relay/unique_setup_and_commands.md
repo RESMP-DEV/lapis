@@ -1,0 +1,1 @@
+Built as part of the project; tests run via `ctest -R claude-observer` (or `make lapis_claude_observer_tests && ./lapis_claude_observer_tests`), with a 60-second default test timeout that expands to 180 seconds when `LAPIS_SANITIZER=thread`.

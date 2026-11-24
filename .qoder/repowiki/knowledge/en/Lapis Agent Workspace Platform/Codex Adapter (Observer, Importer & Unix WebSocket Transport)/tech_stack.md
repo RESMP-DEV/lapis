@@ -1,0 +1,1 @@
+C++ with Qt 6.11.2 Core + Network (AUTOMOC enabled); builds as a static library `lapis_codex_adapter` consumed by the host project.

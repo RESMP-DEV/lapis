@@ -1,0 +1,1 @@
+Manages multi-account plan configuration and the interactive sign-in flow that registers a new Claude Code or Codex plan, distributes its token to remote machines, and selects plans for sessions.

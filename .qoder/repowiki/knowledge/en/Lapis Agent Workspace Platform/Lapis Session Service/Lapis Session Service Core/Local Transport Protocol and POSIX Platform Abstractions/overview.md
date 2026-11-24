@@ -1,0 +1,1 @@
+Defines the local wire protocol for session snapshots and control messages, plus a POSIX backend that launches PTY processes, manages process groups, and exposes Unix-domain endpoints.

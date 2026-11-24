@@ -1,0 +1,25 @@
+schema_version: 1
+module_path: desktop_app/accounts_and_auth
+title: Account Plans & Plan Sign-In Flow
+scope:
+    - apps/desktop/src/accounts.cpp
+    - apps/desktop/src/accounts.hpp
+    - apps/desktop/src/plan_sign_in.cpp
+    - apps/desktop/src/plan_sign_in.hpp
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 44c5bb53-7657-4942-9329-3639e395c5c9
+kk_cards:
+    architecture_design:
+        id: 44772ea1-0a59-4c9d-bd96-36e5f88527a3
+        title: Account Plans & Plan Sign-In Flow
+    coding_conventions:
+        id: bbf5123a-4165-4d9b-a55e-37034d7dc9d3
+        title: Account Plans & Plan Sign-In Flow
+    overview:
+        id: 4b064304-bd4b-4308-8f2a-51a6a0202696
+        title: Account Plans & Plan Sign-In Flow
+    tech_stack:
+        id: f86f27a6-3920-4e71-89e7-7ecaf20726a6
+        title: Account Plans & Plan Sign-In Flow

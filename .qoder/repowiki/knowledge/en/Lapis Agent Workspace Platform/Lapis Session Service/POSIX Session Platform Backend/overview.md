@@ -1,0 +1,1 @@
+POSIX-specific backend for the session service, implementing PTY process management, Unix-domain socket endpoints, process-group lifecycle guards, and RAII file-descriptor handles.

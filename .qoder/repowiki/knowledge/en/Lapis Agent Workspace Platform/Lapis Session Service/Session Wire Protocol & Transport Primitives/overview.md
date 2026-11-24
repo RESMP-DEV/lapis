@@ -1,0 +1,1 @@
+Defines the binary wire format, frame parser, and pacing helpers used by the session service to communicate with local Qt clients over a shared-memory pipe.

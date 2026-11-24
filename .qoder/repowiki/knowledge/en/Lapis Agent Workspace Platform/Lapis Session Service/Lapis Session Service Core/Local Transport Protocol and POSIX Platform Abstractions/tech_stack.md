@@ -1,0 +1,1 @@
+Qt (QObject/QProcess/QSocketNotifier/QByteArray/QString) for the event loop and IPC, paired with raw POSIX syscalls (PTY, setsid, signal handling) through `unique_fd`; wire format is a hand-rolled big-endian binary framing with version 6 and explicit size caps (8 MiB frames, 64 KiB input, 960 KiB pastes).

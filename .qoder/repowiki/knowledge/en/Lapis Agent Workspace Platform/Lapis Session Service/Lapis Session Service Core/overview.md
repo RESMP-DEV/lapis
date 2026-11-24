@@ -1,0 +1,1 @@
+Wires the in-process terminal emulator, POSIX PTY backend, local IPC transport, and attention journal into a single QCoreApplication-driven session service that launches agent processes and exchanges snapshots over Unix-domain sockets.

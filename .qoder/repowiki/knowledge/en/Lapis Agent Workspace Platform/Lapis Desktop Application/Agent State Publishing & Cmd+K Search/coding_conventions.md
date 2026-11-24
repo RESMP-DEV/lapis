@@ -1,0 +1,3 @@
+- Heavy or blocking work is offloaded to background threads (QThreadPool for ordered writes, index rebuilds) while the public API remains synchronous on the event loop.
+- Public interfaces intended for QML consumption are marked Q_INVOKABLE and return QString/QVariantList rather than raw C++ containers.
+- Component state is kept private with const accessors (document(), path(), size()) instead of exposing member variables.

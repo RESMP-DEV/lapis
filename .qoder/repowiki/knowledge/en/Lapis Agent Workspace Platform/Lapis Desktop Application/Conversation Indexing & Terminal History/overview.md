@@ -1,0 +1,1 @@
+Scans local Claude and Codex sessions to build a searchable conversation index, renders terminal history as a paged strip, and draws block/box-drawing characters as vector shapes.

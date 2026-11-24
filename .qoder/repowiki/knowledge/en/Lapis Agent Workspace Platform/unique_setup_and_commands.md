@@ -1,0 +1,1 @@
+`just` delegates every workflow to `python3 scripts/lapis.py` (doctor, bootstrap, check, asan/tsan, profile, format, desktop/run/ui/*, smoke, supervisor-runtime, latency-budget), which is the unified entry point for both native and cross-language tasks.

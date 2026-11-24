@@ -1,0 +1,8 @@
+Single Gradle `:app` module under `apps/android/` following the design spec; no sub-modules. Kotlin code is organised by feature package under `dev.lapis.remote`:
+- `gateway/` — HTTP client layer (`LapisGateway`) built on an injectable `GatewayTransport` (default `OkHttpTransport`), serialised with kotlinx.serialization; includes SSE parsing and model types.
+- `session/` — stateful repository (`WorkspaceRepository`) exposing `StateFlow`s for host/listing/error/refreshing, with per-host disk cache (`DiskCache`) and a `GatewaySource` SPI so tests can swap in a fake transport.
+- `platform/` — thin platform abstraction (`Settings.kt`, `KeyValueStore` backed by DataStore).
+- `terminal/` — terminal rendering primitives (glyphs, metrics, screen buffer, line wrap) consumed by the agent stage.
+- `ui/commandbar/` — command bar composable, key bindings, snippet editor dialog and store.
+- `ui/` — Compose entry point (`MainActivity`, `LapisApp`), theme, settings screen, workspace listing, and the agent stage.
+Dependency direction is one-way: `ui` → `session` → `gateway`; `terminal` has no runtime dependency on the rest. `LapisApplication` owns a process-scoped `CoroutineScope` and the `WorkspaceRepository`, which outlive activity recreation. Debug launch extras (`gatewayHost`, `resetCache`, `commandBarEnabled`) are wired into `MainActivity.applyLaunchOverrides` to mirror iOS test harness behaviour.

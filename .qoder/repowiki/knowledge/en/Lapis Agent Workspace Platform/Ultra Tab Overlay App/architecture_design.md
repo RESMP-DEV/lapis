@@ -1,0 +1,8 @@
+Built with CMake + Qt6 (Core/Gui/Qml/Quick/Network/Svg) as two targets: a static library `lapis_ultratab_core` exposing the domain layer and a `lapis_ultratab` executable (macOS bundle `Ultra Tab.app`, LSUIElement, no Dock icon).
+
+- Domain layer (`src/published.hpp`, `cards.hpp`, `deck.hpp`, `settings.hpp`) models agent state, card metadata, and the ordered deck; it is pure Qt data types.
+- Platform abstraction: `platform_overlay.hpp` declares `OverlayHost` and translucency helpers; `platform_overlay_mac.mm` implements them via AppKit/Carbon/ServiceManagement for window placement and activation.
+- UI layer: `overlay_view.cpp/.hpp` hosts a QML view (`qml/Overlay.qml`, `qml/HarnessTile.qml`); `main.cpp` wires the event loop, hotkey registration (`hotkey.*`), answer logging, and the `Overlay` controller class.
+- Composing pipeline: `composer.hpp/.cpp` owns runtime files under `runtime/ultratab_*.json[l]`, schedules composition jobs through a `ComposeRunner` interface, and dispatches them via `ProcessComposeRunner` which runs `python3 compose.py` from embedded resources (`compose/compose.py` plus `apps/desktop/src/next_prompt.py`).
+- Session integration: `session_sender.cpp/.hpp` reuses `lapis_session_launch` to join an agent's session service so the main lapis window retains ownership; `published.cpp` reads lapis's published state without taking workspace locks.
+- Tests: three gtest-based executables (`ultratab_test`, `composer_test`, `overlay_test`) linked against `lapis_terminal` or the core, with the overlay test running offscreen and capturing frames to `build/reports/ultratab`.

@@ -1,0 +1,4 @@
+- Heavyweight serialization and disk I/O are offloaded from the GUI thread via a dedicated worker thread (`InteractionWriter::run`) coordinated with `std::condition_variable` wake/drain signals.
+- Cross-cutting interaction callbacks go through the `lapis::desktop::interaction` namespace functions rather than direct calls, allowing previews and tests to provide no-op implementations.
+- Sensitive input is suppressed by detecting credential-dialog visibility and by classifying keys with `key_class` when `likely_secret_prompt` identifies a secret prompt row.
+- Fast-changing mouse movement is aggregated by `PointerSampler`, which emits at most one record per configured interval and folds subsequent moves into a trailing sample carrying a fold count.

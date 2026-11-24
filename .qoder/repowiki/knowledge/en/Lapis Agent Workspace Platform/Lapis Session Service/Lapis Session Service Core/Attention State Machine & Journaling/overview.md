@@ -1,0 +1,1 @@
+Implements the attention subsystem's request lifecycle state machine and its append-only, CRC-32-protected on-disk journal with an audit bridge that translates state transitions into journal entries.

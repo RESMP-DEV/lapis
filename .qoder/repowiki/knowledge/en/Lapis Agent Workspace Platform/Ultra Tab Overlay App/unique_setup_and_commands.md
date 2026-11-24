@@ -1,0 +1,1 @@
+The app bundles its own `Info.plist.in` with bundle ID `dev.ultratab.app` and relies on `scripts/package_ultratab.py` to inject the app icon and code-sign the `.app`. The overlay test requires `QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software` and writes captures to `${PROJECT_SOURCE_DIR}/build/reports/ultratab`.

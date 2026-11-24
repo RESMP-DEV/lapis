@@ -1,0 +1,1 @@
+Android companion app that connects to the Lapis gateway on a Mac over Tailscale/ZeroTier to list, start, and observe agents via a Compose UI.

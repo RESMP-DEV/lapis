@@ -1,0 +1,1 @@
+Android application targeting API 29–37, built with Kotlin 17, Jetpack Compose (Material3 + window size class), OkHttp for networking, kotlinx.coroutines + coroutines-test, kotlinx.serialization for JSON, and AndroidX DataStore for preferences. ProGuard rules are present but minification is disabled until a release milestone.

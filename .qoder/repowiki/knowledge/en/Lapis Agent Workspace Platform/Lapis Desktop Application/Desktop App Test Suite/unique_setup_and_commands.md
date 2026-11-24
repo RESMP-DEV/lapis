@@ -1,0 +1,1 @@
+Tests requiring a running desktop need an X server / display: native input and window-activation tests under `platform/` require a real GUI session, and `switch_benchmark.cpp` is a micro-benchmark entry point rather than a normal test.

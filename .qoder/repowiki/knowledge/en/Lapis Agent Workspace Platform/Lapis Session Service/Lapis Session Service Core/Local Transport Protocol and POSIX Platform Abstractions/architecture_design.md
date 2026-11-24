@@ -1,0 +1,7 @@
+Two cooperating sub-trees under `lapis::session`:
+
+- `transport/` (protocol layer) — pure data shapes and serialization. `local_protocol.hpp` declares the frame enum (`Kind`), message structs (`Hello`, `SnapshotMessage`, `ControlMessage`, `HistoryRequest`, `AttachRequest`, `PasteRequest`, …) with per-version constants (`version = 6`) and `encode_*`/`decode_*` pairs. `wire_bytes.hpp` provides the big-endian primitives (`append_quint32`, `read_quint64`, `encode_attachment`) used by every encoder/decoder; it lives at `lapis::session::wire::bytes`. `update_pacing.hpp` is a rate-limiting helper (`UpdatePace`) for coalesced publisher bursts. `attention_protocol.*` handles the attention-snapshot sub-protocol.
+
+- `platform/posix/` (POSIX back end) — owns OS resources via RAII wrappers in `unique_fd.{hpp,cpp}` and exposes: `LocalEndpoint` (Unix-domain socket lifecycle + `prepare_endpoint`, `canonical_trusted_directory`, `widen_socket_buffers`); `PtyProcess` (Qt event-loop-driven PTY wrapper over `QProcess`/`QSocketNotifier` with batched reads capped at 64 KiB and SIGTERM/SIGKILL teardown); `process_group_guard.{hpp,cpp}` (async-signal-safe child-process group cleanup tied to pipe EOF). This layer depends on the transport's `TerminalSnapshot` types but not vice versa.
+
+Dependency direction is one-way: `platform/posix` uses `lapis::session::terminal` and Qt I/O, while `transport` stays free of platform code. The two are glued together higher up by callers that construct a `LocalProtocol` over a `LocalEndpoint` and drive a `PtyProcess`.

@@ -1,0 +1,29 @@
+schema_version: 1
+module_path: desktop_app/platform_integrations
+title: Desktop Platform Integrations
+scope:
+    - apps/desktop/src/platform/
+    - apps/desktop/src/platform_preferences.mm
+    - apps/desktop/src/platform_preferences.hpp
+    - apps/desktop/src/desktop_actions_mac.mm
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 961fc471-3d05-4bd1-8935-783f97518e2d
+kk_ordinal: 8
+kk_cards:
+    architecture_design:
+        id: 1093441a-0403-4d00-b12d-fc36fd6c266f
+        title: Desktop Platform Integrations
+    coding_conventions:
+        id: 3cf9c052-90fc-4710-ac9c-b645b97c8d3e
+        title: Desktop Platform Integrations
+    overview:
+        id: c51b63c5-aa96-4124-9de3-98dc0e84b4fa
+        title: Desktop Platform Integrations
+    tech_stack:
+        id: a4de3c54-7cc1-44ec-8bfc-5d2ef2e241cb
+        title: Desktop Platform Integrations
+    unique_setup_and_commands:
+        id: decbc137-19b7-4138-92f2-8c21e9b73c08
+        title: Desktop Platform Integrations

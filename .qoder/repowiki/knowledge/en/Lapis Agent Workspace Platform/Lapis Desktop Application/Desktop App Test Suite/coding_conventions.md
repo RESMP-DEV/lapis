@@ -1,0 +1,4 @@
+- Each test file defines its own local `require(bool, const char*)` helper that throws `std::runtime_error` on failure, instead of using GoogleTest assertions.
+- Asynchronous or event-driven assertions use the shared `until(condition, where, timeout_ms)` loop from `wire_fixture.hpp`, which pumps `QCoreApplication::processEvents` and sleeps 1ms between polls.
+- Platform-specific code is isolated behind the `lapis::desktop::test` namespace and a PIMPL-style `Impl` pointer (see `NativeInputDriver`), keeping the public header free of OS-specific includes.
+- Objective-C++ probe binaries follow a simple pattern: initialize `NSAutoreleasePool`, run checks against a boolean `passed`, print a single pass/fail line, and return 0/1.

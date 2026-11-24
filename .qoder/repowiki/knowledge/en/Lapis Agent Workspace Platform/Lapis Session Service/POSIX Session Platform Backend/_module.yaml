@@ -1,0 +1,23 @@
+schema_version: 1
+module_path: session_service/posix_platform
+title: POSIX Session Platform Backend
+scope:
+    - services/session/src/platform/posix/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 2cdc25c9-3f5d-44f4-99e3-20c4a7d3eb5f
+kk_ordinal: 2
+kk_cards:
+    architecture_design:
+        id: f858e7ca-1714-4aee-9b18-935febd4c5e4
+        title: POSIX Session Platform Backend
+    coding_conventions:
+        id: b6594d56-f71c-47bb-ad12-e3634dd3f0fc
+        title: POSIX Session Platform Backend
+    overview:
+        id: 51b09598-154a-4f07-beb6-9dfef324edfb
+        title: POSIX Session Platform Backend
+    tech_stack:
+        id: 8d2723e3-e0ba-425f-b0bb-2dec4f42e2f9
+        title: POSIX Session Platform Backend

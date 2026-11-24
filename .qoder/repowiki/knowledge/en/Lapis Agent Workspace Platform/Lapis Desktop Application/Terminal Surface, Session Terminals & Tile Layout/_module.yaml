@@ -1,0 +1,32 @@
+schema_version: 1
+module_path: desktop_app/terminal_surface
+title: Terminal Surface, Session Terminals & Tile Layout
+scope:
+    - apps/desktop/src/terminals.cpp
+    - apps/desktop/src/terminals.hpp
+    - apps/desktop/src/terminal_surface.cpp
+    - apps/desktop/src/terminal_surface.hpp
+    - apps/desktop/src/tab_ranker.cpp
+    - apps/desktop/src/tab_ranker.hpp
+    - apps/desktop/src/tile_layout.cpp
+    - apps/desktop/src/tile_layout.hpp
+source_files: []
+depends_on: []
+related_to:
+    - path: session_service/transport_protocols
+      reason: Desktop's terminal_surface renders terminals via the session wire protocol (frame parser, pacing helpers) defined in session_service/transport_protocols.
+kk_module_id: 171102fb-0ec3-4ca4-8d31-c1e607117895
+kk_ordinal: 2
+kk_cards:
+    architecture_design:
+        id: cafd844e-19cb-4270-a601-e73af28947f7
+        title: Terminal Surface, Session Terminals & Tile Layout
+    coding_conventions:
+        id: f372e42a-0420-44ff-a3e8-d0872064bb50
+        title: Terminal Surface, Session Terminals & Tile Layout
+    overview:
+        id: 6bc1f102-6551-4428-95f3-5f8985922d44
+        title: Terminal Surface, Session Terminals & Tile Layout
+    tech_stack:
+        id: 18d9f328-d520-413e-bd3a-632b3f0e5f9c
+        title: Terminal Surface, Session Terminals & Tile Layout

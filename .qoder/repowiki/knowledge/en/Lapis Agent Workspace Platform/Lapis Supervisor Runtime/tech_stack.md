@@ -1,0 +1,1 @@
+Qt6 Core + Network (exact 6.11.2), POSIX filesystem for persistent state, JSON-encoded control messages over a Unix-domain endpoint. On macOS the CLI copies `QAppleNetworkInformationPlugin` and a `qt.conf` at post-build time.

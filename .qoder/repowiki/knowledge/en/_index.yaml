@@ -1,0 +1,389 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: en
+commit: c33b90b7f982aed1cb17b95e34c9eacfb73d0f67
+branch: HEAD
+exported_at: "2026-10-26T05:56:11Z"
+modules:
+    android_app:
+        dir_name: Lapis Android Companion App
+        title: Lapis Android Companion App
+        scope:
+            - apps/android/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+        similar_to:
+            - path: ultratab_app
+              reason: Both Android and iOS UltraTab apps implement a deck of cards UI backed by GET /api/deck from the same Mac gateway, but target different platforms.
+    build_tooling:
+        dir_name: Build, Release & Quality Tooling
+        title: Build, Release & Quality Tooling
+        scope:
+            - scripts/
+            - tools/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    claude_adapter:
+        dir_name: Claude Code Hook Observer & Relay
+        title: Claude Code Hook Observer & Relay
+        scope:
+            - adapters/claude/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    codex_adapter:
+        dir_name: Codex Adapter (Observer, Importer & Unix WebSocket Transport)
+        title: Codex Adapter (Observer, Importer & Unix WebSocket Transport)
+        scope:
+            - adapters/codex/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: session_service/session_core/attention_journal
+              reason: Codex adapter forwards approvals/user-input into session::attention::State, sharing the attention state machine with Claude.
+    desktop_app:
+        dir_name: Lapis Desktop Application
+        title: Lapis Desktop Application
+        scope:
+            - apps/desktop/
+        source_files: []
+        children:
+            - desktop_app/accounts_and_auth
+            - desktop_app/agent_state_and_search
+            - desktop_app/conversation_indexing
+            - desktop_app/desktop_shell
+            - desktop_app/interaction_logging
+            - desktop_app/platform_integrations
+            - desktop_app/qml_views
+            - desktop_app/terminal_surface
+            - desktop_app/tests
+            - desktop_app/usage_and_limits
+            - desktop_app/workspace_management
+        depends_on: []
+        related_to: []
+    desktop_app/accounts_and_auth:
+        dir_name: Account Plans & Plan Sign-In Flow
+        title: Account Plans & Plan Sign-In Flow
+        scope:
+            - apps/desktop/src/accounts.cpp
+            - apps/desktop/src/accounts.hpp
+            - apps/desktop/src/plan_sign_in.cpp
+            - apps/desktop/src/plan_sign_in.hpp
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    desktop_app/agent_state_and_search:
+        dir_name: Agent State Publishing & Cmd+K Search
+        title: Agent State Publishing & Cmd+K Search
+        scope:
+            - apps/desktop/src/agent_state.cpp
+            - apps/desktop/src/agent_state.hpp
+            - apps/desktop/src/agent_search.cpp
+            - apps/desktop/src/agent_search.hpp
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    desktop_app/conversation_indexing:
+        dir_name: Conversation Indexing & Terminal History
+        title: Conversation Indexing & Terminal History
+        scope:
+            - apps/desktop/src/conversation_index.cpp
+            - apps/desktop/src/conversation_index.hpp
+            - apps/desktop/src/history_strip.cpp
+            - apps/desktop/src/history_strip.hpp
+            - apps/desktop/src/cell_shapes.cpp
+            - apps/desktop/src/cell_shapes.hpp
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    desktop_app/desktop_shell:
+        dir_name: Desktop Shell Application Layer
+        title: Desktop Shell Application Layer
+        scope:
+            - apps/desktop/src/main.cpp
+            - apps/desktop/src/gui_state.cpp
+            - apps/desktop/src/gui_state.hpp
+            - apps/desktop/src/alerts.cpp
+            - apps/desktop/src/alerts.hpp
+            - apps/desktop/src/app_paths.cpp
+            - apps/desktop/src/app_paths.hpp
+            - apps/desktop/src/keymap.cpp
+            - apps/desktop/src/keymap.hpp
+            - apps/desktop/src/shell_environment.cpp
+            - apps/desktop/src/shell_environment.hpp
+            - apps/desktop/src/platform_desktop.hpp
+            - apps/desktop/src/chime_sounds.cpp
+            - apps/desktop/src/chime_sounds.hpp
+            - apps/desktop/src/attention_order.hpp
+            - apps/desktop/src/attention_view.cpp
+            - apps/desktop/src/next_prompt.cpp
+            - apps/desktop/src/next_prompt.hpp
+            - apps/desktop/src/desktop_actions.cpp
+            - apps/desktop/src/desktop_actions.hpp
+            - apps/desktop/src/remote_hook_relay.py
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: session_service/session_core/attention_journal
+              reason: Desktop attention_view/next_prompt consume the session attention wire protocol produced by the session service's attention state machine.
+    desktop_app/interaction_logging:
+        dir_name: Desktop Interaction Logging, UI Capture & Preview
+        title: Desktop Interaction Logging, UI Capture & Preview
+        scope:
+            - apps/desktop/src/interaction_log.cpp
+            - apps/desktop/src/interaction_log.hpp
+            - apps/desktop/src/interaction_recorder.cpp
+            - apps/desktop/src/interaction_recorder.hpp
+            - apps/desktop/src/ui_capture.cpp
+            - apps/desktop/src/ui_capture.hpp
+            - apps/desktop/src/ui_preview.cpp
+            - apps/desktop/src/ui_preview.hpp
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    desktop_app/platform_integrations:
+        dir_name: Desktop Platform Integrations
+        title: Desktop Platform Integrations
+        scope:
+            - apps/desktop/src/platform/
+            - apps/desktop/src/platform_preferences.mm
+            - apps/desktop/src/platform_preferences.hpp
+            - apps/desktop/src/desktop_actions_mac.mm
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    desktop_app/qml_views:
+        dir_name: Desktop Shell & Modal Dialogs (QML)
+        title: Desktop Shell & Modal Dialogs (QML)
+        scope:
+            - apps/desktop/qml/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    desktop_app/terminal_surface:
+        dir_name: Terminal Surface, Session Terminals & Tile Layout
+        title: Terminal Surface, Session Terminals & Tile Layout
+        scope:
+            - apps/desktop/src/terminals.cpp
+            - apps/desktop/src/terminals.hpp
+            - apps/desktop/src/terminal_surface.cpp
+            - apps/desktop/src/terminal_surface.hpp
+            - apps/desktop/src/tab_ranker.cpp
+            - apps/desktop/src/tab_ranker.hpp
+            - apps/desktop/src/tile_layout.cpp
+            - apps/desktop/src/tile_layout.hpp
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: session_service/transport_protocols
+              reason: Desktop's terminal_surface renders terminals via the session wire protocol (frame parser, pacing helpers) defined in session_service/transport_protocols.
+    desktop_app/tests:
+        dir_name: Desktop App Test Suite
+        title: Desktop App Test Suite
+        scope:
+            - apps/desktop/tests/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    desktop_app/usage_and_limits:
+        dir_name: Usage, Limits & Tool Status Monitoring
+        title: Usage, Limits & Tool Status Monitoring
+        scope:
+            - apps/desktop/src/usage.cpp
+            - apps/desktop/src/usage.hpp
+            - apps/desktop/src/usage_limits.cpp
+            - apps/desktop/src/usage_limits.hpp
+            - apps/desktop/src/tool_status.cpp
+            - apps/desktop/src/tool_status.hpp
+            - apps/desktop/src/limit_resets.cpp
+            - apps/desktop/src/limit_resets.hpp
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    desktop_app/workspace_management:
+        dir_name: Workspace & Session Management
+        title: Workspace & Session Management
+        scope:
+            - apps/desktop/src/workspace.cpp
+            - apps/desktop/src/workspace.hpp
+            - apps/desktop/src/workspace_control.cpp
+            - apps/desktop/src/workspace_control.hpp
+            - apps/desktop/src/open_request.cpp
+            - apps/desktop/src/open_request.hpp
+            - apps/desktop/src/live_connection.cpp
+            - apps/desktop/src/live_connection.hpp
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: supervisor_service
+              reason: Desktop workspace_control listens on workspace-control.sock and dispatches JSON-line requests — counterpart to the supervisor's authenticated control socket.
+            - path: ultratab_app
+              reason: Desktop's OpenRequests watches runtime JSON files written by Ultra Tab, decoupling overlay bootstrapping from UI — file-driven IPC counterpart.
+    documentation_and_evidence:
+        dir_name: Documentation & Evidence Archives
+        title: Documentation & Evidence Archives
+        scope:
+            - docs/
+            - evidence/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    ios_app:
+        dir_name: Lapis iOS Apps (Lapis & Ultra Tab)
+        title: Lapis iOS Apps (Lapis & Ultra Tab)
+        scope:
+            - apps/ios/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: android_app
+              reason: Android's LapisGateway and iOS Gateway.swift both call the Python gateway at apps/remote/lapis_remote.py for agent listing, starting, and SSE polling.
+            - path: ultratab_app
+              reason: iOS UltraTab's DeckGateway calls GET /api/deck and POST /api/agents/<id>/submit on the Mac gateway served by apps/remote/lapis_remote.py.
+        similar_to:
+            - path: android_app
+              reason: Both companion apps connect to the Mac gateway (lapis_remote.py) over Tailscale/ZeroTier; Android uses Compose+OkHttp, iOS uses SwiftUI+URLSession.
+    root:
+        dir_name: Lapis Agent Workspace Platform
+        title: Lapis Agent Workspace Platform
+        scope:
+            - README.md
+            - CONTRIBUTING.md
+            - AGENTS.md
+            - CMakeLists.txt
+            - CMakePresets.json
+            - justfile
+            - lapis.json
+            - .clang-format
+            - .clang-tidy
+            - .clangd
+            - .editorconfig
+            - .gitignore
+            - .gitattributes
+            - Brewfile
+            - ruff.toml
+            - .github/
+            - cmake/
+            - site/
+        source_files: []
+        children:
+            - android_app
+            - build_tooling
+            - claude_adapter
+            - codex_adapter
+            - desktop_app
+            - documentation_and_evidence
+            - ios_app
+            - session_service
+            - supervisor_service
+            - ultratab_app
+        depends_on: []
+        related_to: []
+    session_service:
+        dir_name: Lapis Session Service
+        title: Lapis Session Service
+        scope:
+            - services/session/
+        source_files: []
+        children:
+            - session_service/posix_platform
+            - session_service/session_core
+            - session_service/transport_protocols
+        depends_on: []
+        related_to:
+            - path: desktop_app/workspace_management
+              reason: Workspace's LiveConnection connects to the session service over QLocalSocket, implementing the session wire protocol handshake and snapshot framing.
+            - path: supervisor_service
+              reason: SupervisorRuntime owns a session-service child via SessionServiceLauncher and exposes an authenticated control socket for start/stop/disable.
+            - path: ultratab_app
+              reason: Ultra Tab's session_sender reuses lapis_session_launch to join an agent's session service so overlay answers route back through it.
+    session_service/posix_platform:
+        dir_name: POSIX Session Platform Backend
+        title: POSIX Session Platform Backend
+        scope:
+            - services/session/src/platform/posix/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    session_service/session_core:
+        dir_name: Lapis Session Service Core
+        title: Lapis Session Service Core
+        scope:
+            - services/session/src/
+            - services/session/include/lapis/session/
+        source_files: []
+        children:
+            - session_service/session_core/attention_journal
+            - session_service/session_core/transport_and_platform
+        depends_on: []
+        related_to: []
+    session_service/session_core/attention_journal:
+        dir_name: Attention State Machine & Journaling
+        title: Attention State Machine & Journaling
+        scope:
+            - services/session/src/attention.cpp
+            - services/session/src/attention_audit.cpp
+            - services/session/src/attention_journal.cpp
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: claude_adapter
+              reason: Claude adapter forwards hook events to lapis_attention, which implements the same attention state machine and journal as the session service.
+    session_service/session_core/transport_and_platform:
+        dir_name: Local Transport Protocol and POSIX Platform Abstractions
+        title: Local Transport Protocol and POSIX Platform Abstractions
+        scope:
+            - services/session/src/transport/
+            - services/session/src/platform/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    session_service/transport_protocols:
+        dir_name: Session Wire Protocol & Transport Primitives
+        title: Session Wire Protocol & Transport Primitives
+        scope:
+            - services/session/src/transport/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    supervisor_service:
+        dir_name: Lapis Supervisor Runtime
+        title: Lapis Supervisor Runtime
+        scope:
+            - services/supervisor/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    ultratab_app:
+        dir_name: Ultra Tab Overlay App
+        title: Ultra Tab Overlay App
+        scope:
+            - apps/ultratab/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

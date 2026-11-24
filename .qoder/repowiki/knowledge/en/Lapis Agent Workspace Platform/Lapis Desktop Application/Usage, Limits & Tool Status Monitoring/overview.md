@@ -1,0 +1,1 @@
+Desktop services that poll CLI usage limits, aggregate token counts from local and remote transcripts, track installed tool harness status, and orchestrate credit-reset workflows.

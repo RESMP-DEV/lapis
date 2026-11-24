@@ -1,0 +1,2 @@
+- Platform-specific code lives under `src/platform/<os>/` and is selected via CMake configuration rather than runtime dispatch.
+- Public cross-module APIs are declared in `include/lapis/session/*.hpp` while implementation stays in `src/`, keeping the wire protocol and platform backends hidden from consumers.

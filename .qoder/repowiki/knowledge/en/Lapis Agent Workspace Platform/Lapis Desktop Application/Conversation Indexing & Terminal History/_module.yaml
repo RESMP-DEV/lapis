@@ -1,0 +1,28 @@
+schema_version: 1
+module_path: desktop_app/conversation_indexing
+title: Conversation Indexing & Terminal History
+scope:
+    - apps/desktop/src/conversation_index.cpp
+    - apps/desktop/src/conversation_index.hpp
+    - apps/desktop/src/history_strip.cpp
+    - apps/desktop/src/history_strip.hpp
+    - apps/desktop/src/cell_shapes.cpp
+    - apps/desktop/src/cell_shapes.hpp
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 3de00c4e-3aed-46b5-8d1d-cc2efba0ec43
+kk_ordinal: 4
+kk_cards:
+    architecture_design:
+        id: ec74480b-83b9-40bf-92cd-ef73951d3d4f
+        title: Conversation Indexing & Terminal History
+    coding_conventions:
+        id: 9600c950-a51f-476f-b3da-8e0605d2cd48
+        title: Conversation Indexing & Terminal History
+    overview:
+        id: e403f6ac-ac99-4b7a-ae3d-d69ee009b5f6
+        title: Conversation Indexing & Terminal History
+    tech_stack:
+        id: 0741257b-8252-49e6-b6b7-62966a38d6e6
+        title: Conversation Indexing & Terminal History

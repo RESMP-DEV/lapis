@@ -1,0 +1,1 @@
+Qt Core (QObject, QThreadPool, QHash, QString, QVariantList) for the conversation scanner and its async refresh; stdlib containers for the history strip; QRectF/QPointF for cell shape geometry.

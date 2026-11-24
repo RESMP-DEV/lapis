@@ -1,0 +1,4 @@
+- Public Qt-facing classes derive from `QObject`/`QQuickItem` and expose state through `Q_PROPERTY` macros paired with matching `*Changed()` signals (e.g. `machinesChanged`, `documentChanged`, `fontChanged`).
+- External dependencies required by MOC (such as `workspace.hpp` in `terminal_surface.cpp`) are declared via `Q_MOC_INCLUDE` rather than a normal `#include` in the header.
+- Persisted configuration is stored as JSON files next to the workspace (e.g. `terminals.json`, `tab_away.jsonl`, `tab_away_model.json`) and loaded/saved via `toJson`/`fromJson` static helpers.
+- Heavy or infrequent work (model fitting in `TabRanker::refit`) is offloaded to a background thread while the GUI thread only observes published results via signals.

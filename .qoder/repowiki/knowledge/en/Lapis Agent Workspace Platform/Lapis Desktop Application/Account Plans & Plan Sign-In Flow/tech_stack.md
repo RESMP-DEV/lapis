@@ -1,0 +1,1 @@
+Qt (QObject/Q_PROPERTY/Q_INVOKABLE/QProcess) for the sign-in state machine; Python helper `plan_sign_in.py` invoked as a subprocess to run `claude setup-token` and open the default browser.

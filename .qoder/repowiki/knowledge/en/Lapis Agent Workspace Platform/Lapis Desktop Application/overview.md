@@ -1,0 +1,1 @@
+Qt/C++ desktop shell that wraps Claude Code and Codex sessions, exposing terminals, agent search, usage monitoring, and platform integrations through QML dialogs.

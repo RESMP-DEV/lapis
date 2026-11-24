@@ -1,0 +1,4 @@
+- Platform-specific functionality is gated behind the `lapis::desktop::platform` namespace with a `Q_OS_MACOS` header providing both real macOS implementations and empty inline stubs, letting callers remain OS-neutral.
+- Long-lived mutable state is persisted as a single versioned JSON file via `GuiState`, where each owner registers a section name and a `Save` function; writes are coalesced with a timer and run off the GUI thread.
+- User-facing strings are produced through Qt string literals (`QStringLiteral`, `QLatin1String`) to avoid UTF-8 conversions on hot paths.
+- Optional or conditional behavior is modeled with `std::optional` / boolean flags passed explicitly (e.g. preview vs live mode) rather than global toggles, keeping CLI-driven modes composable.

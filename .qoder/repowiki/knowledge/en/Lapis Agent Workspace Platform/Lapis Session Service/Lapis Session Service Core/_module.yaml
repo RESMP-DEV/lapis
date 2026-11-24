@@ -1,0 +1,23 @@
+schema_version: 1
+module_path: session_service/session_core
+title: Lapis Session Service Core
+scope:
+    - services/session/src/
+    - services/session/include/lapis/session/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 07a28c10-81cf-4629-9c8f-2ae8e94dd843
+kk_cards:
+    architecture_design:
+        id: e407be5e-530b-4cb9-a4bb-0945b5586754
+        title: Lapis Session Service Core
+    coding_conventions:
+        id: 39b8480f-3197-492a-94d0-3c44f551eb11
+        title: Lapis Session Service Core
+    overview:
+        id: 9702e518-0ff7-4f79-b295-80f3a7f04dd5
+        title: Lapis Session Service Core
+    tech_stack:
+        id: 4a9e75e9-e995-4c5e-9566-431cfb76e4ac
+        title: Lapis Session Service Core

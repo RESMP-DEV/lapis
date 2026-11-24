@@ -1,0 +1,1 @@
+Debug builds accept `am start --es gatewayHost <host> --ez resetCache true --es terminalFontSize <size> --es commandBarEnabled true` intent extras to override the gateway URL, wipe the cache before first poll, adjust terminal font size, and force the command bar visible for device-harness UI tests.

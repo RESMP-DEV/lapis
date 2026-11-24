@@ -1,0 +1,1 @@
+Qt 5/6 (`QProcess`, `QSocketNotifier`, `QQuickWindow`, `QString`), POSIX file descriptors via `session::posix::UniqueFd`, and on macOS AppKit/Carbon/CoreGraphics/Security/ServiceManagement/UserNotifications frameworks; optional Sparkle integration gated by the `LAPIS_SPARKLE` preprocessor macro.

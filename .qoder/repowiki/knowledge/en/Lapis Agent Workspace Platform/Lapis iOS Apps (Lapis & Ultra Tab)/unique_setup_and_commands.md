@@ -1,0 +1,1 @@
+Regenerate the Xcode project from this directory with `xcodegen` (see the `# XcodeGen spec` comment in `project.yml`). The `Config/Lapis.xcconfig` supplies build configs referenced by `Debug`/`Release`. A `LAPIS_DEFAULT_HOST` build setting seeds the default gateway address in each app's Info.plist.

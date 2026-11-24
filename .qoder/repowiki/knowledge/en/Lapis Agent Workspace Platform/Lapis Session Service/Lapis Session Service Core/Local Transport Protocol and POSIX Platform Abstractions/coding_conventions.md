@@ -1,0 +1,5 @@
+- Wire types are declared as plain structs with `encode_<struct>` / `decode_<struct>` free functions returning or taking `QByteArray`, keeping serialization separate from the data model.
+- Big-endian primitive serialization is centralized in `lapis::session::wire::bytes` (`append_quint32`, `read_quint64`, `raw_bytes`) and all multi-byte fields go through these helpers rather than inline bit shifts.
+- Protocol versions and payload limits live as `constexpr` members of the `lapis::session::wire` namespace (e.g. `version`, `max_frame_bytes`, `max_input_bytes`) so clients and services share a single source of truth.
+- Platform-specific resources are wrapped in RAII classes (`UniqueFd`, `PtyProcess`'s private `UniqueFd` members) so ownership and cleanup follow object lifetime rather than manual close calls.
+- POSIX-only entry points are placed under `platform/posix/` and exposed from the `lapis::session::posix` namespace, keeping cross-platform consumers decoupled from `#include <termios.h>`-style headers.

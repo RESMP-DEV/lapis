@@ -1,0 +1,4 @@
+- Raw POSIX file descriptors are never held directly in class members; ownership is expressed through the move-only `UniqueFd` RAII type whose destructor closes the descriptor.
+- Public API surface is exposed via free functions or member methods returning `bool`/`qint64`/`qsizetype` with `[[nodiscard]]` annotations to force callers to handle failure codes.
+- Asynchronous PTY I/O is wired through `QSocketNotifier` slots (`readReady`, `writeReady`) rather than polling, with state flags (`output_paused_`, `final_drain_active_`) gating callbacks.
+- Process-group teardown follows a staged pattern: send SIGHUP first, then SIGTERM, then SIGKILL, coordinated through `terminateProcessGroup` / `signalProcessGroup` helpers driven by the guard's completion pipe.

@@ -1,0 +1,45 @@
+schema_version: 1
+module_path: desktop_app/desktop_shell
+title: Desktop Shell Application Layer
+scope:
+    - apps/desktop/src/main.cpp
+    - apps/desktop/src/gui_state.cpp
+    - apps/desktop/src/gui_state.hpp
+    - apps/desktop/src/alerts.cpp
+    - apps/desktop/src/alerts.hpp
+    - apps/desktop/src/app_paths.cpp
+    - apps/desktop/src/app_paths.hpp
+    - apps/desktop/src/keymap.cpp
+    - apps/desktop/src/keymap.hpp
+    - apps/desktop/src/shell_environment.cpp
+    - apps/desktop/src/shell_environment.hpp
+    - apps/desktop/src/platform_desktop.hpp
+    - apps/desktop/src/chime_sounds.cpp
+    - apps/desktop/src/chime_sounds.hpp
+    - apps/desktop/src/attention_order.hpp
+    - apps/desktop/src/attention_view.cpp
+    - apps/desktop/src/next_prompt.cpp
+    - apps/desktop/src/next_prompt.hpp
+    - apps/desktop/src/desktop_actions.cpp
+    - apps/desktop/src/desktop_actions.hpp
+    - apps/desktop/src/remote_hook_relay.py
+source_files: []
+depends_on: []
+related_to:
+    - path: session_service/session_core/attention_journal
+      reason: Desktop attention_view/next_prompt consume the session attention wire protocol produced by the session service's attention state machine.
+kk_module_id: d31443f3-5bed-459d-bf61-f127a5fb258a
+kk_ordinal: 7
+kk_cards:
+    architecture_design:
+        id: 35714818-f80e-4726-aa2c-c4bfbf2f7972
+        title: Desktop Shell Application Layer
+    coding_conventions:
+        id: b16a16fd-da41-4b36-bbf1-28c515dbabea
+        title: Desktop Shell Application Layer
+    overview:
+        id: 282ca4ab-33bc-4455-b943-d16efe55eea7
+        title: Desktop Shell Application Layer
+    tech_stack:
+        id: d3187d22-615f-4c93-b0de-4cc4374a9820
+        title: Desktop Shell Application Layer

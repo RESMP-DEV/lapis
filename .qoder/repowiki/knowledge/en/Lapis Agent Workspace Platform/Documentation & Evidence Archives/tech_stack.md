@@ -1,0 +1,1 @@
+Plain Markdown for docs; JSON documents with structured fields for evidence artifacts (no schema file in scope).

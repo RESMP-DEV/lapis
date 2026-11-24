@@ -1,0 +1,23 @@
+schema_version: 1
+module_path: desktop_app/qml_views
+title: Desktop Shell & Modal Dialogs (QML)
+scope:
+    - apps/desktop/qml/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 9ae8a869-98d9-4aae-b210-9709c1a5431a
+kk_ordinal: 9
+kk_cards:
+    architecture_design:
+        id: 8d21085b-e867-4d95-986d-a176295312b4
+        title: Desktop Shell & Modal Dialogs (QML)
+    coding_conventions:
+        id: 8bcde7c5-91f8-4647-a791-17cfc4e8a8fe
+        title: Desktop Shell & Modal Dialogs (QML)
+    overview:
+        id: 05c4a52d-d2fe-4167-8c30-a137e782b953
+        title: Desktop Shell & Modal Dialogs (QML)
+    tech_stack:
+        id: 3febfee4-d326-4460-8c92-becb0729f6af
+        title: Desktop Shell & Modal Dialogs (QML)

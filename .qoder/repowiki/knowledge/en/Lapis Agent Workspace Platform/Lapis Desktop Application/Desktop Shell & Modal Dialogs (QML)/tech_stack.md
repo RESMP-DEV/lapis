@@ -1,0 +1,1 @@
+Qt Quick/QML with QtQuick.Controls, QtQuick.Layouts, Qt.labs.folderlistmodel, QtQuick.Dialogs, and the custom C++ extension module `Lapis 1.0` (imported by `Main.qml` and `Tools.qml`) which supplies workspace, engine, and keymap objects.

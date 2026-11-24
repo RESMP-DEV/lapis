@@ -1,0 +1,1 @@
+Qt-based adapter that observes a Codex app-server's attention requests and drives the separate workspace import protocol over a local Unix WebSocket.

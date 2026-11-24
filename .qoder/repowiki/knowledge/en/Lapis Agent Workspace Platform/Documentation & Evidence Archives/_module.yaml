@@ -1,0 +1,24 @@
+schema_version: 1
+module_path: documentation_and_evidence
+title: Documentation & Evidence Archives
+scope:
+    - docs/
+    - evidence/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 102105d7-3659-4552-be88-7dbb9b3d627a
+kk_ordinal: 9
+kk_cards:
+    architecture_design:
+        id: acb091f0-7443-47af-a832-005f2fd890ec
+        title: Documentation & Evidence Archives
+    coding_conventions:
+        id: a9fc30c1-b610-4f92-bd70-445722487924
+        title: Documentation & Evidence Archives
+    overview:
+        id: c1ef7281-dce8-42b8-b94b-9aac3c2f198f
+        title: Documentation & Evidence Archives
+    tech_stack:
+        id: 990735ed-0d9e-4032-bca3-66faf1962ec3
+        title: Documentation & Evidence Archives

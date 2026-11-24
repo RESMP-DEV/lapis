@@ -1,0 +1,6 @@
+All types live in namespace `lapis::session::posix` and form a small layered POSIX backend consumed by higher-level session code:
+- `unique_fd.{hpp,cpp}` provides an RAII wrapper around `int` descriptors with move-only semantics and CLOEXEC awareness; it is the foundation used everywhere else.
+- `process_group_guard.{hpp,cpp}` implements a detached child that watches pipe EOF to kill a session process group — used as a safety net after `setsid()`/`setpgid()` before `exec`.
+- `pty_process.{hpp,cpp}` is the Qt event-loop-driven terminal frontend: it owns a PTY master/slave pair, bridges I/O via `QSocketNotifier`, exposes `output`/`started`/`finished`/`failure` signals, and drives the leader's final drain + SIGTERM/SIGKILL shutdown sequence.
+- `local_endpoint.{hpp,cpp}` handles Unix-domain socket plumbing: preparing private directories under trusted ancestors, canonicalizing trust roots, and widening macOS 8 KB socket buffers.
+Dependency direction is strictly inward: `pty_process` depends on `unique_fd`; `process_group_guard` depends on `unique_fd`; `local_endpoint` has no intra-module dependencies. The module depends outward only on Qt (`QObject`, `QProcess`, `QSocketNotifier`, `QString`) and on session interfaces (`LaunchSpec`, `TerminalSize`).

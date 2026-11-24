@@ -1,0 +1,4 @@
+- Evidence files use a topic prefix followed by a run-type suffix (`-review`, `-repair`, `-followup`, `-triage`, `-resolution`) to distinguish stages of an automated review cycle.
+- Recurring or time-bound evidence is named with an ISO-style date suffix (YYYYMMDD) appended before the extension, e.g. `architecture-buildout-triage-20261017.json`.
+- Pull-request evidence is grouped under a `prNN-` prefix that may be extended with a secondary suffix such as `-review`, `-fixes`, `-round2`, or `-triage` to track multiple passes.
+- Human-authored docs live directly under `docs/` at the top level, while longer-form design specifications are nested under `docs/superpowers/specs/` with a YYYY-MM-DD date prefix.

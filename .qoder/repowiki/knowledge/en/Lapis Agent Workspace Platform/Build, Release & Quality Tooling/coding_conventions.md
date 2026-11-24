@@ -1,0 +1,5 @@
+- Each `scripts/check_*.py` exposes a `main()`-style entry point and can be imported as a module by `check_quality.py` using the `if __package__:` / `import` fallback pattern.
+- Test files under `scripts/tests/` are named `test_*.py` and discovered automatically by `unittest.defaultTestLoader.discover('scripts/tests')`.
+- Durable data formats (receipts, manifests, gate maps) carry a `*_SCHEMA_VERSION` constant so consumers can validate compatibility before parsing.
+- Cross-script constants like `ROOT = Path(__file__).resolve().parents[1]` anchor all path resolution to the repository root rather than the working directory.
+- Native C++ components under `tools/terminal_probe/` expose their public API through a single header (`probe.hpp`) and declare per-target sources via a `sources.json` file consumed by CMake.

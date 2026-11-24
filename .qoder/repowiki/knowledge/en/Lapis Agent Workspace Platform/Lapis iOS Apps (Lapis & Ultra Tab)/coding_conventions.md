@@ -1,0 +1,5 @@
+- Each app defines its own `Theme` enum of static `Color` properties in the `*App.swift` entry file and applies it via `.tint()` and `.preferredColorScheme(.dark)` on the root scene.
+- Network clients are thin structs wrapping a `URLSession` that construct `URLRequest`s with a fixed `X-Lapis-Client` header and parse JSON responses into Swift `Codable` structs defined alongside the client.
+- Backend payload types are modeled as `Codable` value structs (often also `Identifiable`/`Hashable`) that mirror the Python gateway schema, with optional fields used to tolerate older gateways.
+- Stateful view-model classes are exposed to SwiftUI via `@EnvironmentObject` / `.environment()` injection from the `@main App` rather than passed down through initializers.
+- Host configuration is read from `Bundle.main.object(forInfoDictionaryKey: "LapisDefaultHost")` falling back to `UserDefaults`, allowing tests to inject a host via launch arguments.

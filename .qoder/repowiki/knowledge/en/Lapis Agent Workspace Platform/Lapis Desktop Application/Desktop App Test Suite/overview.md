@@ -1,0 +1,1 @@
+Unit, integration and native platform tests for the Lapis desktop application, exercising account selection, terminal I/O, session wire protocol, UI state and macOS-specific input/sound behavior.

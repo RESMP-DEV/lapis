@@ -1,0 +1,1 @@
+C++ with Qt6 (Core, Network, LocalSocket, QDeadlineTimer, QJsonObject); CMake build with AUTOMOC enabled; unit tests driven by CTest.

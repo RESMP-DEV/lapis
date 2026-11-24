@@ -1,0 +1,5 @@
+- Platform-conditional APIs are declared in a shared `.hpp` with `#ifdef Q_OS_MACOS` real implementations and inline no-op fallbacks for other targets, so callers include the header unconditionally.
+- macOS-native behavior lives in `.mm` files importing `<Foundation.h>`/`<AppKit.h>`/`<Security.h>` etc., while cross-platform logic stays in plain C++ under `platform/` and communicates via Qt types (`QString`, `QByteArray`).
+- Child processes are wrapped in a QObject subclass owning pipes/FDs (e.g. `UpdaterProcess` extends `QProcess`) and expose asynchronous completion via `QSocketNotifier` plus a stored `std::function` callback rather than synchronous waits.
+- Shared callable objects use an explicit publish/acquire protocol — an `atomic<bool>` flag protects `std::function` access so ownership can move across Qt queues without data races.
+- File-system helpers validate descriptor type after open (rejecting pipes/devices) and operate nonblocking to avoid blocking worker threads on I/O.

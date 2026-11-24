@@ -1,0 +1,29 @@
+schema_version: 1
+module_path: session_service
+title: Lapis Session Service
+scope:
+    - services/session/
+source_files: []
+depends_on: []
+related_to:
+    - path: desktop_app/workspace_management
+      reason: Workspace's LiveConnection connects to the session service over QLocalSocket, implementing the session wire protocol handshake and snapshot framing.
+    - path: supervisor_service
+      reason: SupervisorRuntime owns a session-service child via SessionServiceLauncher and exposes an authenticated control socket for start/stop/disable.
+    - path: ultratab_app
+      reason: Ultra Tab's session_sender reuses lapis_session_launch to join an agent's session service so overlay answers route back through it.
+kk_module_id: 54746ce9-3a72-4f85-a203-753a10502ad3
+kk_ordinal: 4
+kk_cards:
+    architecture_design:
+        id: 659d0d99-669a-4bcf-bfe0-289bf0689815
+        title: Lapis Session Service
+    coding_conventions:
+        id: f145e54b-270b-4d3c-81b5-c07689680e70
+        title: Lapis Session Service
+    overview:
+        id: d5136982-9f98-46db-8cfe-7d9b77b27458
+        title: Lapis Session Service
+    tech_stack:
+        id: 2cf95359-0801-454e-8e95-800bab9ce779
+        title: Lapis Session Service

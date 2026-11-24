@@ -1,0 +1,1 @@
+Qt 6 (QCoreApplication, QLocalServer, QTemporaryDir) for cross-platform fixtures; Objective-C++ with AppKit (`NSSound`, `NSAutoreleasePool`) for native audio and key-input probes; `std::source_location` used inside the `until` helper for deadline error reporting.

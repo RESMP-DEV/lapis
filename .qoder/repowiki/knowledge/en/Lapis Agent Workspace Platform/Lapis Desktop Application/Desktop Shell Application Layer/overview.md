@@ -1,0 +1,1 @@
+Qt-based desktop shell that bootstraps the Lapis GUI, manages window state persistence, handles platform hooks (macOS notifications, login items, Sparkle updates), and wires attention/alerts to the QML UI.

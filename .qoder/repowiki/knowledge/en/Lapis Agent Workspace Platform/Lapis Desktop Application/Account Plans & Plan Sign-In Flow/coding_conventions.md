@@ -1,0 +1,4 @@
+- External side effects (finding the python/claude binary, copying links, opening browsers, recording plans, listing destinations) are passed in via function-typed `Hooks` rather than called directly, making the sign-in flow testable and UI-agnostic.
+- Machine identity is normalized through helpers: empty string means local, `"local"` is accepted in JSON, and SSH hosts are validated against a strict regex before being stored.
+- Account names and emails are trimmed and lowercased during parsing, and invalid entries (bad name regex, duplicates, unknown CLI, out-of-range `switchAt`) are silently skipped.
+- QML-accessible state is exposed as `Q_PROPERTY` strings with a single `changed()` signal emitted after every state transition instead of per-property signals.

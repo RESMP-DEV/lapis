@@ -1,0 +1,33 @@
+schema_version: 1
+module_path: desktop_app/usage_and_limits
+title: Usage, Limits & Tool Status Monitoring
+scope:
+    - apps/desktop/src/usage.cpp
+    - apps/desktop/src/usage.hpp
+    - apps/desktop/src/usage_limits.cpp
+    - apps/desktop/src/usage_limits.hpp
+    - apps/desktop/src/tool_status.cpp
+    - apps/desktop/src/tool_status.hpp
+    - apps/desktop/src/limit_resets.cpp
+    - apps/desktop/src/limit_resets.hpp
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: 683be868-5147-44b8-a265-134bf0cbaf68
+kk_ordinal: 6
+kk_cards:
+    architecture_design:
+        id: 455ce532-b45f-4ce7-a6e6-20c46911d261
+        title: Usage, Limits & Tool Status Monitoring
+    coding_conventions:
+        id: 72fb70c0-32a1-4458-b12c-cecffd6e8da7
+        title: Usage, Limits & Tool Status Monitoring
+    overview:
+        id: 51def807-123e-41e8-9084-cecdd202d116
+        title: Usage, Limits & Tool Status Monitoring
+    tech_stack:
+        id: 7cec078b-466d-47fc-b080-087156a03c46
+        title: Usage, Limits & Tool Status Monitoring
+    unique_setup_and_commands:
+        id: 81047d64-dfb2-46d8-86fa-abcfd5be7f7a
+        title: Usage, Limits & Tool Status Monitoring

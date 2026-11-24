@@ -1,0 +1,1 @@
+C++/Qt adapter that observes Claude Code hook events via a private local socket and forwards authenticated frames through an external relay process to the attention subsystem.

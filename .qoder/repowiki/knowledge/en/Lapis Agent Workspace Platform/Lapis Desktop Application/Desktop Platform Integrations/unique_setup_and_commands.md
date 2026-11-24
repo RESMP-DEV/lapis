@@ -1,0 +1,1 @@
+Build requires `Q_OS_MACOS` set for the Objective-C++ sources; macOS-specific functionality (notification center, login items, keychain access) is unavailable from test binaries because `NSBundle.mainBundle.bundleIdentifier` is nil outside an app bundle, which the code explicitly guards before using `UNUserNotificationCenter`.

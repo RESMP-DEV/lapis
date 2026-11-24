@@ -1,0 +1,3 @@
+- Cross-subsystem boundaries are expressed as explicit headers under `include/lapis/session/` and `src/transport/` / `src/platform/posix/`, with no raw C++ standard library I/O leaking across them.
+- Error signaling uses std exceptions (`invalid_argument`, `length_error`, `overflow_error`, `runtime_error`) rather than return codes, and exceptions never cross C callback boundaries.
+- Owned data flows through value types with default-equal operators (e.g. `TerminalSize`, `TerminalColor`, `CellKind`) so they can be compared and serialized uniformly.

@@ -1,0 +1,6 @@
+- Long-running or potentially blocking work is delegated to worker classes derived from `QObject` that expose `changed()` signals and Qt properties, keeping the UI layer decoupled from polling logic.
+- External executables are never hard-coded; callers inject a `Programs = std::function<QString(const QString&)>` resolver so production uses `harness_program` and tests use private fixtures.
+- Concurrent background tasks are throttled by a fixed `kProbesAtOnce` (3) semaphore maintained as a `running_` vector/list with a `pending_` queue and `startNext()` drain loop.
+- Provider-specific parsing lives in free functions named `<provider>_limits(QJsonObject)` returning the shared `PlanLimits` struct, keeping the common probe lifecycle generic.
+- Testability is achieved by exposing `setXxxForTesting` setters (e.g. `setTodayForTesting`, `setNowForTesting`, `setProbeForTesting`) alongside normal constructors instead of dependency injection for time-sensitive behavior.
+- Stale data is tracked per-item with a timestamp plus a `fresh_noted_` hash and a periodic `stale_check_` timer that only republishes rows whose freshness window expired.

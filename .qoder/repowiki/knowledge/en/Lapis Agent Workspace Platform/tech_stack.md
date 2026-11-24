@@ -1,0 +1,1 @@
+C++20 with CMake 3.25+ for native components (Qt/C++ for desktop, Ultra Tab, and adapters; Python for tooling); Android (Kotlin/Compose) and iOS (SwiftUI) companion apps connect to the same local IPC socket protocol.

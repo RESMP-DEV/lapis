@@ -1,0 +1,1 @@
+Qt6 (QObject, QProcess, QNetworkAccessManager, QTimer, QThreadPool, QTemporaryDir); providers are queried via their own CLIs (codex app-server, Claude control requests, Grok ACP `_x.ai/billing`, Kimi `/api/v1/oauth/usage` over a short-lived loopback server, OMP `_omp/usage`); remote execution uses `ssh -T -o BatchMode=yes` in an interactive login shell.

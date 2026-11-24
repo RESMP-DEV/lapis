@@ -1,0 +1,1 @@
+Manages the desktop workspace's session lifecycle, live terminal connections to agent services, cross-process control IPC, and file-driven open requests.

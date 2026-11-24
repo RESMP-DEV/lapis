@@ -1,0 +1,1 @@
+C++17 with Qt 6 / Qt Quick (QML), macOS Objective-C++ bridging (`.mm`), Python code generation for embedded script payloads, Sparkle for macOS updates, JSONL for interaction logs.

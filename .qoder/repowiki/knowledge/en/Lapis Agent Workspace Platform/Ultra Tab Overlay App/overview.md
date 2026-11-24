@@ -1,0 +1,1 @@
+A standalone macOS overlay app that shows waiting agents as a deck of cards, composes contextual summaries via an external model helper, and routes answers back to Lapis through the shared session transport.

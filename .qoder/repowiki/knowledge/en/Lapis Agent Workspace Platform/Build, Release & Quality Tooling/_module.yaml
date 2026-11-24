@@ -1,0 +1,27 @@
+schema_version: 1
+module_path: build_tooling
+title: Build, Release & Quality Tooling
+scope:
+    - scripts/
+    - tools/
+source_files: []
+depends_on: []
+related_to: []
+kk_module_id: da12e8af-6c77-4538-8010-d172481716f4
+kk_ordinal: 8
+kk_cards:
+    architecture_design:
+        id: db393209-b320-42fc-b387-86183d333b94
+        title: Build, Release & Quality Tooling
+    coding_conventions:
+        id: 495968f1-6473-4501-833c-07ae4cd3441b
+        title: Build, Release & Quality Tooling
+    overview:
+        id: e5820b3c-fafa-4851-829c-25181a341cb8
+        title: Build, Release & Quality Tooling
+    tech_stack:
+        id: a6a58391-439e-453a-9fbb-fb47ebb4174d
+        title: Build, Release & Quality Tooling
+    unique_setup_and_commands:
+        id: 9e48a414-b774-4e48-abfa-e11fdc31a82a
+        title: Build, Release & Quality Tooling

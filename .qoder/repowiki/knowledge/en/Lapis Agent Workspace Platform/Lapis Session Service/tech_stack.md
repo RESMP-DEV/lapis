@@ -1,0 +1,1 @@
+C++ with Qt Core for event loop integration; POSIX PTY and Unix-domain sockets as the only platform surface.

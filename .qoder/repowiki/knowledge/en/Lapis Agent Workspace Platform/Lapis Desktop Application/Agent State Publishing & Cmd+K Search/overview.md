@@ -1,0 +1,1 @@
+Publishes per-agent session state to a JSON file and indexes agents for the interactive Cmd+K search across names, folders, harnesses, machines, and live screen lines.

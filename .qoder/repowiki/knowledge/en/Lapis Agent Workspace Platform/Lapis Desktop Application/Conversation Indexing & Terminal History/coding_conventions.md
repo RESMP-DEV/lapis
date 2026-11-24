@@ -1,0 +1,4 @@
+- Public query functions exposed to QML use the `Q_INVOKABLE` attribute alongside `[[nodiscard]]` return annotations.
+- Pure utility helpers are grouped in a nested namespace (`conversations`) separate from the owning QObject class.
+- Asynchronous state uses shared atomic flags (`scanning_`, `alive_`) paired with a `QThreadPool` so the owner can outlive queued scan tasks during destruction.
+- Optional parse results are returned as `std::optional<T>` rather than sentinel values or exceptions.

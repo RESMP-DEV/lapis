@@ -1,0 +1,1 @@
+Qt Core: QObject/QTimer/QThreadPool/QElapsedTimer/QJsonObject/QByteArray for the publisher; QVariantList/Q_INVOKABLE for exposing search to QML.

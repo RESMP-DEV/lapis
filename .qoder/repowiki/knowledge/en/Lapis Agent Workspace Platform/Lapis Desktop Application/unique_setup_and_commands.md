@@ -1,0 +1,1 @@
+Build-time code generation: `count_tokens.py`, `limit_resets.py`, `next_prompt.py`, `plan_sign_in.py`, and `remote_hook_relay.py` each produce a sibling `*_script.hpp.in` / `*_script.hpp` that CMake configures into the binary; running the generators out-of-tree leaves stale headers.

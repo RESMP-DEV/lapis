@@ -1,0 +1,1 @@
+Top-level orchestration of the Lapis platform that composes Qt desktop/overlay apps, Android/iOS companion apps, a session service with Claude/Codex adapters, and a supervisor runtime around shared C++20 libraries.
